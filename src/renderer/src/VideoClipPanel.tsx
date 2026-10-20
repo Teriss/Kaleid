@@ -93,7 +93,7 @@ export default function VideoClipPanel({
         >
           将当前位置设为起点
         </button>
-        <label>
+        <label className="video-panel-section">
           结束时间
           <input
             aria-label="片段结束时间"
@@ -237,7 +237,7 @@ export default function VideoClipPanel({
         </p>
       </div>
       <button
-        className="button"
+        className="button primary"
         disabled={!valid || saving}
         onClick={() => void submit()}
       >

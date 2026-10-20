@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { AppAPI } from "../shared/types";
 import type { VideoAPI } from "../shared/video";
 const video = {
+  overlay: (state: Parameters<VideoAPI["overlay"]>[0]) =>
+    ipcRenderer.invoke("video:overlay", state),
   open: (input: Parameters<VideoAPI["open"]>[0]) =>
     ipcRenderer.invoke("video:call", "open", input),
   close: (id: string) => ipcRenderer.invoke("video:call", "close", id),

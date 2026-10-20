@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   Play,
@@ -25,7 +32,9 @@ import type {
   VideoState,
   VideoTrack,
 } from "../../shared/video";
-import { report, usePlayback } from "./store";
+import { report, useApp, usePlayback } from "./store";
+import { useVideoChrome } from "./useVideoChrome";
+import { useVideoOverlay } from "./useVideoOverlay";
 import "./video.css";
 import VideoClipPanel from "./VideoClipPanel";
 
@@ -67,8 +76,23 @@ export default function VideoPlayer({
   const [retry, setRetry] = useState(0);
   const [resumeNotice, setResumeNotice] = useState(false);
   const [dragPosition, setDragPosition] = useState<number>();
+  const [edgeActive, setEdgeActive] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const surface = useVideoOverlay(root, close);
   const viewport = useRef<HTMLDivElement>(null);
   const session = useRef("");
+  const reducedMotion = useApp((s) => s.settings.reducedMotion);
+  const { chrome, activity } = useVideoChrome(
+    root,
+    state?.status !== "ready" ||
+      state.paused ||
+      !!panel ||
+      resumeNotice ||
+      edgeActive,
+    `${entry.item.id}:${retry}:${autoPlay}`,
+    reducedMotion,
+    surface?.ownerDocument,
+  );
   const latest = useRef({ state, queue, panel, entry, close, switchItem });
   latest.current = { state, queue, panel, entry, close, switchItem };
   const handledEnd = useRef("");
@@ -115,6 +139,7 @@ export default function VideoPlayer({
     const id = crypto.randomUUID();
     session.current = id;
     handledEnd.current = "";
+    setEdgeActive(false);
     setState(undefined);
     setResumeNotice(false);
     let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -205,7 +230,7 @@ export default function VideoPlayer({
       window.removeEventListener("resize", update);
       document.removeEventListener("visibilitychange", update);
     };
-  }, [state?.status, panel, retry, entry.item.id]);
+  }, [state?.status, retry, entry.item.id, surface]);
   useEffect(() => {
     const escape = () => {
       if (latest.current.panel) setPanel(null);
@@ -220,6 +245,15 @@ export default function VideoPlayer({
       });
     const unsubscribe = window.video.onInput(({ sessionId, action }) => {
       if (sessionId !== session.current) return;
+      activity();
+      if (action === "edge-enter") {
+        setEdgeActive(true);
+        return;
+      }
+      if (action === "edge-leave") {
+        setEdgeActive(false);
+        return;
+      }
       if (action === "escape") escape();
       if (action === "fullscreen") fullscreen();
       if (action === "back" || action === "forward")
@@ -295,11 +329,14 @@ export default function VideoPlayer({
       }
     };
     window.addEventListener("keydown", key, true);
+    const controlsWindow = surface?.ownerDocument.defaultView;
+    controlsWindow?.addEventListener("keydown", key, true);
     return () => {
       unsubscribe();
       window.removeEventListener("keydown", key, true);
+      controlsWindow?.removeEventListener("keydown", key, true);
     };
-  }, [command]);
+  }, [command, activity, surface]);
   const index = queue.findIndex((target) => target.id === entry.item.id);
   const prefs = state?.preferences;
   const ready = state?.status === "ready" || state?.status === "ended";
@@ -333,18 +370,22 @@ export default function VideoPlayer({
       </select>
     </label>
   );
-  return (
+  const player = (
     <div
-      className="viewer viewer-video video-player"
+      ref={root}
+      className="viewer viewer-video video-player video-overlay-player"
       data-status={state?.status ?? "loading"}
+      data-chrome={chrome}
+      data-fullscreen={state?.fullscreen ?? false}
+      data-reduced-motion={reducedMotion}
     >
-      <header className="video-header">
+      <header className="video-header" inert={chrome !== "visible"}>
         <button className="back-button" onClick={close}>
           <ArrowLeft size={18} />
           返回媒体库
         </button>
         <div className="video-heading">
-          <strong>{entry.item.title}</strong>
+          <strong title={entry.item.title}>{entry.item.title}</strong>
           <small>
             {[
               entry.item.ext.toUpperCase(),
@@ -393,7 +434,7 @@ export default function VideoPlayer({
               <p>{state.error.message}</p>
               <div>
                 <button
-                  className="button"
+                  className="button primary"
                   onClick={() => setRetry((n) => n + 1)}
                 >
                   重新尝试
@@ -506,7 +547,7 @@ export default function VideoPlayer({
                   />
                   显示字幕
                 </label>
-                <label>
+                <label className="video-panel-section">
                   字幕字号
                   <input
                     aria-label="字幕字号"
@@ -532,7 +573,7 @@ export default function VideoPlayer({
                     }
                   />
                 </label>
-                <label>
+                <label className="video-panel-section">
                   字幕延迟（秒）
                   <input
                     aria-label="字幕延迟"
@@ -589,7 +630,7 @@ export default function VideoPlayer({
                   {state?.enhancement?.message ?? "正在检测超分能力…"}
                   。仅影响观看，导出使用源画面。
                 </small>
-                <label>
+                <label className="video-panel-section">
                   画面适配
                   <select
                     aria-label="画面适配"
@@ -630,7 +671,7 @@ export default function VideoPlayer({
                   <RotateCw size={15} />
                   旋转 · {prefs.rotation}°
                 </button>
-                <label className="video-check">
+                <label className="video-check video-panel-section">
                   <input
                     type="checkbox"
                     checked={prefs.hardwareDecoding}
@@ -656,176 +697,199 @@ export default function VideoPlayer({
           </aside>
         )}
       </div>
-      <footer className="video-controls">
-        {resumeNotice && (
-          <div className="video-resume">
-            已继续上次播放
-            <button
-              onClick={() => {
-                void command({ type: "seek", value: 0 });
-                setResumeNotice(false);
-              }}
-            >
-              从头播放
-            </button>
-            <button
-              aria-label="关闭续播提示"
-              onClick={() => setResumeNotice(false)}
-            >
-              <X size={13} />
-            </button>
-          </div>
-        )}
-        <div className="video-timeline">
-          <span>{clock(dragPosition ?? state?.position ?? 0)}</span>
-          <input
-            aria-label="播放进度"
-            type="range"
-            min="0"
-            max={state?.duration || 1}
-            step="0.1"
-            value={
-              dragPosition ??
-              Math.min(state?.position ?? 0, state?.duration || 1)
-            }
-            disabled={!ready}
-            onChange={(e) => setDragPosition(Number(e.target.value))}
-            onPointerUp={(e) => {
-              void command({
-                type: "seek",
-                value: Number(e.currentTarget.value),
-              }).finally(() => setDragPosition(undefined));
-            }}
-            onKeyUp={(e) => {
-              if (
-                [
-                  "ArrowLeft",
-                  "ArrowRight",
-                  "Home",
-                  "End",
-                  "PageUp",
-                  "PageDown",
-                ].includes(e.key)
-              )
+      <footer className="video-controls" inert={chrome !== "visible"}>
+        <div className="video-control-surface">
+          {resumeNotice && (
+            <div className="video-resume">
+              已继续上次播放
+              <button
+                onClick={() => {
+                  void command({ type: "seek", value: 0 });
+                  setResumeNotice(false);
+                }}
+              >
+                从头播放
+              </button>
+              <button
+                aria-label="关闭续播提示"
+                onClick={() => setResumeNotice(false)}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          )}
+          <div className="video-timeline">
+            <span>{clock(dragPosition ?? state?.position ?? 0)}</span>
+            <input
+              aria-label="播放进度"
+              style={
+                {
+                  "--range-progress": `${Math.min(100, Math.max(0, ((dragPosition ?? state?.position ?? 0) / (state?.duration || 1)) * 100))}%`,
+                } as CSSProperties
+              }
+              type="range"
+              min="0"
+              max={state?.duration || 1}
+              step="0.1"
+              value={
+                dragPosition ??
+                Math.min(state?.position ?? 0, state?.duration || 1)
+              }
+              disabled={!ready}
+              onChange={(e) => setDragPosition(Number(e.target.value))}
+              onPointerCancel={() => setDragPosition(undefined)}
+              onPointerUp={(e) => {
                 void command({
                   type: "seek",
                   value: Number(e.currentTarget.value),
                 }).finally(() => setDragPosition(undefined));
-            }}
-          />
-          <span>{clock(state?.duration ?? 0)}</span>
-        </div>
-        <div className="video-toolbar">
-          <button
-            title="上一集"
-            aria-label="上一集"
-            disabled={index <= 0}
-            onClick={() => step(-1)}
-          >
-            <SkipBack size={19} />
-          </button>
-          <button
-            className="video-play"
-            title={state?.paused ? "播放" : "暂停"}
-            aria-label={state?.paused ? "播放" : "暂停"}
-            disabled={!ready}
-            onClick={() =>
-              void command({ type: "pause", value: !state?.paused })
-            }
-          >
-            {state?.paused ? <Play size={23} /> : <Pause size={23} />}
-          </button>
-          <button
-            title="下一集"
-            aria-label="下一集"
-            disabled={index < 0 || index >= queue.length - 1}
-            onClick={() => step(1)}
-          >
-            <SkipForward size={19} />
-          </button>
-          <div className="video-volume">
-            <button
-              aria-label={prefs?.muted ? "取消静音" : "静音"}
-              onClick={() => preferences({ muted: !prefs?.muted })}
-            >
-              {prefs?.muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
-            </button>
-            <input
-              aria-label="音量"
-              type="range"
-              min="0"
-              max="100"
-              value={prefs?.volume ?? 70}
-              onChange={(e) =>
-                preferences({ volume: Number(e.target.value), muted: false })
-              }
+              }}
+              onKeyUp={(e) => {
+                if (
+                  [
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "Home",
+                    "End",
+                    "PageUp",
+                    "PageDown",
+                  ].includes(e.key)
+                )
+                  void command({
+                    type: "seek",
+                    value: Number(e.currentTarget.value),
+                  }).finally(() => setDragPosition(undefined));
+              }}
             />
+            <span>{clock(state?.duration ?? 0)}</span>
           </div>
-          <div className="video-toolbar-space" />
-          <select
-            aria-label="播放速度"
-            value={prefs?.speed ?? 1}
-            onChange={(e) => preferences({ speed: Number(e.target.value) })}
-          >
-            {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4].map(
-              (speed) => (
-                <option key={speed} value={speed}>
-                  {speed}×
-                </option>
-              ),
-            )}
-          </select>
-          <button
-            title="截取片段"
-            aria-label="截取片段"
-            disabled={!ready || !state?.duration}
-            className={panel === "clip" ? "active" : ""}
-            onClick={() => {
-              void command({ type: "pause", value: true });
-              togglePanel("clip");
-            }}
-          >
-            <Scissors size={19} />
-          </button>
-          <button
-            className={panel === "queue" ? "active" : ""}
-            title="选集"
-            aria-label="选集"
-            onClick={() => togglePanel("queue")}
-          >
-            <ListVideo size={19} />
-          </button>
-          <button
-            className={panel === "subtitles" ? "active" : ""}
-            title="字幕与音轨"
-            aria-label="字幕与音轨"
-            onClick={() => togglePanel("subtitles")}
-          >
-            <Captions size={20} />
-          </button>
-          <button
-            className={panel === "settings" ? "active" : ""}
-            title="播放设置"
-            aria-label="播放设置"
-            onClick={() => togglePanel("settings")}
-          >
-            <Settings2 size={19} />
-          </button>
-          <button
-            title={state?.fullscreen ? "退出全屏" : "全屏"}
-            aria-label={state?.fullscreen ? "退出全屏" : "全屏"}
-            onClick={() =>
-              void command({ type: "fullscreen", value: !state?.fullscreen })
-            }
-          >
-            {state?.fullscreen ? (
-              <Minimize size={19} />
-            ) : (
-              <Maximize size={19} />
-            )}
-          </button>
+          <div className="video-toolbar">
+            <button
+              title="上一集"
+              aria-label="上一集"
+              disabled={index <= 0}
+              onClick={() => step(-1)}
+            >
+              <SkipBack size={19} />
+            </button>
+            <button
+              className="video-play"
+              title={state?.paused ? "播放" : "暂停"}
+              aria-label={state?.paused ? "播放" : "暂停"}
+              disabled={!ready}
+              onClick={() =>
+                void command({ type: "pause", value: !state?.paused })
+              }
+            >
+              {state?.paused ? <Play size={23} /> : <Pause size={23} />}
+            </button>
+            <button
+              title="下一集"
+              aria-label="下一集"
+              disabled={index < 0 || index >= queue.length - 1}
+              onClick={() => step(1)}
+            >
+              <SkipForward size={19} />
+            </button>
+            <div className="video-volume">
+              <button
+                aria-label={prefs?.muted ? "取消静音" : "静音"}
+                onClick={() => preferences({ muted: !prefs?.muted })}
+              >
+                {prefs?.muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+              </button>
+              <input
+                aria-label="音量"
+                style={
+                  {
+                    "--range-progress": `${prefs?.muted ? 0 : (prefs?.volume ?? 70)}%`,
+                  } as CSSProperties
+                }
+                type="range"
+                min="0"
+                max="100"
+                value={prefs?.volume ?? 70}
+                onChange={(e) =>
+                  preferences({ volume: Number(e.target.value), muted: false })
+                }
+              />
+            </div>
+            <div className="video-toolbar-space" />
+            <select
+              aria-label="播放速度"
+              value={prefs?.speed ?? 1}
+              onChange={(e) => preferences({ speed: Number(e.target.value) })}
+            >
+              {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4].map(
+                (speed) => (
+                  <option key={speed} value={speed}>
+                    {speed}×
+                  </option>
+                ),
+              )}
+            </select>
+            <button
+              title="截取片段"
+              aria-expanded={panel === "clip"}
+              aria-label="截取片段"
+              disabled={!ready || !state?.duration}
+              className={panel === "clip" ? "active" : ""}
+              onClick={() => {
+                void command({ type: "pause", value: true });
+                togglePanel("clip");
+              }}
+            >
+              <Scissors size={19} />
+            </button>
+            <button
+              className={panel === "queue" ? "active" : ""}
+              aria-expanded={panel === "queue"}
+              title="选集"
+              aria-label="选集"
+              onClick={() => togglePanel("queue")}
+            >
+              <ListVideo size={19} />
+            </button>
+            <button
+              className={panel === "subtitles" ? "active" : ""}
+              aria-expanded={panel === "subtitles"}
+              title="字幕与音轨"
+              aria-label="字幕与音轨"
+              onClick={() => togglePanel("subtitles")}
+            >
+              <Captions size={20} />
+            </button>
+            <button
+              className={panel === "settings" ? "active" : ""}
+              aria-expanded={panel === "settings"}
+              title="播放设置"
+              aria-label="播放设置"
+              onClick={() => togglePanel("settings")}
+            >
+              <Settings2 size={19} />
+            </button>
+            <button
+              title={state?.fullscreen ? "退出全屏" : "全屏"}
+              aria-label={state?.fullscreen ? "退出全屏" : "全屏"}
+              onClick={() =>
+                void command({ type: "fullscreen", value: !state?.fullscreen })
+              }
+            >
+              {state?.fullscreen ? (
+                <Minimize size={19} />
+              ) : (
+                <Maximize size={19} />
+              )}
+            </button>
+          </div>
         </div>
       </footer>
     </div>
+  );
+  return (
+    <>
+      <div className="viewer viewer-video video-player video-underlay" />
+      {surface && createPortal(player, surface)}
+    </>
   );
 }

@@ -30,6 +30,10 @@ export default defineConfig({
   },
   renderer: {
     root: "src/renderer",
+    resolve: {
+      // Folia source files use @/ paths relative to vendor/folia/src.
+      alias: { "@": resolve("vendor/folia/src") },
+    },
     plugins: [
       traditionalLocalePlugin(),
       icuFoliaDataPlugin(),

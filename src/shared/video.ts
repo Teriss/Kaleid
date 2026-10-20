@@ -87,6 +87,7 @@ export type VideoCommand =
   | { type: "track"; kind: "audio" | "sub"; id: number | "no" }
   | { type: "fullscreen"; value: boolean };
 export interface VideoAPI {
+  overlay(state: VideoOverlayState): Promise<void>;
   open(input: {
     mediaId: string;
     sessionId: string;
@@ -111,7 +112,18 @@ export interface VideoAPI {
 }
 export interface VideoInput {
   sessionId: string;
-  action: "fullscreen" | "escape" | "activity" | "back" | "forward";
+  action:
+    | "fullscreen"
+    | "escape"
+    | "activity"
+    | "edge-enter"
+    | "edge-leave"
+    | "back"
+    | "forward";
+}
+export interface VideoOverlayState {
+  visible: boolean;
+  regions: { x: number; y: number; width: number; height: number }[];
 }
 export interface VideoEnhancement {
   generic: boolean;

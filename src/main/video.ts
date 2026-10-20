@@ -72,11 +72,25 @@ const observed = [
 export function installVideo(
   getWindow: () => BrowserWindow | null,
   call: Call,
+  overlay?: {
+    suspend(value: boolean): void;
+    focusControls(reverse: boolean): boolean;
+    onEdgeActivity(callback: (active: boolean) => void): void;
+  },
 ) {
   let current: Playback | undefined;
   let opening: Promise<unknown> = Promise.resolve();
   let quitting = false;
   let quitPending = false;
+  const publishEdgeInput = (active: boolean) => {
+    const p = current;
+    if (!p || p.closed || current !== p) return;
+    getWindow()?.webContents.send("video:input", {
+      sessionId: p.state.sessionId,
+      action: active ? "edge-enter" : "edge-leave",
+    });
+  };
+  overlay?.onEdgeActivity(publishEdgeInput);
   const exports = new VideoExports(
     path.join(app.getPath("userData"), "video-export-temporaries.json"),
     (jobs) => getWindow()?.webContents.send("video:exports", jobs),
@@ -319,6 +333,24 @@ export function installVideo(
       event.args?.[0] === "kaleid-input"
     ) {
       const action = event.args[1];
+      if (action === "activity" && ["tab", "backtab"].includes(event.args[2])) {
+        const contents = getWindow()?.webContents;
+        const modifiers: "shift"[] =
+          event.args[2] === "backtab" ? ["shift"] : [];
+        if (!overlay?.focusControls(event.args[2] === "backtab")) {
+          contents?.focus();
+          contents?.sendInputEvent({
+            type: "keyDown",
+            keyCode: "Tab",
+            modifiers,
+          });
+          contents?.sendInputEvent({
+            type: "keyUp",
+            keyCode: "Tab",
+            modifiers,
+          });
+        }
+      }
       if (
         ["fullscreen", "escape", "activity", "back", "forward"].includes(action)
       )
@@ -498,7 +530,17 @@ export function installVideo(
           "MOUSE_MOVE script-message kaleid-input activity",
           "WHEEL_UP add volume 5",
           "WHEEL_DOWN add volume -5",
-        ].join("\n"),
+          "TAB script-message kaleid-input activity tab",
+          "Shift+TAB script-message kaleid-input activity backtab",
+        ]
+          .map((binding) =>
+            /^(SPACE|LEFT|RIGHT|Shift\+LEFT|Shift\+RIGHT|UP|DOWN|m|MBTN_LEFT|WHEEL_UP|WHEEL_DOWN) /.test(
+              binding,
+            )
+              ? `${binding}; script-message kaleid-input activity`
+              : binding,
+          )
+          .join("\n"),
       );
       if (p.closed || current !== p) return;
       p.mpv = spawn(
@@ -679,6 +721,9 @@ export function installVideo(
           saveJob: Promise.resolve(),
         };
         current = p;
+        // Replay the cursor edge state after a session swap in case the pointer
+        // entered the edge before this playback session took ownership.
+        overlay?.onEdgeActivity(publishEdgeInput);
         const stopping = previous ? cleanup(previous) : Promise.resolve();
         opening = opening
           .catch(() => {})
@@ -735,6 +780,7 @@ export function installVideo(
         validateExport(input, source.duration);
         const mark = (n: number) => n.toFixed(3).replace(".", "-");
         p.dialogOpen = true;
+        overlay?.suspend(true);
         if (p.bounds)
           p.host?.stdin.write(
             JSON.stringify({ ...p.bounds, visible: false }) + "\n",
@@ -755,6 +801,7 @@ export function installVideo(
           });
         } finally {
           p.dialogOpen = false;
+          overlay?.suspend(false);
           if (!p.closed && current === p && p.bounds)
             p.host?.stdin.write(
               JSON.stringify({ ...p.bounds, visible: true }) + "\n",
@@ -810,6 +857,7 @@ export function installVideo(
       }
       if (method === "subtitle") {
         p.dialogOpen = true;
+        overlay?.suspend(true);
         if (p.bounds)
           p.host?.stdin.write(
             JSON.stringify({ ...p.bounds, visible: false }) + "\n",
@@ -825,6 +873,7 @@ export function installVideo(
           });
         } finally {
           p.dialogOpen = false;
+          overlay?.suspend(false);
         }
         if (
           result.canceled ||

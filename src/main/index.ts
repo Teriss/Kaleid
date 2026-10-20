@@ -19,6 +19,7 @@ import { byteRange, isWithin, normalized } from "./core";
 import { EXTENSIONS } from "./core";
 import { installMusic } from "./music";
 import { installVideo } from "./video";
+import { installVideoOverlay } from "./videoOverlay";
 import type { MediaQuery, Settings } from "../shared/types";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -219,7 +220,8 @@ void app
       ? path.join(process.resourcesPath, "video-runtime")
       : path.resolve(here, "../../artifacts/video-runtime");
     const musicService = installMusic(() => window, call);
-    const videoService = installVideo(() => window, call);
+    const videoOverlay = installVideoOverlay(() => window);
+    const videoService = installVideo(() => window, call, videoOverlay);
     service = utilityProcess.fork(path.join(here, "worker.js"), [], {
       env: { ...process.env, MEDIA_BROWSER_DATA: app.getPath("userData") },
       serviceName: "Media Library",
@@ -540,7 +542,7 @@ void app
           sandbox: true,
         },
       });
-      window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      videoOverlay.bindWindow(window);
       videoService.bindWindow(window);
       window.webContents.on("will-navigate", (event) => event.preventDefault());
       window.webContents.session.setPermissionRequestHandler(

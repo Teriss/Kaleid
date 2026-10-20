@@ -207,6 +207,18 @@ async function nativeCommand(application, command) {
     });
   });
 }
+function moveSystemCursor(x, y) {
+  const result = execFileSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-Command",
+      `$source = 'using System.Runtime.InteropServices; public static class KaleidCursor { [StructLayout(LayoutKind.Sequential)] public struct Point { public int X; public int Y; } [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern bool GetCursorPos(out Point point); }'; Add-Type -TypeDefinition $source; $moved = [KaleidCursor]::SetCursorPos(${Math.round(x)}, ${Math.round(y)}); $point = [KaleidCursor+Point]::new(); [KaleidCursor]::GetCursorPos([ref]$point) | Out-Null; Write-Output "$moved,$($point.X),$($point.Y)"`,
+    ],
+    { windowsHide: true, encoding: "utf8" },
+  );
+  return result.trim();
+}
 for (const scale of scales) {
   const application = await electron.launch({
     executablePath:
@@ -515,7 +527,7 @@ for (const scale of scales) {
     await page.getByRole("button", { name: "媒体库", exact: true }).click();
     await page
       .locator(".library-picker")
-      .getByRole("button", { name: "视频验收", exact: true })
+      .getByRole("button", { name: lib.name, exact: true })
       .click();
     await page.getByLabel("排序方式").selectOption("name");
     await page.getByRole("button", { name: "显示方式", exact: true }).click();
@@ -530,13 +542,119 @@ for (const scale of scales) {
       .getByRole("textbox", { name: "搜索媒体", exact: true })
       .press("Enter");
     const tile = page.getByRole("button", { name: /^(打开|聚焦) 01 测试$/ });
+    const popup = application.waitForEvent("window");
     await tile.first().dblclick();
-    await page
+    const controlsPage = await popup;
+    await controlsPage
       .locator('.video-player[data-status="ready"]')
       .waitFor({ timeout: 35000 });
-    await page.getByRole("button", { name: "选集", exact: true }).click();
-    assert.equal(await page.locator(".video-episodes button").count(), 73);
-    await page.screenshot({ path: path.join(output, `controls-${scale}.png`) });
+    const dismissResume = controlsPage.getByRole("button", {
+      name: "关闭续播提示",
+    });
+    if (await dismissResume.isVisible()) await dismissResume.click();
+    await controlsPage.waitForFunction(
+      () =>
+        document.querySelector(".video-player")?.dataset.chrome === "hidden",
+      undefined,
+      { timeout: 5000 },
+    );
+    await page.evaluate(() => {
+      window.__edgeInputs = [];
+      window.video.onInput((input) => window.__edgeInputs.push(input));
+    });
+    const windowGeometry = await application.evaluate(({ BrowserWindow }) => {
+      const main = BrowserWindow.getAllWindows().find(
+        (candidate) => !candidate.getParentWindow(),
+      );
+      const bounds = main.getBounds();
+      return {
+        bounds,
+        top: { x: bounds.x + bounds.width / 2, y: bounds.y + 8 },
+        bottom: {
+          x: bounds.x + bounds.width / 2,
+          y: bounds.y + bounds.height - 8,
+        },
+        center: {
+          x: bounds.x + bounds.width / 2,
+          y: bounds.y + bounds.height / 2,
+        },
+      };
+    });
+    console.log("Video window edge coordinates:", windowGeometry);
+    for (const edge of ["top", "bottom"]) {
+      const previousInputCount = await page.evaluate(
+        () => window.__edgeInputs.length,
+      );
+      console.log(
+        `Moving cursor to ${edge} edge:`,
+        moveSystemCursor(windowGeometry[edge].x, windowGeometry[edge].y),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      console.log("Edge input after move:", {
+        edge,
+        cursor: await application.evaluate(({ screen }) =>
+          screen.getCursorScreenPoint(),
+        ),
+        inputs: await page.evaluate(() => window.__edgeInputs),
+      });
+      let chrome = await controlsPage
+        .locator(".video-player")
+        .getAttribute("data-chrome");
+      if (chrome !== "visible") {
+        await controlsPage.waitForFunction(
+          () =>
+            document.querySelector(".video-player")?.dataset.chrome ===
+            "visible",
+          undefined,
+          { timeout: 3000 },
+        );
+        chrome = "visible";
+      }
+      const edgeInputs = (await page.evaluate(() => window.__edgeInputs)).slice(
+        previousInputCount,
+      );
+      assert.ok(
+        edgeInputs.some((input) => input.action === "edge-enter"),
+        `${edge} edge emits a wake event: ${JSON.stringify(edgeInputs)}`,
+      );
+      assert.equal(chrome, "visible", `${edge} edge wakes video controls`);
+      if (edge === "top") {
+        moveSystemCursor(windowGeometry.center.x, windowGeometry.center.y);
+        await controlsPage.waitForFunction(
+          () =>
+            document.querySelector(".video-player")?.dataset.chrome ===
+            "hidden",
+          undefined,
+          { timeout: 3500 },
+        );
+        assert.equal(
+          await controlsPage
+            .locator(".video-player")
+            .getAttribute("data-chrome"),
+          "hidden",
+          "controls hide after the cursor leaves the edge",
+        );
+      }
+    }
+    await controlsPage
+      .getByRole("button", { name: "选集", exact: true })
+      .click();
+    assert.equal(
+      await controlsPage.locator(".video-episodes button").count(),
+      73,
+    );
+    if (process.env.KALEID_VIDEO_EDGE_ONLY === "1") {
+      results.push({
+        scale,
+        ui: "idle hide, top and bottom edge wake, queue",
+        result: "passed",
+      });
+      console.log("PASS idle hide and top/bottom edge wake", scale);
+      break;
+    }
+    await controlsPage.screenshot({
+      path: path.join(output, `controls-${scale}.png`),
+    });
     if (scale === scales[0] && process.env.KALEID_VIDEO_HOLD !== "1") {
       await page.getByRole("button", { name: "播放设置", exact: true }).click();
       await page
@@ -650,13 +768,15 @@ for (const scale of scales) {
       );
       // A stale native callback must not navigate the current viewer.
       await application.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows()[0].webContents.send("video:input", {
-          sessionId: "expired",
-          action: "back",
-        }),
+        BrowserWindow.getAllWindows()
+          .find((candidate) => !candidate.getParentWindow())
+          .webContents.send("video:input", {
+            sessionId: "expired",
+            action: "back",
+          }),
       );
       await page.waitForTimeout(200);
-      assert.equal(await page.locator(".video-player").count(), 1);
+      assert.equal(await page.locator(".video-underlay").count(), 1);
       await application.evaluate(({ dialog }, directory) => {
         let count = 0;
         dialog.showSaveDialog = async () => ({
@@ -691,10 +811,12 @@ for (const scale of scales) {
       );
       await page.getByRole("button", { name: "全屏", exact: true }).click();
       await nativeCommand(application, ["keypress", "MBTN_BACK"]);
-      await page.locator(".video-player").waitFor({ state: "detached" });
+      await page.locator(".video-underlay").waitFor({ state: "detached" });
       assert.equal(
         await application.evaluate(({ BrowserWindow }) =>
-          BrowserWindow.getAllWindows()[0].isFullScreen(),
+          BrowserWindow.getAllWindows()
+            .find((candidate) => !candidate.getParentWindow())
+            .isFullScreen(),
         ),
         false,
       );
@@ -723,7 +845,7 @@ for (const scale of scales) {
       await page
         .getByRole("button", { name: "返回媒体库", exact: true })
         .dispatchEvent("mouseup", { button: 3 });
-      await page.locator(".video-player").waitFor({ state: "detached" });
+      await page.locator(".video-underlay").waitFor({ state: "detached" });
       await tile.first().dblclick();
       await page
         .locator('.video-player[data-status="ready"]')
@@ -737,9 +859,15 @@ for (const scale of scales) {
       });
     }
     if (process.env.KALEID_VIDEO_HOLD === "1") {
-      await page.getByRole("button", { name: "暂停", exact: true }).click();
+      await controlsPage
+        .getByRole("button", { name: "暂停", exact: true })
+        .click();
       console.log("HOLD", scale, "native surface ready for capture");
-      await new Promise((resolve) => setTimeout(resolve, 60000));
+      const holdMs = Math.max(
+        0,
+        Number(process.env.KALEID_VIDEO_HOLD_MS ?? 60000),
+      );
+      if (holdMs) await new Promise((resolve) => setTimeout(resolve, holdMs));
     }
     if (scale === scales[0] && process.env.KALEID_VIDEO_HOLD !== "1") {
       await page
@@ -773,26 +901,32 @@ for (const scale of scales) {
       );
       console.log("PASS directory auto-next starts next episode");
     }
-    await page.keyboard.press("Escape");
-    await page.locator(".video-panel").waitFor({ state: "detached" });
-    await page.getByRole("button", { name: "全屏", exact: true }).click();
+    await controlsPage.keyboard.press("Escape");
+    await controlsPage.locator(".video-panel").waitFor({ state: "detached" });
+    await controlsPage
+      .getByRole("button", { name: "全屏", exact: true })
+      .click();
     await page.waitForTimeout(500);
     assert.equal(
       await application.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows()[0].isFullScreen(),
+        BrowserWindow.getAllWindows()
+          .find((candidate) => !candidate.getParentWindow())
+          .isFullScreen(),
       ),
       true,
     );
-    await page.keyboard.press("Escape");
+    await controlsPage.keyboard.press("Escape");
     await page.waitForTimeout(500);
     assert.equal(
       await application.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows()[0].isFullScreen(),
+        BrowserWindow.getAllWindows()
+          .find((candidate) => !candidate.getParentWindow())
+          .isFullScreen(),
       ),
       false,
     );
-    await page.keyboard.press("Escape");
-    await page.locator(".video-player").waitFor({ state: "detached" });
+    await controlsPage.keyboard.press("Escape");
+    await page.locator(".video-underlay").waitFor({ state: "detached" });
     assert.deepEqual(errors, []);
     results.push({
       scale,
