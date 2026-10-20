@@ -14,6 +14,18 @@ async function collect(target) {
 }
 for (const name of [
   "src",
+  "native/video-host/Program.cs",
+  "native/video-host/VideoHost.csproj",
+  "scripts/prepare-video.mjs",
+  "scripts/video-runtime.json",
+  "scripts/video-licenses",
+  "scripts/video-shaders",
+  "scripts/test-video.mjs",
+  "scripts/test-video-tools.mjs",
+  "scripts/test-video-playback.mjs",
+  "scripts/test-navigation.mjs",
+  "scripts/test-navigation-playback.mjs",
+  "scripts/benchmark-video.mjs",
   "scripts/generate-icon.mjs",
   "scripts/package-source.mjs",
   "build/kaleid-icon.png",
@@ -21,6 +33,7 @@ for (const name of [
   "docs/music-port-status.md",
   "docs/ui-refinements.md",
   "docs/wall-engine.md",
+  "docs/video-playback.md",
   "package.json",
   "package-lock.json",
   "electron.vite.config.ts",
@@ -31,8 +44,5 @@ for (const name of [
 ])
   await collect(name);
 await fs.mkdir("artifacts", { recursive: true });
-await fs.writeFile(
-  "artifacts/Kaleid-Source.zip",
-  zipSync(files, { level: 6 }),
-);
+await fs.writeFile("artifacts/Kaleid-Source.zip", zipSync(files, { level: 6 }));
 console.log(`Source archive created: ${Object.keys(files).length} files`);

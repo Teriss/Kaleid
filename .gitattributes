@@ -1,0 +1,2 @@
+# Preserve the pinned upstream shader bytes on Windows checkouts.
+scripts/video-shaders/*.glsl -text

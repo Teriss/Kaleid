@@ -7,6 +7,12 @@
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
+    "video:prepare": "node scripts/prepare-video.mjs",
+    "test:navigation": "node --experimental-transform-types --test scripts/test-navigation.mjs",
+    "test:navigation:playback": "node scripts/test-navigation-playback.mjs",
+    "test:video": "node --experimental-transform-types --test scripts/test-video.mjs scripts/test-video-tools.mjs",
+    "predev": "npm run video:prepare",
+    "prebuild": "npm run video:prepare",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build && node --check out/main/index.js",
     "preview": "electron-vite preview",
@@ -55,6 +61,18 @@
       "createDesktopShortcut": true
     },
     "extraResources": [
+      {
+        "from": "artifacts/video-runtime",
+        "to": "video-runtime",
+        "filter": [
+          "mpv/**/*",
+          "ffprobe/**/*",
+          "host/**/*",
+          "licenses/**/*",
+          "shaders/**/*",
+          "runtime-lock.json"
+        ]
+      },
       {
         "from": "build/kaleid-icon.png",
         "to": "kaleid-icon.png"
@@ -128,6 +146,7 @@
     "@types/react-dom": "^19.3.0",
     "@types/yauzl": "^3.4.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "7zip-bin": "5.2.0",
     "electron": "^44.9.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^6.0.0",

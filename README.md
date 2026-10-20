@@ -4,7 +4,7 @@ Windows 多媒体浏览器，支持图片、音乐、视频、小说和漫画。
 
 ## 运行与打包
 
-需要 Node.js 24 或兼容的新版本及 Windows x64。
+需要 Node.js 24 或兼容的新版本、.NET 10 SDK 及 Windows x64。视频宿主以自包含方式打包，安装版无需另外安装 .NET。
 
 ```powershell
 npm ci
@@ -20,6 +20,8 @@ npm run dist         # Windows x64 安装包和对应源码归档
 ```
 
 安装包默认输出到 `release/`；构建时生成的源码归档会随安装包附带。构建产物保留在本地，不纳入版本管理。
+
+开发和构建会自动准备固定版本的 mpv／FFprobe 及原生视频宿主，首次需要下载播放组件；也可执行 `npm run video:prepare`。组件使用 SHA-256 校验，后续复用本地缓存，详见 [视频播放说明](docs/video-playback.md)。
 
 ## 浏览
 
@@ -46,7 +48,7 @@ npm run dist         # Windows x64 安装包和对应源码归档
 
 ## 边界与许可
 
-视频解码取决于 Chromium 编码器；不提供转码。不支持 DRM EPUB、PDF 或 CBR。安装包未签名，macOS／Linux 未验收。固定音乐依赖仍有审计项，详见移植说明。
+视频由内置 mpv 解码，支持 MKV、MP4、MOV、AVI、RMVB、TS 等常见格式，以及字幕／音轨切换、续播、选集、可选连播、MP4／GIF 片段导出及实时超分。超分默认关闭，提供跨显卡的 FSRCNNX 和 NVIDIA RTX 接口；实际兼容性取决于编码、显卡与驱动，详见[视频播放说明](docs/video-playback.md)。不支持 DRM EPUB、PDF 或 CBR。安装包未签名，macOS／Linux 未验收。固定音乐依赖仍有审计项，详见移植说明。
 
 本项目包含 Folia 的 AGPL-3.0 源码，并按该许可提供对应源码。来源及其他依赖声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、[LICENSE](LICENSE) 和 [适配说明](vendor/folia/ADAPTATIONS.md)。
 

@@ -59,6 +59,10 @@ export interface Library {
   createdAt: number;
 }
 export interface MediaItem {
+  videoCodec?: string;
+  audioCodec?: string;
+  videoInfoVersion?: number;
+  videoProbeError?: string;
   sourceRef?: import("./music").PlaybackSourceRef;
   remoteCover?: string;
   remoteAudio?: string;
@@ -90,6 +94,7 @@ export interface MediaItem {
   libraryIds: string[];
 }
 export interface Progress {
+  completed?: boolean;
   position?: number;
   duration?: number;
   cfi?: string;

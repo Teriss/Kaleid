@@ -18,12 +18,14 @@ import { Readable } from "node:stream";
 import { byteRange, isWithin, normalized } from "./core";
 import { EXTENSIONS } from "./core";
 import { installMusic } from "./music";
+import { installVideo } from "./video";
 import type { MediaQuery, Settings } from "../shared/types";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 app.setPath(
   "userData",
-  process.env.MEDIA_BROWSER_TEST_DATA || path.join(app.getPath("appData"), "映间"),
+  process.env.MEDIA_BROWSER_TEST_DATA ||
+    path.join(app.getPath("appData"), "映间"),
 );
 const applicationIcon = app.isPackaged
   ? path.join(process.resourcesPath, "kaleid-icon.png")
@@ -213,7 +215,11 @@ function validateSettings(input: Settings): Settings {
 void app
   .whenReady()
   .then(() => {
+    process.env.MEDIA_BROWSER_VIDEO_RUNTIME = app.isPackaged
+      ? path.join(process.resourcesPath, "video-runtime")
+      : path.resolve(here, "../../artifacts/video-runtime");
     const musicService = installMusic(() => window, call);
+    const videoService = installVideo(() => window, call);
     service = utilityProcess.fork(path.join(here, "worker.js"), [], {
       env: { ...process.env, MEDIA_BROWSER_DATA: app.getPath("userData") },
       serviceName: "Media Library",
@@ -535,6 +541,7 @@ void app
         },
       });
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      videoService.bindWindow(window);
       window.webContents.on("will-navigate", (event) => event.preventDefault());
       window.webContents.session.setPermissionRequestHandler(
         (_contents, _permission, callback) => callback(false),
@@ -589,4 +596,4 @@ void app
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
-app.on("before-quit", () => service?.kill());
+app.on("will-quit", () => service?.kill());

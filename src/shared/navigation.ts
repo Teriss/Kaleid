@@ -40,6 +40,73 @@ export interface NavigationEntry {
   manageId?: string;
 }
 
+function normalizedPath(value: string) {
+  const isUnc = /^(?:\\\\|\/\/)/.test(value);
+  let path = value.replace(/[\\/]+/g, "\\");
+  if (isUnc) path = `\\${path}`;
+  const unc = path.startsWith("\\\\");
+  const driveRoot = /^[a-z]:\\$/i.test(path);
+  const posixRoot = path === "\\";
+  if (unc) {
+    const parts = path.slice(2).split("\\").filter(Boolean);
+    if (parts.length <= 2) return `\\\\${parts.join("\\")}\\`;
+  }
+  if (driveRoot || posixRoot) return path;
+  return path.replace(/\\+$/, "");
+}
+
+function pathIsWithin(root: string, folder: string) {
+  const base = normalizedPath(root).toLowerCase();
+  const target = normalizedPath(folder).toLowerCase();
+  return (
+    target === base ||
+    (base.endsWith("\\")
+      ? target.startsWith(base)
+      : target.startsWith(`${base}\\`))
+  );
+}
+
+/** Returns the parent browser location without crossing an imported root. */
+export function parentLibraryLocation(
+  scope: BrowseLocation,
+  roots: readonly string[] | undefined,
+): BrowseLocation | null {
+  if (
+    scope.view !== "library" ||
+    !scope.libraryId ||
+    !scope.folder ||
+    !roots?.length
+  )
+    return null;
+  const folder = normalizedPath(scope.folder);
+  const root = roots
+    .map(normalizedPath)
+    .filter((candidate) => pathIsWithin(candidate, folder))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!root) return null;
+  if (folder.toLowerCase() === root.toLowerCase())
+    return { view: "library", libraryId: scope.libraryId, type: scope.type };
+
+  const separator = folder.lastIndexOf("\\");
+  if (separator < 0) return null;
+  let parent = folder.slice(0, separator);
+  if (/^[a-z]:$/i.test(parent)) parent += "\\";
+  if (
+    parent.startsWith("\\\\") &&
+    parent.slice(2).split("\\").filter(Boolean).length === 2
+  )
+    parent += "\\";
+  if (!parent && folder.startsWith("\\")) parent = "\\";
+  if (!parent || !pathIsWithin(root, parent)) return null;
+  if (parent.toLowerCase() === root.toLowerCase()) parent = root;
+  return {
+    view: "library",
+    libraryId: scope.libraryId,
+    type: scope.type,
+    folder: parent,
+  };
+}
+
 /** A session history of UI destinations, never commands that mutate media or playback. */
 export class NavigationHistory {
   private entries: NavigationEntry[] = [];
@@ -105,8 +172,21 @@ export class NavigationHistory {
         sort: this.current.memory.sort,
       };
   }
-  back() {
-    return this.canBack ? structuredClone(this.entries[--this.cursor]) : null;
+  back(parentFallback?: NavigationEntry) {
+    if (this.canBack) return structuredClone(this.entries[--this.cursor]);
+    if (
+      this.cursor !== 0 ||
+      !parentFallback ||
+      NavigationHistory.destination(this.entries[0]) ===
+        NavigationHistory.destination(parentFallback)
+    )
+      return null;
+    // Keep the current and forward entries in place so Forward returns to the
+    // child folder; discard the farthest destination if the journal is full.
+    if (this.entries.length >= 200) this.entries.pop();
+    this.entries.splice(0, 0, structuredClone(parentFallback));
+    this.cursor = 1;
+    return structuredClone(this.entries[--this.cursor]);
   }
   forward() {
     return this.canForward

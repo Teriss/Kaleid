@@ -1,0 +1,22 @@
+{
+  "release": "20261020",
+  "shader": {
+    "version": "FSRCNNX 1.1",
+    "file": "FSRCNNX_x2_8-0-4-1.glsl",
+    "url": "https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/FSRCNNX_x2_8-0-4-1.glsl",
+    "sha256": "e800dbc5c1c95185cc82216c597724533ff5f2880179f256eef600f03e8dc2ae"
+  },
+  "mpv": {
+    "assetId": 657855465,
+    "size": 34014613,
+    "file": "mpv-x86_64-20261020-git-6a262d11f6.7z",
+    "sha256": "cbeda25235a24e9145f6ab3e784052e437e6e5aac306b682afd2bbf0070ddea8"
+  },
+  "ffprobe": {
+    "version": "5.1.0",
+    "size": 28822426,
+    "url": "https://registry.npmjs.org/@ffprobe-installer/win32-x64/-/win32-x64-5.1.0.tgz",
+    "file": "ffprobe-win32-x64-5.1.0.tgz",
+    "sha256": "97992b5e3b651c7df625831fd369eecc5ec0e9532ac98921138b1c4fbc8de96e"
+  }
+}

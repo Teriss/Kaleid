@@ -13,11 +13,12 @@ import {
   Settings2,
 } from "lucide-react";
 import ePub from "epubjs";
+import VideoPlayer from "./VideoPlayer";
 import { readerColors } from "../../shared/readerColors";
 import DOMPurify from "dompurify";
 import type { ComicPage, MediaItem, Progress } from "../../shared/types";
 import { IconButton } from "./components";
-import { act, report, resource, useApp, usePlayback } from "./store";
+import { act, report, resource, useApp } from "./store";
 
 export default function Viewer({
   item,
@@ -26,8 +27,10 @@ export default function Viewer({
   switchItem,
   navigation,
   passive = false,
+  videoSort = "name",
 }: {
   passive?: boolean;
+  videoSort?: "name" | "added" | "recent";
   item: MediaItem;
   items: MediaItem[];
   close(): void;
@@ -41,6 +44,7 @@ export default function Viewer({
   const [tools, setTools] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
+    if (item.type === "video") return;
     const key = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !document.querySelector("dialog[open]"))
         close();
@@ -50,7 +54,7 @@ export default function Viewer({
       window.removeEventListener("keydown", key);
       clearTimeout(timer.current);
     };
-  }, [close]);
+  }, [close, item.type]);
   useEffect(() => {
     if (passive) return;
     void act(async () => {
@@ -77,6 +81,16 @@ export default function Viewer({
     const target = group[index + direction];
     if (target) switchItem(target);
   }
+  if (item.type === "video")
+    return (
+      <VideoPlayer
+        item={item}
+        autoPlay={!passive}
+        close={close}
+        switchItem={switchItem}
+        sort={videoSort}
+      />
+    );
   return (
     <div
       className={`viewer viewer-${item.type} ${tools ? "" : "quiet"}`}
@@ -112,9 +126,6 @@ export default function Viewer({
           hasPrevious={index > 0}
           hasNext={index < (navigation?.total ?? group.length) - 1}
         />
-      )}
-      {item.type === "video" && (
-        <VideoViewer key={item.id} item={item} autoPlay={!passive} />
       )}
       {item.type === "novel" && <NovelViewer key={item.id} item={item} />}
       {item.type === "comic" && <ComicViewer key={item.id} item={item} />}
@@ -316,98 +327,6 @@ function ImageViewer({
         </IconButton>
       </div>
     </>
-  );
-}
-function VideoViewer({
-  item,
-  autoPlay,
-}: {
-  item: MediaItem;
-  autoPlay: boolean;
-}) {
-  const ref = useRef<HTMLVideoElement>(null);
-  const [error, setError] = useState(false);
-  const lastSaved = useRef(0);
-  useEffect(() => {
-    const video = ref.current!;
-    return () => {
-      void window.media
-        .saveProgress(item.id, {
-          position: video.currentTime,
-          duration: Number.isFinite(video.duration) ? video.duration : 0,
-        })
-        .catch(report);
-    };
-  }, [item.id]);
-  return (
-    <div className="video-canvas">
-      {error ? (
-        <div className="viewer-message">
-          <h2>暂时无法播放这个视频</h2>
-          <p>文件可能不可用，或其音视频编码不受支持。</p>
-          <p>首版支持 H.264/AAC MP4 和 VP8/VP9 + Opus WebM。</p>
-          <button
-            className="button secondary"
-            onClick={() => void act(() => window.media.reveal(item.id))}
-          >
-            显示文件位置
-          </button>
-        </div>
-      ) : (
-        <video
-          ref={ref}
-          src={resource(item)}
-          controls
-          autoPlay={autoPlay}
-          onPlay={() => usePlayback.setState({ playing: false })}
-          onError={() => setError(true)}
-          onLoadedMetadata={() => {
-            ref.current!.currentTime = Math.min(
-              item.progress?.position ?? 0,
-              Math.max(0, ref.current!.duration - 1),
-            );
-          }}
-          onTimeUpdate={() => {
-            const video = ref.current!;
-            if (Date.now() - lastSaved.current > 5000) {
-              lastSaved.current = Date.now();
-              void window.media
-                .saveProgress(item.id, {
-                  position: video.currentTime,
-                  duration: video.duration,
-                })
-                .catch(report);
-            }
-          }}
-          onEnded={() =>
-            void window.media
-              .saveProgress(item.id, {
-                position: 0,
-                duration: ref.current!.duration,
-              })
-              .catch(report)
-          }
-        />
-      )}
-      <div className="video-tools">
-        <label>
-          播放速度{" "}
-          <select
-            onChange={(e) => {
-              if (ref.current)
-                ref.current.playbackRate = Number(e.target.value);
-            }}
-            defaultValue="1"
-          >
-            {[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => (
-              <option key={speed} value={speed}>
-                {speed}×
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-    </div>
   );
 }
 function colorEpubDocument(doc: Document, background: string) {

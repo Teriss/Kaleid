@@ -1,5 +1,6 @@
 import { normalizeLayout, supportedLayouts } from "./layouts/policy";
 import HorizontalGallery from "./layouts/HorizontalGallery";
+import VideoExportTasks from "./VideoExportTasks";
 import {
   useCallback,
   useEffect,
@@ -38,6 +39,7 @@ import {
 import {
   NavigationHistory,
   MediaNavigationHistory,
+  parentLibraryLocation,
   type NavigationEntry,
   type NavigationSurface,
 } from "../../shared/navigation";
@@ -98,7 +100,6 @@ import {
 } from "./music/catalog";
 import Viewer from "./Viewers";
 import SettingsPanel from "./SettingsPanel";
-import useVideoPosters from "./useVideoPosters";
 import useBrowseTransition from "./layouts/useBrowseTransition";
 
 const LAYOUTS = [
@@ -260,7 +261,8 @@ export default function App() {
     const mouseUp = (event: MouseEvent) => {
       if (event.button !== 3 && event.button !== 4) return;
       event.preventDefault();
-      if (!typing(event)) historyMoveRef.current(event.button === 3 ? -1 : 1);
+      if (!typing(event) || document.querySelector(".video-player"))
+        historyMoveRef.current(event.button === 3 ? -1 : 1);
     };
     const keyboard = (event: KeyboardEvent) => {
       if (
@@ -289,10 +291,14 @@ export default function App() {
     window.addEventListener("mousedown", mouseDown, true);
     window.addEventListener("mouseup", mouseUp, true);
     window.addEventListener("keydown", keyboard, true);
+    const videoNavigate = (event: Event) =>
+      historyMoveRef.current((event as CustomEvent).detail === "back" ? -1 : 1);
+    window.addEventListener("video:navigate", videoNavigate);
     return () => {
       window.removeEventListener("mousedown", mouseDown, true);
       window.removeEventListener("mouseup", mouseUp, true);
       window.removeEventListener("keydown", keyboard, true);
+      window.removeEventListener("video:navigate", videoNavigate);
     };
   }, []);
   useEffect(() => {
@@ -329,7 +335,6 @@ export default function App() {
     });
   }, [viewer?.source]);
   const loadedItems = media.source.cachedItems();
-  useVideoPosters(loadedItems);
   const remember = useCallback(
     (patch: Partial<BrowseMemory>) => {
       if (scopeKey(scopeRef.current) !== key) return;
@@ -644,21 +649,8 @@ export default function App() {
     else navigate({ view });
   }
   function goParent() {
-    if (scope.view !== "library" || !scope.folder || !activeLibrary) return;
-    const folder = scope.folder;
-    const isRoot = activeLibrary.roots.some(
-      (root) => root.toLowerCase() === folder.toLowerCase(),
-    );
-    const separator = Math.max(
-      folder.lastIndexOf("\\"),
-      folder.lastIndexOf("/"),
-    );
-    const parent = isRoot
-      ? undefined
-      : separator > 0
-        ? folder.slice(0, separator)
-        : undefined;
-    navigate({ view: "library", libraryId: scope.libraryId, folder: parent });
+    const parent = parentLibraryLocation(scope, activeLibrary?.roots);
+    if (parent) navigate(parent);
   }
   function changeLayout(layout: MediaLayout) {
     if (!supportedLayouts(currentType).includes(layout)) return;
@@ -968,6 +960,10 @@ export default function App() {
     }
   }
   historyMoveRef.current = (direction) => {
+    if (direction < 0 && viewer?.item.type === "video") {
+      closeViewer();
+      return;
+    }
     const platformMenu = document.querySelector<HTMLDetailsElement>(
       ".music-platform-menu[open]",
     );
@@ -993,8 +989,32 @@ export default function App() {
       scopeKey(history.current.current.scope) === key
     )
       history.current.updateMemory(memoryRef.current);
+    let parentFallback: NavigationEntry | undefined;
+    if (direction < 0 && !history.current.canBack) {
+      const parent = parentLibraryLocation(scope, activeLibrary?.roots);
+      if (parent) {
+        const current = snapshotRef.current();
+        parentFallback = {
+          ...current,
+          surfaceStack: [],
+          scope: parent,
+          memory: readMemory(parent),
+          search: "",
+          overlay: null,
+          viewer: undefined,
+          musicDetailId: undefined,
+          musicExpanded: false,
+          queueOpen: false,
+          matchOpen: false,
+          createType: null,
+          manageId: undefined,
+        };
+      }
+    }
     const entry =
-      direction < 0 ? history.current.back() : history.current.forward();
+      direction < 0
+        ? history.current.back(parentFallback)
+        : history.current.forward();
     if (entry) void restoreEntry(entry).catch(report);
   };
   useEffect(() => {
@@ -1398,7 +1418,10 @@ export default function App() {
       <span className="navigation-history-controls">
         <IconButton
           label="后退"
-          disabled={!history.current.canBack}
+          disabled={
+            !history.current.canBack &&
+            !parentLibraryLocation(scope, activeLibrary?.roots)
+          }
           onClick={() => historyMoveRef.current(-1)}
         >
           <ChevronLeft size={17} />
@@ -2196,6 +2219,7 @@ export default function App() {
       )}
       {viewer && (
         <Viewer
+          videoSort={memory.sort}
           item={viewer.item}
           passive={viewer.historyRestore}
           items={viewer.source?.cachedItems() ?? loadedItems}
@@ -2423,6 +2447,7 @@ export default function App() {
           close={() => closeSurface(() => setManage(null))}
         />
       )}
+      <VideoExportTasks />
       {toast && (
         <div className={`toast ${toastKind}`} role="status">
           <span>{toast}</span>

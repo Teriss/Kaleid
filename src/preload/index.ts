@@ -1,5 +1,46 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AppAPI } from "../shared/types";
+import type { VideoAPI } from "../shared/video";
+const video = {
+  open: (input: Parameters<VideoAPI["open"]>[0]) =>
+    ipcRenderer.invoke("video:call", "open", input),
+  close: (id: string) => ipcRenderer.invoke("video:call", "close", id),
+  command: (id: string, command: Parameters<VideoAPI["command"]>[1]) =>
+    ipcRenderer.invoke("video:call", "command", id, command),
+  bounds: (id: string, bounds: Parameters<VideoAPI["bounds"]>[1]) =>
+    ipcRenderer.invoke("video:call", "bounds", id, bounds),
+  subtitle: (id: string) => ipcRenderer.invoke("video:call", "subtitle", id),
+  queue: (id: string, sort: string) =>
+    ipcRenderer.invoke("video:call", "queue", id, sort),
+  export: (input: Parameters<VideoAPI["export"]>[0]) =>
+    ipcRenderer.invoke("video:call", "export", input),
+  exports: () => ipcRenderer.invoke("video:call", "exports"),
+  cancelExport: (id: string) =>
+    ipcRenderer.invoke("video:call", "cancelExport", id),
+  revealExport: (id: string) =>
+    ipcRenderer.invoke("video:call", "revealExport", id),
+  onExports: (callback: Parameters<VideoAPI["onExports"]>[0]) => {
+    const listener = (_event: unknown, jobs: Parameters<typeof callback>[0]) =>
+      callback(jobs);
+    ipcRenderer.on("video:exports", listener);
+    return () => ipcRenderer.removeListener("video:exports", listener);
+  },
+  onState: (callback: Parameters<VideoAPI["onState"]>[0]) => {
+    const listener = (_event: unknown, state: Parameters<typeof callback>[0]) =>
+      callback(state);
+    ipcRenderer.on("video:state", listener);
+    return () => ipcRenderer.removeListener("video:state", listener);
+  },
+  onInput: (callback: Parameters<VideoAPI["onInput"]>[0]) => {
+    const listener = (
+      _event: unknown,
+      action: Parameters<typeof callback>[0],
+    ) => callback(action);
+    ipcRenderer.on("video:input", listener);
+    return () => ipcRenderer.removeListener("video:input", listener);
+  },
+} satisfies VideoAPI;
+contextBridge.exposeInMainWorld("video", video);
 const methods = [
   "chooseFolders",
   "libraries",

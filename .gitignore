@@ -4,6 +4,8 @@ dist/
 /release*/
 /artifacts/
 /coverage/
+/native/**/bin/
+/native/**/obj/
 /playwright-report/
 /test-results/
 

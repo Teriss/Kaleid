@@ -12,6 +12,13 @@ import yauzl from "yauzl";
 import iconv from "iconv-lite";
 import { detect } from "chardet";
 import {
+  probeVideo,
+  videoPoster,
+  VIDEO_INFO_VERSION,
+  matchingSubtitles,
+} from "./videoFiles";
+import { videoPreferences } from "../shared/video";
+import {
   DEFAULT_SETTINGS,
   type Library,
   type MediaItem,
@@ -128,6 +135,89 @@ function publishIndexChange(
 }
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex").slice(0, 32);
+const videoInfoQueue = new Set<string>();
+const videoInfoActive = new Set<string>();
+let videoInfoTimer: ReturnType<typeof setTimeout> | undefined;
+function enqueueVideoInfo(id: string) {
+  videoInfoQueue.add(id);
+  if (!videoInfoTimer) videoInfoTimer = setTimeout(drainVideoInfo, 100);
+}
+function drainVideoInfo() {
+  videoInfoTimer = undefined;
+  for (const id of videoInfoQueue) {
+    if (videoInfoActive.size >= 2) break;
+    if (videoInfoActive.has(id)) continue;
+    videoInfoQueue.delete(id);
+    videoInfoActive.add(id);
+    void updateVideoInfo(id)
+      .catch((error) => console.error("Video metadata failed", error))
+      .finally(() => {
+        videoInfoActive.delete(id);
+        if (videoInfoQueue.size && !videoInfoTimer)
+          videoInfoTimer = setTimeout(drainVideoInfo, 100);
+      });
+  }
+}
+async function updateVideoInfo(id: string) {
+  const original = item(id);
+  if (original.missing || original.type !== "video") return;
+  const row = db
+    .prepare("SELECT metadata FROM media WHERE id=?")
+    .get(id) as any;
+  const initial = JSON.parse(row.metadata);
+  const file = await authorizedFile(original);
+  let details: Record<string, unknown>;
+  let poster: Buffer | undefined;
+  try {
+    details = {
+      ...(await probeVideo(file)),
+      videoProbeError: undefined,
+      videoPosterVersion: initial.indexedVersion,
+    };
+    // A cover failure must not discard valid stream metadata.
+    try {
+      poster = await videoPoster(file, details.duration as number);
+    } catch {}
+  } catch (error) {
+    details = {
+      videoInfoVersion: VIDEO_INFO_VERSION,
+      videoPosterVersion: initial.indexedVersion,
+      videoProbeError: String(error).slice(-500),
+    };
+  }
+  const latest = db.prepare("SELECT * FROM media WHERE id=?").get(id) as any;
+  if (!latest || latest.missing || latest.path !== original.path) return;
+  const metadata = JSON.parse(latest.metadata);
+  const stat = await fs.stat(file);
+  if (
+    metadata.indexedVersion !== initial.indexedVersion ||
+    stat.size !== original.size ||
+    Math.trunc(stat.mtimeMs) !== original.modifiedAt ||
+    Math.trunc(stat.ctimeMs) !== latest.changeTimeMs
+  )
+    return;
+  let cover = latest.cover;
+  if (poster)
+    cover = await thumbnail(
+      poster,
+      hash(`${id}:video:${initial.indexedVersion}`),
+    );
+  const current = db
+    .prepare("SELECT metadata FROM media WHERE id=?")
+    .get(id) as any;
+  if (
+    !current ||
+    JSON.parse(current.metadata).indexedVersion !== initial.indexedVersion
+  )
+    return;
+  Object.assign(metadata, details, { resourceVersion: Date.now() });
+  db.prepare("UPDATE media SET metadata=?,cover=? WHERE id=?").run(
+    JSON.stringify(metadata),
+    cover,
+    id,
+  );
+  publishIndexChange([id]);
+}
 function rowItem(row: any): MediaItem {
   const override = db
     .prepare("SELECT fields FROM music_overrides WHERE mediaId=?")
@@ -962,6 +1052,8 @@ async function scan(
         // media ID, but discard online metadata tied to the previous audio bytes.
         if (contentChanged && lib.type === "music" && old)
           db.prepare("DELETE FROM music_overrides WHERE mediaId=?").run(id);
+        if (contentChanged && lib.type === "video" && old)
+          db.prepare("UPDATE media SET progress=NULL WHERE id=?").run(id);
         let metadata: Record<string, unknown> = old
           ? JSON.parse(old.metadata)
           : {};
@@ -980,7 +1072,7 @@ async function scan(
               metadata = { width: info.width, height: info.height };
               cover = await thumbnail(file, id);
             }
-            if (lib.type === "music" || lib.type === "video") {
+            if (lib.type === "music") {
               const parsed = await parseFile(file, { duration: true });
               metadata = {
                 artist: parsed.common.artist,
@@ -1083,6 +1175,14 @@ async function scan(
           changedIds.add(id);
           structural = true;
         }
+        if (
+          lib.type === "video" &&
+          (metadata.videoInfoVersion !== VIDEO_INFO_VERSION ||
+            (!cover &&
+              (reason === "manual" ||
+                metadata.videoPosterVersion !== metadata.indexedVersion)))
+        )
+          enqueueVideoInfo(id);
       } catch {
         status.errors++;
       }
@@ -1851,6 +1951,50 @@ const handlers: Record<string, (...args: any[]) => any> = {
     if (active) active.cancelled = true;
   },
   item,
+  videoFile: async (id: string) => {
+    const value = item(id);
+    if (value.type !== "video" || value.kind) throw new Error("不是视频文件");
+    return { item: value, path: await authorizedFile(value) };
+  },
+  videoSubtitles: async (id: string) => {
+    const value = item(id);
+    if (value.type !== "video") throw new Error("不是视频文件");
+    const file = await authorizedFile(value);
+    const roots = value.libraryIds.flatMap((id) => library(id).roots);
+    return matchingSubtitles(file, async (candidate) => {
+      try {
+        const resolved = await fs.realpath(candidate);
+        return (
+          roots.some((root) => isWithin(root, resolved)) &&
+          (await fs.stat(resolved)).isFile()
+        );
+      } catch {
+        return false;
+      }
+    });
+  },
+  videoPreferences: () => videoPreferences(preference("video-preferences")),
+  saveVideoPreferences: (input: unknown) =>
+    savePreference("video-preferences", videoPreferences(input as any)),
+  videoQueue: (id: string, sort: string) => {
+    const value = item(id);
+    if (value.type !== "video") throw new Error("不是视频文件");
+    const rows = db
+      .prepare(
+        "SELECT * FROM media WHERE type='video' AND folder=? AND missing=0",
+      )
+      .all(value.folder)
+      .map(rowItem);
+    rows.sort((a, b) =>
+      sort === "added"
+        ? b.addedAt - a.addedAt || naturalSort(a.title, b.title)
+        : sort === "recent"
+          ? (b.lastOpened ?? 0) - (a.lastOpened ?? 0) ||
+            naturalSort(a.title, b.title)
+          : naturalSort(a.title, b.title),
+    );
+    return rows;
+  },
   resolveBrowseLocation: async (id: string, folder?: string) => {
     const lib = library(id);
     if (!folder) return null;
