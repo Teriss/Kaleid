@@ -16,7 +16,7 @@ for (const name of [
   "src",
   "scripts/generate-icon.mjs",
   "scripts/package-source.mjs",
-  "build/icon.svg",
+  "build/kaleid-icon.png",
   "vendor",
   "docs/music-port-status.md",
   "docs/ui-refinements.md",
@@ -32,7 +32,7 @@ for (const name of [
   await collect(name);
 await fs.mkdir("artifacts", { recursive: true });
 await fs.writeFile(
-  "artifacts/Yingjian-Source.zip",
+  "artifacts/Kaleid-Source.zip",
   zipSync(files, { level: 6 }),
 );
 console.log(`Source archive created: ${Object.keys(files).length} files`);

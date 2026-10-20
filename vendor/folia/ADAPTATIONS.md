@@ -1,6 +1,6 @@
-# Yingjian integration notes
+# Kaleid integration notes
 
-Upstream is fixed at `26c57f9b1b26b402a09e8943171a332215418ce6`, version 0.7.21. This folder is not a moving Git submodule. Keep its original license and comments. The original application entry points are retained as source references but are never started by Yingjian.
+Upstream is fixed at `26c57f9b1b26b402a09e8943171a332215418ce6`, version 0.7.21. This folder is not a moving Git submodule. Keep its original license and comments. The original application entry points are retained as source references but are never started by Kaleid.
 
 Local changes to upstream:
 

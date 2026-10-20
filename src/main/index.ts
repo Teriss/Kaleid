@@ -21,8 +21,13 @@ import { installMusic } from "./music";
 import type { MediaQuery, Settings } from "../shared/types";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-if (process.env.MEDIA_BROWSER_TEST_DATA)
-  app.setPath("userData", process.env.MEDIA_BROWSER_TEST_DATA);
+app.setPath(
+  "userData",
+  process.env.MEDIA_BROWSER_TEST_DATA || path.join(app.getPath("appData"), "映间"),
+);
+const applicationIcon = app.isPackaged
+  ? path.join(process.resourcesPath, "kaleid-icon.png")
+  : path.resolve(here, "../../build/kaleid-icon.png");
 protocol.registerSchemesAsPrivileged([
   ...["music", "folia-ytm", "folia-spotify"].map((scheme) => ({
     scheme,
@@ -513,7 +518,8 @@ void app
         minWidth: 1000,
         minHeight: 680,
         backgroundColor: "#101014",
-        title: "映间 · Media Browser",
+        title: "Kaleid",
+        icon: applicationIcon,
         autoHideMenuBar: true,
         titleBarStyle: "hidden",
         titleBarOverlay: {

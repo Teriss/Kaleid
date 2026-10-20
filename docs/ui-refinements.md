@@ -1,6 +1,6 @@
 # 0.4.0-preview.3 导航与布局重构
 
-基准仍为 Folia `26c57f9b1b26b402a09e8943171a332215418ce6`。没有启动独立 Folia 主进程或替换映间的媒体索引。高级音乐移植未完成项见 music-port-status.md。
+基准仍为 Folia `26c57f9b1b26b402a09e8943171a332215418ce6`。没有启动独立 Folia 主进程或替换 Kaleid 的媒体索引。高级音乐移植未完成项见 music-port-status.md。
 
 ## 已接入行为
 

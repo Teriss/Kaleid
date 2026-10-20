@@ -308,7 +308,7 @@ export function installMusic(
       t: token,
       s: salt,
       v: "1.16.1",
-      c: "Yingjian",
+      c: "Kaleid",
       f: "json",
     }))
       target.searchParams.set(key, String(value));
@@ -806,6 +806,9 @@ export function installMusic(
       const win = new BrowserWindow({
         width: name === "mini" ? 380 : 900,
         height: name === "mini" ? 180 : 150,
+        icon: app.isPackaged
+          ? path.join(process.resourcesPath, "kaleid-icon.png")
+          : path.resolve(projectRoot, "build/kaleid-icon.png"),
         frame: false,
         transparent: name === "lyrics",
         alwaysOnTop: true,

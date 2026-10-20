@@ -1,9 +1,9 @@
 import sharp from "sharp";
 import fs from "node:fs/promises";
-const sizes = [16, 32, 48, 256];
+const sizes = [16, 24, 32, 48, 64, 128, 256];
 const buffers = await Promise.all(
   sizes.map((size) =>
-    sharp("build/icon.svg").resize(size, size).png().toBuffer(),
+    sharp("build/kaleid-icon.png").resize(size, size).png().toBuffer(),
   ),
 );
 const header = Buffer.alloc(6 + buffers.length * 16);

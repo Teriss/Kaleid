@@ -1,9 +1,9 @@
 {
-  "name": "media-browser",
+  "name": "kaleid",
   "version": "0.4.0-preview.5",
   "private": true,
-  "description": "映间 — 本地多媒体浏览器",
-  "author": "Media Browser",
+  "description": "Kaleid — 本地多媒体浏览器",
+  "author": "Kaleid contributors",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
@@ -22,7 +22,7 @@
   "build": {
     "electronDist": "node_modules/electron/dist",
     "appId": "local.yingjian.media-browser",
-    "productName": "映间",
+    "productName": "Kaleid",
     "directories": {
       "output": "release"
     },
@@ -47,7 +47,7 @@
     "win": {
       "icon": "build/icon.ico",
       "target": "nsis",
-      "artifactName": "Media-Browser-${version}-${arch}-Setup.${ext}"
+      "artifactName": "Kaleid-${version}-${arch}-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -55,6 +55,10 @@
       "createDesktopShortcut": true
     },
     "extraResources": [
+      {
+        "from": "build/kaleid-icon.png",
+        "to": "kaleid-icon.png"
+      },
       {
         "from": "LICENSE",
         "to": "licenses/Folia-AGPL-3.0.txt"
@@ -64,8 +68,8 @@
         "to": "licenses/THIRD_PARTY_NOTICES.md"
       },
       {
-        "from": "artifacts/Yingjian-Source.zip",
-        "to": "Yingjian-Source.zip"
+        "from": "artifacts/Kaleid-Source.zip",
+        "to": "Kaleid-Source.zip"
       }
     ]
   },

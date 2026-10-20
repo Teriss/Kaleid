@@ -19,8 +19,8 @@ Music adapters, lyrics, visualizers, audio effects, and backend bridges are deri
 - Pinned revision: `26c57f9b1b26b402a09e8943171a332215418ce6`
 - Upstream version: 0.7.21, as declared by that revision's package.json.
 - License: GNU Affero General Public License, version 3 (`vendor/folia/LICENSE`, reproduced as the project's `LICENSE`).
-- Yingjian modifications and boundaries: `vendor/folia/ADAPTATIONS.md`.
-- This is a modified integration into Yingjian. It is not an official Folia release.
-- The matching application and vendored source, dependency lockfiles, and build instructions are included in `Yingjian-Source.zip` alongside each preview package. Upstream copyright and license notices are retained in source files.
+- Kaleid modifications and boundaries: `vendor/folia/ADAPTATIONS.md`.
+- This is a modified integration into Kaleid. It is not an official Folia release.
+- The matching application and vendored source, dependency lockfiles, and build instructions are included in `Kaleid-Source.zip` alongside each preview package. Upstream copyright and license notices are retained in source files.
 
 Other dependencies retain their respective package license files under node_modules. The source archive contains the lockfile required to reproduce their exact versions.

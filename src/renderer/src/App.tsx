@@ -1686,7 +1686,7 @@ export default function App() {
           </div>
         ) : !libraries.length && !remoteMusic ? (
           <div className="minimal-empty">
-            <span className="empty-brand">映间</span>
+            <span className="empty-brand">Kaleid</span>
             <button
               className="button primary"
               onClick={() => setCreateType("image")}
@@ -1771,7 +1771,7 @@ export default function App() {
                 className="wordmark"
                 onClick={() => setOverlay("libraries")}
               >
-                映间
+                Kaleid
               </button>
               <nav className="top-types" aria-label="媒体导航">
                 {navigation}

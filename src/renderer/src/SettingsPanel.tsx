@@ -57,7 +57,7 @@ export default function SettingsPanel({
               {group.label}
             </button>
           ))}
-        <span className="settings-version">映间 0.4.0 preview 3</span>
+        <span className="settings-version">Kaleid 0.4.0 preview 5</span>
       </aside>
       <main className="settings-body">
         <div className="settings-heading">
