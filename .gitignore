@@ -1,0 +1,37 @@
+node_modules/
+out/
+dist/
+/release*/
+/artifacts/
+/coverage/
+/playwright-report/
+/test-results/
+
+# Test sources and local test tooling are intentionally kept out of this repo.
+**/test/
+**/tests/
+**/__tests__/
+**/*.test.*
+**/*.spec.*
+/playwright.config.*
+/vitest.config.*
+/scripts/profile-wall.mjs
+/scripts/smoke-*.mjs
+/scripts/encode-folia-demo.mjs
+
+# Generated packaging files and temporary output.
+/build/icon.ico
+/build/icon.png
+*.blockmap
+*.log
+*.tmp
+*.temp
+*.bak
+*.zip
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+.DS_Store
+.env*
+!.env.example

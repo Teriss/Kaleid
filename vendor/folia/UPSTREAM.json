@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/chthollyphile/folia-major",
+  "commit": "26c57f9b1b26b402a09e8943171a332215418ce6",
+  "license": "AGPL-3.0",
+  "integration": "Source modules only; upstream application shell is not an entry point."
+}

@@ -1,0 +1,139 @@
+{
+  "name": "media-browser",
+  "version": "0.4.0-preview.5",
+  "private": true,
+  "description": "映间 — 本地多媒体浏览器",
+  "author": "Media Browser",
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "npm run typecheck && electron-vite build && node --check out/main/index.js",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "dist": "npm run build && npm run source:bundle && electron-builder --win nsis --x64",
+    "dist:dir": "npm run build && npm run source:bundle && electron-builder --dir --win --x64",
+    "icons": "node scripts/generate-icon.mjs",
+    "predist": "npm run icons",
+    "predist:dir": "npm run icons",
+    "format": "prettier --write src scripts *.ts *.json README.md",
+    "source:bundle": "node scripts/package-source.mjs"
+  },
+  "build": {
+    "electronDist": "node_modules/electron/dist",
+    "appId": "local.yingjian.media-browser",
+    "productName": "映间",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json",
+      "vendor/folia/electron/**/*",
+      "vendor/folia/LICENSE",
+      "vendor/folia/UPSTREAM.json",
+      "vendor/folia/src/**/*",
+      "vendor/folia/shared/**/*",
+      "vendor/folia/ADAPTATIONS.md",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "asarUnpack": [
+      "node_modules/sharp/**/*",
+      "node_modules/@img/**/*",
+      "node_modules/ffmpeg-static/**/*",
+      "node_modules/@lox-audioserver/**/*"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": "nsis",
+      "artifactName": "Media-Browser-${version}-${arch}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "extraResources": [
+      {
+        "from": "LICENSE",
+        "to": "licenses/Folia-AGPL-3.0.txt"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "licenses/THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "artifacts/Yingjian-Source.zip",
+        "to": "Yingjian-Source.zip"
+      }
+    ]
+  },
+  "dependencies": {
+    "@applemusic-like-lyrics/ttml": "1.0.1",
+    "@chenglou/pretext": "0.0.9",
+    "@google/genai": "2.24.0",
+    "@lox-audioserver/node-librespot": "0.5.1",
+    "@neteasecloudmusicapienhanced/api": "4.41.1",
+    "@paper-design/shaders-react": "0.0.80",
+    "@react-three/drei": "10.7.8",
+    "@react-three/fiber": "9.8.1",
+    "@react-three/postprocessing": "3.1.2",
+    "@yakult-green-tea/qq-music-api": "3.3.3",
+    "animejs": "4.5.0",
+    "axios": "1.20.0",
+    "bgutils-js": "4.0.3",
+    "blueimp-md5": "2.19.0",
+    "bodian-music-api": "0.1.2",
+    "budoux": "0.9.3",
+    "chardet": "^2.2.0",
+    "dexie": "4.4.6",
+    "dompurify": "^3.4.17",
+    "epubjs": "^0.3.93",
+    "fflate": "0.8.3",
+    "ffmpeg-static": "^5.3.0",
+    "file-type": "21.3.4",
+    "framer-motion": "13.4.3",
+    "googlevideo": "4.1.1",
+    "i18next": "26.4.2",
+    "i18next-browser-languagedetector": "8.2.1",
+    "iconv-lite": "^0.7.3",
+    "kugoumusicapi": "https://github.com/MakcRe/KuGouMusicApi/archive/refs/tags/v1.6.0.tar.gz",
+    "lucide-react": "^1.59.0",
+    "music-metadata": "^12.2.3",
+    "opencc-js": "1.4.2",
+    "pinyin-pro": "3.29.3",
+    "pixi.js": "8.21.0",
+    "react": "^19.3.1",
+    "react-colorful": "5.8.1",
+    "react-dom": "^19.3.1",
+    "react-i18next": "17.0.15",
+    "react-window": "2.3.3",
+    "sharp": "^0.35.5",
+    "three": "0.185.1",
+    "twgl.js": "7.0.0",
+    "wanakana": "5.3.1",
+    "yauzl": "^3.4.0",
+    "youtubei.js": "18.1.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/yauzl": "^3.4.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^6.0.0",
+    "prettier": "^3.9.10",
+    "tailwindcss": "4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "0.9.12"
+  },
+  "license": "AGPL-3.0"
+}
