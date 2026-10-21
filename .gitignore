@@ -20,6 +20,8 @@ dist/
 /scripts/profile-wall.mjs
 /scripts/smoke-*.mjs
 /scripts/encode-folia-demo.mjs
+/scripts/test-*.mjs
+/scripts/*-test-fixtures.mjs
 
 # Keep the reader regression coverage in the repository.
 !tests/
