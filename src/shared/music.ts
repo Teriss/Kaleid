@@ -1,4 +1,16 @@
 import type { MediaItem, MusicSession } from "./types";
+export const ACTIVE_MUSIC_PROVIDERS = ["netease", "qq", "ytm"] as const;
+export const isActiveMusicProvider = (id: string) =>
+  (ACTIVE_MUSIC_PROVIDERS as readonly string[]).includes(id);
+export const isSupportedMusicId = (id = "") =>
+  !id.startsWith("navidrome:") &&
+  (!id.startsWith("online:") || isActiveMusicProvider(id.split(":")[1]));
+export const isSupportedMusicItem = (item: MediaItem) =>
+  isSupportedMusicId(item.id) &&
+  (!item.sourceRef ||
+    item.sourceRef.kind === "local" ||
+    (item.sourceRef.kind === "online" &&
+      isActiveMusicProvider(item.sourceRef.providerId)));
 
 export type MusicProviderId =
   "netease" | "qq" | "kugou" | "bodian" | "ytm" | "spotify";

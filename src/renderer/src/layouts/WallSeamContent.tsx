@@ -6,6 +6,7 @@ type Props = {
   content: ReactNode;
   reduced: boolean;
   spine: boolean;
+  spineContent?: ReactNode;
   title: string;
   expand(): void;
 };
@@ -91,7 +92,9 @@ export default function WallSeamContent(props: Props) {
       className="wall-seam-face"
       style={{ width: display.width, marginLeft: -display.width / 2 }}
     >
-      {display.spine ? (
+      {display.spine && display.spineContent ? (
+        display.spineContent
+      ) : display.spine ? (
         <button
           className="seam-spine-title"
           aria-label="展开内容导航"

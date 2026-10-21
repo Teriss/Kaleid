@@ -2,6 +2,22 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { AppAPI } from "../shared/types";
 import type { VideoAPI } from "../shared/video";
 const video = {
+  windowGesture: (
+    id: string,
+    value: Parameters<VideoAPI["windowGesture"]>[1],
+  ) => ipcRenderer.invoke("video:call", "windowGesture", id, value),
+  present: (id: string, mode: "embedded" | "floating", reason?: "manual" | "automatic") =>
+    ipcRenderer.invoke("video:call", "present", id, mode, reason),
+  pin: (id: string, value: boolean) =>
+    ipcRenderer.invoke("video:call", "pin", id, value),
+  musicFocus: () => ipcRenderer.invoke("video:call", "musicFocus"),
+  audioFocusAck: (serial: number) =>
+    ipcRenderer.invoke("video:call", "audioFocusAck", serial),
+  onAudioFocus: (callback: (serial: number) => void) => {
+    const listener = (_event: unknown, serial: number) => callback(serial);
+    ipcRenderer.on("video:audio-focus", listener);
+    return () => ipcRenderer.removeListener("video:audio-focus", listener);
+  },
   overlay: (state: Parameters<VideoAPI["overlay"]>[0]) =>
     ipcRenderer.invoke("video:overlay", state),
   open: (input: Parameters<VideoAPI["open"]>[0]) =>
@@ -83,6 +99,15 @@ const methods = [
   "restoreMusicMetadata",
   "searchMusicMetadata",
   "comicPages",
+  "comicPageMetrics",
+  "comicContext",
+  "comicWorks",
+  "saveComicWork",
+  "deleteComicWork",
+  "saveComicPreferences",
+  "saveComicBookmark",
+  "deleteComicBookmark",
+  "releaseComic",
   "setVideoCover",
   "reveal",
   "settings",

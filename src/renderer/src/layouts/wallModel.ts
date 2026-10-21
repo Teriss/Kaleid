@@ -11,10 +11,9 @@ export const WALL_LAYOUT_VERSION = 2;
 export const defaultWallScale = (width: number) =>
   width < 640 ? 0.52 : width < 1100 ? 0.64 : 0.76;
 export type SeamLevel = "full" | "spine" | "hidden";
-export const defaultSeamLevel = (width: number): SeamLevel =>
-  width < 900 ? "spine" : "full";
+export const defaultSeamLevel = (width: number): SeamLevel => "spine";
 export const seamWidthFor = (level: SeamLevel, home: boolean) =>
-  level === "hidden" ? 0 : level === "spine" ? 64 : home ? 120 : 300;
+  level === "hidden" ? 0 : level === "spine" ? 120 : 300;
 export function migrateWallMemory(memory: BrowseMemory): BrowseMemory {
   if (memory.wallLayoutVersion === WALL_LAYOUT_VERSION) return memory;
   return {

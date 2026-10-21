@@ -28,7 +28,7 @@ export const EXTENSIONS: Record<MediaType, Set<string>> = {
     ".ogv",
   ]),
   novel: new Set([".txt", ".epub"]),
-  comic: new Set([".cbz"]),
+  comic: new Set([".cbz", ".zip", ".cbr", ".rar", ".7z", ".cb7"]),
 };
 export function normalized(file: string) {
   const value = path.resolve(file);

@@ -19,14 +19,7 @@ import type { MusicWindowState } from "../shared/music";
 // electron-vite may inject its own ESM `require` shim into this bundle.
 // Keep our loader distinct so packaging cannot introduce a duplicate declaration.
 const loadCommonJS = createRequire(import.meta.url);
-const PROVIDERS = new Set([
-  "netease",
-  "qq",
-  "kugou",
-  "bodian",
-  "ytm",
-  "spotify",
-]);
+const PROVIDERS = new Set(["netease", "qq", "ytm"]);
 /** Upstream factories are loaded individually. Its application main process is never started. */
 export function installMusic(
   getMain: () => BrowserWindow | null,
@@ -219,6 +212,7 @@ export function installMusic(
       });
   };
   function bridge(provider: string) {
+    if (!PROVIDERS.has(provider)) throw new Error("该音乐来源已停用");
     if (bridges.has(provider)) return bridges.get(provider);
     let value: any;
     if (provider === "kugou")
@@ -275,7 +269,7 @@ export function installMusic(
     if (/^folia-(ytm|spotify):/.test(url)) return url;
     const parsed = new URL(url);
     const coverHosts =
-      /(^|\.)(music\.126\.net|y\.gtimg\.cn|qpic\.cn|kgimg\.com|ytimg\.com|googleusercontent\.com|scdn\.co)$/;
+      /(^|\.)(music\.126\.net|y\.gtimg\.cn|qpic\.cn|qlogo\.cn|ytimg\.com|ggpht\.com|googleusercontent\.com)$/;
     if (!knownUrls.has(url) && !coverHosts.test(parsed.hostname))
       throw new Error("音乐资源未由平台提供");
     if (
@@ -340,7 +334,7 @@ export function installMusic(
       return new Response(null, { status: 502 });
     }
   });
-  for (const provider of ["ytm", "spotify"])
+  for (const provider of ["ytm"])
     protocol.handle(`folia-${provider}`, (request) =>
       bridge(provider).handleAudioRequest(request),
     );
@@ -425,7 +419,8 @@ export function installMusic(
     }
     if (method === "special") {
       const where =
-        args[0] === "favorites" ? "favorite=1" : "opened IS NOT NULL";
+        (args[0] === "favorites" ? "favorite=1" : "opened IS NOT NULL") +
+        " AND (id LIKE 'online:netease:%' OR id LIKE 'online:qq:%' OR id LIKE 'online:ytm:%')";
       const offset = Math.max(0, Number(args[1]) || 0),
         limit = Math.max(0, Math.min(100, Number(args[2]) || 0));
       const rows = catalog

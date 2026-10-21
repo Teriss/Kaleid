@@ -10,10 +10,11 @@ import {
   Expand,
 } from "lucide-react";
 import VideoPlayer from "./VideoPlayer";
-import type { ComicPage, MediaItem, Progress } from "../../shared/types";
+import type { MediaItem } from "../../shared/types";
 import { IconButton } from "./components";
 import { act, report, resource, useApp } from "./store";
 import NovelViewer from "./NovelViewer";
+import ComicViewer from "./ComicViewer";
 
 export default function Viewer({
   item,
@@ -39,7 +40,7 @@ export default function Viewer({
   const [tools, setTools] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
-    if (item.type === "video") return;
+    if (item.type === "video" || item.type === "comic") return;
     const key = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !document.querySelector("dialog[open]"))
         close();
@@ -86,6 +87,15 @@ export default function Viewer({
         sort={videoSort}
       />
     );
+  if (item.type === "comic")
+    return (
+      <ComicViewer
+        key={item.id}
+        item={item}
+        close={close}
+        switchItem={switchItem}
+      />
+    );
   return (
     <div
       className={`viewer viewer-${item.type} ${tools ? "" : "quiet"}`}
@@ -122,8 +132,9 @@ export default function Viewer({
           hasNext={index < (navigation?.total ?? group.length) - 1}
         />
       )}
-      {item.type === "novel" && <NovelViewer key={item.id} item={item} close={close} />}
-      {item.type === "comic" && <ComicViewer key={item.id} item={item} />}
+      {item.type === "novel" && (
+        <NovelViewer key={item.id} item={item} close={close} />
+      )}
     </div>
   );
 }
@@ -322,174 +333,5 @@ function ImageViewer({
         </IconButton>
       </div>
     </>
-  );
-}
-function ComicViewer({ item }: { item: MediaItem }) {
-  const [pages, setPages] = useState<ComicPage[]>([]);
-  const [page, setPage] = useState(item.progress?.page ?? 0);
-  const [error, setError] = useState("");
-  const settings = useApp((s) => s.settings);
-  const setSettings = useApp((s) => s.setSettings);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const scrollRestore = useRef(false);
-  useEffect(() => {
-    let live = true;
-    void window.media
-      .comicPages(item.id)
-      .then((result) => {
-        if (live) {
-          setPages(result);
-          setPage((p) => Math.min(p, Math.max(0, result.length - 1)));
-        }
-      })
-      .catch((err) => {
-        if (live) setError(String(err));
-      });
-    return () => {
-      live = false;
-    };
-  }, [item.id, item.resourceVersion]);
-  useEffect(() => {
-    if (pages.length)
-      void window.media.saveProgress(item.id, { page }).catch(report);
-  }, [page, pages.length, item.id]);
-  function move(direction: number) {
-    const step = settings.comicMode === "double" ? 2 : 1;
-    setPage((p) =>
-      Math.max(0, Math.min(pages.length - 1, p + direction * step)),
-    );
-  }
-  useEffect(() => {
-    function key(e: KeyboardEvent) {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLSelectElement
-      )
-        return;
-      if (e.key === "ArrowLeft") move(settings.comicRtl ? 1 : -1);
-      if (e.key === "ArrowRight") move(settings.comicRtl ? -1 : 1);
-    }
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [settings.comicRtl, settings.comicMode, pages.length]);
-  useEffect(() => {
-    if (
-      settings.comicMode !== "scroll" ||
-      !scrollRef.current ||
-      !pages.length
-    ) {
-      scrollRestore.current = false;
-      return;
-    }
-    const el = scrollRef.current;
-    const target = el.querySelector(`[data-page="${page}"]`);
-    if (!scrollRestore.current && target) {
-      target.scrollIntoView();
-      scrollRestore.current = true;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-        if (visible[0])
-          setPage(Number((visible[0].target as HTMLElement).dataset.page));
-      },
-      { root: el, threshold: [0.1, 0.4, 0.6] },
-    );
-    el.querySelectorAll("[data-page]").forEach((node) =>
-      observer.observe(node),
-    );
-    return () => observer.disconnect();
-  }, [pages, settings.comicMode]);
-  return (
-    <div className="comic-reader">
-      <div className="comic-toolbar">
-        <span>
-          {pages.length ? `${page + 1} / ${pages.length} 页` : "正在加载…"}
-        </span>
-        <input
-          aria-label="漫画页码"
-          type="range"
-          min="0"
-          max={Math.max(0, pages.length - 1)}
-          value={page}
-          onChange={(e) => {
-            const value = Number(e.target.value);
-            setPage(value);
-            if (settings.comicMode === "scroll")
-              scrollRef.current
-                ?.querySelector(`[data-page="${value}"]`)
-                ?.scrollIntoView();
-          }}
-        />
-        <select
-          aria-label="漫画阅读模式"
-          value={settings.comicMode}
-          onChange={(e) =>
-            void act(() =>
-              setSettings({
-                ...settings,
-                comicMode: e.target.value as typeof settings.comicMode,
-              }),
-            )
-          }
-        >
-          <option value="single">单页阅读</option>
-          <option value="double">双页阅读</option>
-          <option value="scroll">纵向滚动</option>
-        </select>
-        <button
-          className="text-button"
-          onClick={() =>
-            void act(() =>
-              setSettings({ ...settings, comicRtl: !settings.comicRtl }),
-            )
-          }
-        >
-          {settings.comicRtl ? "从右向左" : "从左向右"}
-        </button>
-      </div>
-      {error ? (
-        <div className="viewer-message">{error}</div>
-      ) : !pages.length ? (
-        <div className="viewer-message">
-          {pages.length === 0 ? "暂无可显示的页面" : "正在加载…"}
-        </div>
-      ) : settings.comicMode === "scroll" ? (
-        <div className="comic-scroll" ref={scrollRef}>
-          {pages.map((p, index) => (
-            <div key={p.name} data-page={index}>
-              <img loading="lazy" src={p.url} alt={`第 ${index + 1} 页`} />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className={`comic-spread ${settings.comicRtl ? "rtl" : ""}`}>
-          <img src={pages[page]?.url} alt={`第 ${page + 1} 页`} />
-          {settings.comicMode === "double" && pages[page + 1] && (
-            <img src={pages[page + 1].url} alt={`第 ${page + 2} 页`} />
-          )}
-        </div>
-      )}
-      {settings.comicMode !== "scroll" && (
-        <>
-          <button
-            className="viewer-prev"
-            aria-label="漫画向左翻页"
-            onClick={() => move(settings.comicRtl ? 1 : -1)}
-          >
-            <ChevronLeft />
-          </button>
-          <button
-            className="viewer-next"
-            aria-label="漫画向右翻页"
-            onClick={() => move(settings.comicRtl ? -1 : 1)}
-          >
-            <ChevronRight />
-          </button>
-        </>
-      )}
-    </div>
   );
 }

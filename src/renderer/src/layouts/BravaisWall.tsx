@@ -64,9 +64,6 @@ import { scopeKey } from "./memory";
 import WallTileFace from "./WallTileFace";
 import WallSeamContent from "./WallSeamContent";
 
-// Like Folia's seam-level store, the level survives directory changes/stage remounts in this session.
-let seamSession:
-  { level: SeamLevel; restore: SeamLevel; narrow: boolean } | undefined;
 type Display = {
   source: LayoutProps["source"];
   key: string;
@@ -114,6 +111,7 @@ export default function BravaisWall(props: LayoutProps) {
     shownNavigation.current = navigation;
   const [stageReady, setStageReady] = useState(false);
   const [steps, setSteps] = useState(new Map<string, WallFlipStep>());
+  const [exitingTiles, setExitingTiles] = useState<WallTile[]>([]);
   const initialized = useRef(false),
     serial = useRef(0);
   const [anchor, setAnchor] = useState(
@@ -121,18 +119,46 @@ export default function BravaisWall(props: LayoutProps) {
   );
   const anchorRef = useRef(anchor);
   anchorRef.current = anchor;
-  if (!seamSession)
-    seamSession = {
-      level: defaultSeamLevel(width),
-      restore: defaultSeamLevel(width),
-      narrow: width < 900,
-    };
+  const family =
+    navigation?.sourceKind === "online"
+      ? "online"
+      : "local:" + (props.scope?.type ?? props.source.query.type ?? "");
+  const defaultLevel: SeamLevel = family === "online" ? "spine" : "hidden";
+  const seamSession = useRef<{
+    level: SeamLevel;
+    restore: SeamLevel;
+    family: string;
+  }>({ level: defaultLevel, restore: "spine", family }).current;
   const [level, setLevelState] = useState<SeamLevel>(seamSession.level);
-  const home =
-    props.scope?.view === "libraries" ||
-    props.scope?.view === "type" ||
-    (props.scope?.view === "music" && !props.scope.remoteId);
-  const targetWidth = navigation ? seamWidthFor(level, home) : 0;
+  const [searchActive, setSearchActive] = useState(false);
+  const searchRestore = useRef<{
+    level: SeamLevel;
+    restore: SeamLevel;
+    camera: Camera;
+    anchor: number;
+  }>({
+    level: defaultLevel,
+    restore: "spine",
+    camera: { ...camera.current },
+    anchor,
+  });
+  const home = false;
+  const targetWidth = navigation
+    ? Math.min(
+        Math.max(120, width - 48),
+        searchActive ? 360 : seamWidthFor(level, home),
+      )
+    : 0;
+  useLayoutEffect(() => {
+    if (seamSession.family === family) return;
+    seamSession.family = family;
+    seamSession.level = defaultLevel;
+    seamSession.restore = "spine";
+    // Restore each source's own viewport; tabs inside the source keep it live.
+    initialized.current = false;
+    setLevelState(defaultLevel);
+    setSearchActive(false);
+  }, [family]);
   const frame = useRef({
     width,
     height,
@@ -150,6 +176,8 @@ export default function BravaisWall(props: LayoutProps) {
     right = useRef<HTMLDivElement>(null),
     seam = useRef<HTMLElement>(null),
     seamBody = useRef<HTMLDivElement>(null),
+    emptyLeft = useRef<HTMLElement>(null),
+    emptyRight = useRef<HTMLElement>(null),
     tab = useRef<HTMLButtonElement>(null),
     percent = useRef<HTMLSpanElement>(null);
   const bounds = useRef<Bounds | null>(null),
@@ -167,6 +195,7 @@ export default function BravaisWall(props: LayoutProps) {
   const renderFrame = useCallback(() => {
     const c = camera.current,
       f = frame.current;
+    ref.current?.setAttribute("data-camera", JSON.stringify(c));
     const geometry = getSeamGeometry({
       anchorX: anchorRef.current,
       cameraX: c.x,
@@ -196,6 +225,11 @@ export default function BravaisWall(props: LayoutProps) {
       seam.current.inert =
         !f.navigation || geometry.width < Math.min(48, f.targetWidth);
     }
+    const splitX = f.targetWidth ? geometry.screenX : f.width / 2;
+    if (emptyLeft.current)
+      emptyLeft.current.style.right = `${Math.max(0, f.width - splitX + geometry.width / 2)}px`;
+    if (emptyRight.current)
+      emptyRight.current.style.left = `${Math.max(0, splitX + geometry.width / 2)}px`;
     if (seamBody.current)
       seamBody.current.style.opacity = String(
         Math.min(1, geometry.width / Math.max(1, f.targetWidth)),
@@ -210,6 +244,10 @@ export default function BravaisWall(props: LayoutProps) {
     if (percent.current)
       percent.current.textContent = `${Math.round(c.scale * 100)}%`;
   }, []);
+  useLayoutEffect(
+    () => renderFrame(),
+    [Boolean(navigation?.empty), renderFrame],
+  );
   const recull = useCallback((force = false) => {
     const f = frame.current,
       visible = worldBounds(
@@ -293,6 +331,17 @@ export default function BravaisWall(props: LayoutProps) {
     null,
   );
   const rest = useCallback(() => {
+    const f = frame.current;
+    const menuX =
+      f.width / 2 +
+      (anchorRef.current - camera.current.x) * camera.current.scale;
+    if (seamSession.level !== "hidden" && (menuX < 0 || menuX > f.width)) {
+      seamSession.restore = seamSession.level;
+      seamSession.level = "hidden";
+      setLevelState("hidden");
+      setSearchActive(false);
+      window.dispatchEvent(new Event("wall:search-dismiss"));
+    }
     const target = constrain(camera.current);
     if (
       Math.hypot(target.x - camera.current.x, target.y - camera.current.y) > 0.5
@@ -346,6 +395,7 @@ export default function BravaisWall(props: LayoutProps) {
       if (!s.pending.size) {
         clearTimeout(s.timer);
         settling.current = null;
+        setExitingTiles([]);
         wallTransition.settle(token);
         ref.current?.removeAttribute("data-wall-settling");
       }
@@ -354,6 +404,7 @@ export default function BravaisWall(props: LayoutProps) {
   );
 
   const tiles = useMemo(() => {
+    if (!display.source.total) return exitingTiles;
     const f = frame.current;
     const all = visibleWall(
       cullCamera,
@@ -382,6 +433,7 @@ export default function BravaisWall(props: LayoutProps) {
     display.source.total,
     mode,
     selected,
+    exitingTiles,
   ]);
   const tilesRef = useRef(tiles);
   tilesRef.current = tiles;
@@ -416,7 +468,11 @@ export default function BravaisWall(props: LayoutProps) {
       }
       motion.stop();
       setStageReady(false);
-      const nextMode = m.wallMode ?? modeRef.current;
+      const sameFamily = previous.source.query.type === p.source.query.type;
+      const keepViewport = initialized.current && sameFamily;
+      const nextMode = keepViewport
+        ? modeRef.current
+        : (m.wallMode ?? modeRef.current);
       const start =
         initialized.current &&
         wallTransition.direction === "push" &&
@@ -426,13 +482,14 @@ export default function BravaisWall(props: LayoutProps) {
             ? m.wallStartSlotKey
             : undefined;
       const offset = getStartWrapOffset(parseSlot(start), p.source.total);
-      let target =
-        m.wallCameras?.[nextMode] ??
-        m.camera ??
-        (changed && initialized.current
-          ? { ...camera.current }
-          : { ...initialCamera });
-      if (!m.wallManualScale)
+      let target = keepViewport
+        ? { ...camera.current }
+        : (m.wallCameras?.[nextMode] ??
+          m.camera ??
+          (changed && initialized.current
+            ? { ...camera.current }
+            : { ...initialCamera }));
+      if (!keepViewport && !m.wallManualScale)
         target = { ...target, scale: defaultWallScale(width) };
       const index = resolveFocusIndex(p.source, m);
       let focused: WallTile | null = null;
@@ -453,8 +510,9 @@ export default function BravaisWall(props: LayoutProps) {
             ? saved
             : nearestTile(index, target, p.source.total, nextMode, offset);
         if (
-          p.memory.revealFocus ||
-          p.memory.wallLayoutVersion !== WALL_LAYOUT_VERSION
+          !initialized.current &&
+          (p.memory.revealFocus ||
+            p.memory.wallLayoutVersion !== WALL_LAYOUT_VERSION)
         ) {
           const rect =
             expandedBlock(focused, p.source.total, nextMode, offset).find(
@@ -470,8 +528,10 @@ export default function BravaisWall(props: LayoutProps) {
           };
         }
       }
-      let nextAnchor = m.seam?.anchor ?? anchorRef.current;
-      if (navigation && targetWidth > 0) {
+      let nextAnchor = initialized.current
+        ? anchorRef.current
+        : (m.seam?.anchor ?? anchorRef.current);
+      if (!initialized.current && navigation && targetWidth > 0) {
         const screenX = width / 2 + (nextAnchor - target.x) * target.scale;
         const plan = blockSeamPlan({
           cameraX: target.x,
@@ -483,12 +543,13 @@ export default function BravaisWall(props: LayoutProps) {
         nextAnchor = plan.x;
         target = { ...target, x: plan.cameraX };
       }
-      target = clampWallCamera(
-        target,
-        { width, height },
-        p.source.total,
-        nextMode,
-      );
+      if (!initialized.current)
+        target = clampWallCamera(
+          target,
+          { width, height },
+          p.source.total,
+          nextMode,
+        );
       const upcoming = visibleWall(
         target,
         width + targetWidth * 2,
@@ -511,10 +572,10 @@ export default function BravaisWall(props: LayoutProps) {
                 nextMode !== "finite" ||
                 (t.index >= 0 && t.index < p.source.total),
             )
-        : [];
+        : outgoing.map((tile) => ({ ...tile, index: -1 }));
       await p.source.ensure(nextTiles.map((t) => t.index));
       if (!live || generation !== serial.current) return;
-      if (p.source.getSnapshot().error) {
+      if (p.source.getSnapshot().error && p.source.total) {
         wallTransition.settle(wallTransition.token);
         setStageReady(true);
         return;
@@ -564,6 +625,7 @@ export default function BravaisWall(props: LayoutProps) {
         settling.current.timer = setTimeout(() => {
           if (settling.current?.token === token) {
             settling.current = null;
+            setExitingTiles([]);
             wallTransition.settle(token);
             ref.current?.removeAttribute("data-wall-settling");
           }
@@ -577,12 +639,15 @@ export default function BravaisWall(props: LayoutProps) {
         wallTransition.settle(token);
       }
       const next = { source: p.source, key, offset, start };
+      setExitingTiles(p.source.total ? [] : nextTiles);
       displayRef.current = next;
       setDisplay(next);
       modeRef.current = nextMode;
       setMode(nextMode);
-      cameras.current = m.wallCameras ?? {};
-      manualScale.current = m.wallManualScale ?? false;
+      if (!keepViewport) {
+        cameras.current = m.wallCameras ?? {};
+        manualScale.current = m.wallManualScale ?? false;
+      }
       anchorRef.current = nextAnchor;
       setAnchor(nextAnchor);
       keyboardFocus.current = focused?.key;
@@ -593,6 +658,7 @@ export default function BravaisWall(props: LayoutProps) {
       initialized.current = true;
       const returning =
         changed &&
+        !sameFamily &&
         wallTransition.direction === "back" &&
         Boolean(m.camera) &&
         !p.reducedMotion;
@@ -630,16 +696,6 @@ export default function BravaisWall(props: LayoutProps) {
     renderFrame();
     recull(true);
   }, [width, height, anchor, renderFrame, recull, apply]);
-  useEffect(() => {
-    if (!seamSession) return;
-    if (seamSession.narrow !== width < 900) {
-      seamSession.narrow = width < 900;
-      seamSession.restore = defaultSeamLevel(width);
-      if (seamSession.level !== "hidden")
-        seamSession.level = seamSession.restore;
-      setLevelState(seamSession.level);
-    }
-  }, [width]);
   useLayoutEffect(() => {
     seamAnimation.current?.stop();
     const from = frame.current.openWidth;
@@ -850,18 +906,28 @@ export default function BravaisWall(props: LayoutProps) {
       });
     }
   });
-  const changeLevel = (next: SeamLevel) => {
+  const changeLevel = (
+    next: SeamLevel,
+    desiredWidth = seamWidthFor(next, false),
+    remember = true,
+  ) => {
     motion.stop();
-    if (next === "hidden" && level !== "hidden") seamSession!.restore = level;
+    if (remember && next === "hidden" && level !== "hidden")
+      seamSession!.restore = level;
     seamSession!.level = next;
     setLevelState(next);
     if (next !== "hidden") {
       const c = camera.current,
         f = frame.current,
         screenX = width / 2 + (anchorRef.current - c.x) * c.scale;
+      const need = Math.min(desiredWidth, width - 48) / 2 + 24;
+      if (screenX >= need && screenX <= width - need) {
+        persist();
+        return;
+      }
       const plan = blockSeamPlan({
         cameraX: c.x,
-        openWidth: seamWidthFor(next, home),
+        openWidth: Math.min(desiredWidth, width - 48),
         view: { width, height, scale: c.scale },
         metrics: WALL_METRICS,
         preferX: screenX > 0 && screenX < width ? anchorRef.current : undefined,
@@ -875,6 +941,38 @@ export default function BravaisWall(props: LayoutProps) {
     props.scope?.folder?.split(/[\\/]/).filter(Boolean).at(-1) ??
     navigation?.title ??
     "媒体库";
+  useEffect(() => {
+    if (navigation?.empty?.requiresNavigation && level === "hidden")
+      changeLevel(
+        seamSession.restore === "hidden" ? "spine" : seamSession.restore,
+      );
+  }, [key, navigation?.empty?.requiresNavigation]);
+  useEffect(() => {
+    const presentation = (event: Event) => {
+      const open = (event as CustomEvent).detail === true;
+      if (open) {
+        if (!searchActive)
+          searchRestore.current = {
+            level,
+            restore: seamSession.restore,
+            camera: { ...camera.current },
+            anchor: anchorRef.current,
+          };
+        setSearchActive(true);
+        changeLevel("full", 360, false);
+      } else if (searchActive) {
+        setSearchActive(false);
+        seamSession.restore = searchRestore.current.restore;
+        anchorRef.current = searchRestore.current.anchor;
+        setAnchor(searchRestore.current.anchor);
+        apply(searchRestore.current.camera);
+        changeLevel(searchRestore.current.level, undefined, false);
+      }
+    };
+    window.addEventListener("wall:search-presentation", presentation);
+    return () =>
+      window.removeEventListener("wall:search-presentation", presentation);
+  });
   return (
     <div
       ref={ref}
@@ -923,6 +1021,33 @@ export default function BravaisWall(props: LayoutProps) {
             ))}
         </div>
       ))}
+      {navigation?.empty && (
+        <div className="wall-empty-pair" aria-live="polite">
+          {(["left", "right"] as const).map((side) => (
+            <section
+              ref={side === "left" ? emptyLeft : emptyRight}
+              className="wall-empty-half"
+              data-empty-half={side}
+              key={side}
+              style={
+                side === "left"
+                  ? { right: "calc(50% + " + targetWidth / 2 + "px)" }
+                  : { left: "calc(50% + " + targetWidth / 2 + "px)" }
+              }
+            >
+              <p>{navigation.empty!.message}</p>
+              {navigation.empty!.action && (
+                <button
+                  className="button secondary"
+                  onClick={navigation.empty!.action}
+                >
+                  {navigation.empty!.actionLabel}
+                </button>
+              )}
+            </section>
+          ))}
+        </div>
+      )}
       {navigation && (
         <>
           <aside
@@ -950,10 +1075,11 @@ export default function BravaisWall(props: LayoutProps) {
             <div ref={seamBody} className="wall-seam-content">
               <WallSeamContent
                 width={targetWidth || seamWidthFor(seamSession!.restore, home)}
-                identity={`${display.key}:${level}`}
+                identity={display.key}
                 reduced={props.reducedMotion}
                 content={shownNavigation.current?.content}
                 spine={level === "spine"}
+                spineContent={shownNavigation.current?.spineContent}
                 title={String(title)}
                 expand={() => changeLevel("full")}
               />
@@ -972,7 +1098,21 @@ export default function BravaisWall(props: LayoutProps) {
             }
           >
             {title}
+            {navigation.filter?.query && (
+              <span className="wall-filter-count">
+                {navigation.filter.query}
+              </span>
+            )}
           </button>
+          {level === "hidden" && navigation.filter?.query && (
+            <button
+              className="wall-filter-clear"
+              aria-label="清除当前视图过滤"
+              onClick={navigation.filter.clear}
+            >
+              清除过滤
+            </button>
+          )}
         </>
       )}
       <div className="wall-tools">

@@ -56,6 +56,8 @@ export const DEFAULT_VIDEO_PREFERENCES: VideoPreferences = {
   rotation: 0,
 };
 export interface VideoState {
+  presentationReason?: "manual" | "automatic";
+  surface?: { startedAt: number; hostReadyAt?: number; sizedAt?: number; shownAt?: number; playbackAt?: number };
   enhancement?: VideoEnhancement;
   sessionId: string;
   mediaId: string;
@@ -67,6 +69,8 @@ export interface VideoState {
   preferences: VideoPreferences;
   fullscreen: boolean;
   resumed: boolean;
+  presentation?: "embedded" | "floating";
+  alwaysOnTop?: boolean;
   error?: {
     kind: "offline" | "damaged" | "decode" | "engine";
     message: string;
@@ -87,6 +91,20 @@ export type VideoCommand =
   | { type: "track"; kind: "audio" | "sub"; id: number | "no" }
   | { type: "fullscreen"; value: boolean };
 export interface VideoAPI {
+  windowGesture(
+    sessionId: string,
+    value: {
+      type: "begin" | "update" | "end";
+      x: number;
+      y: number;
+      edge?: string;
+    },
+  ): Promise<{ moved: boolean }>;
+  present(sessionId: string, mode: "embedded" | "floating", reason?: "manual" | "automatic"): Promise<void>;
+  pin(sessionId: string, value: boolean): Promise<void>;
+  musicFocus(): Promise<boolean>;
+  audioFocusAck(serial: number): Promise<void>;
+  onAudioFocus(callback: (serial: number) => void): () => void;
   overlay(state: VideoOverlayState): Promise<void>;
   open(input: {
     mediaId: string;
@@ -119,7 +137,10 @@ export interface VideoInput {
     | "edge-enter"
     | "edge-leave"
     | "back"
-    | "forward";
+    | "forward"
+    | "close"
+    | "restore"
+    | "surface-update";
 }
 export interface VideoOverlayState {
   visible: boolean;

@@ -7,7 +7,10 @@ internal static class Program
 {
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int command);
+    [DllImport("user32.dll")] static extern bool RedrawWindow(IntPtr hwnd, IntPtr update, IntPtr region, uint flags);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern IntPtr SetParent(IntPtr hwnd, IntPtr parent);
+    [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr hwnd);
     [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int id);
 
     [STAThread]
@@ -34,16 +37,31 @@ internal static class Program
                 while (await input.ReadLineAsync() is { } line) {
                     using var json = JsonDocument.Parse(line);
                     var root = json.RootElement;
+                    if (root.TryGetProperty("parent", out var newParent)) {
+                        var target = new IntPtr(long.Parse(newParent.GetString()!));
+                        var moveId = root.GetProperty("moveId").GetString();
+                        dispatcher.BeginInvoke(() => {
+                            if (IsWindow(target)) {
+                                ShowWindow(host.Handle, 0);
+                                SetParent(host.Handle, target);
+                            }
+                            output.WriteLine(JsonSerializer.Serialize(new { moved = moveId, ok = GetParent(host.Handle) == target }));
+                        });
+                        continue;
+                    }
                     var x = root.GetProperty("x").GetInt32();
                     var y = root.GetProperty("y").GetInt32();
                     var width = root.GetProperty("width").GetInt32();
                     var height = root.GetProperty("height").GetInt32();
                     var visible = root.GetProperty("visible").GetBoolean();
+                    var rectId = root.TryGetProperty("rectId", out var revision) ? revision.GetString() : null;
                     dispatcher.BeginInvoke(() => {
                         // HWND_TOP is required: Chromium owns sibling HWNDs which
                         // otherwise cover this native surface with its black DOM slot.
                         SetWindowPos(host.Handle, IntPtr.Zero, x, y, width, height, 0x0010);
                         ShowWindow(host.Handle, visible && width > 0 && height > 0 ? 8 : 0);
+                        if (visible) RedrawWindow(host.Handle, IntPtr.Zero, IntPtr.Zero, 0x181);
+                        if (rectId != null) output.WriteLine(JsonSerializer.Serialize(new { resized = rectId, ok = IsWindow(host.Handle) && width > 0 && height > 0 }));
                     });
                 }
             } catch { /* Broken control pipe means the owner has gone away. */ }

@@ -8,6 +8,10 @@ import type {
 } from "../../../shared/music";
 import { runtime } from "./folia-runtime";
 import { navidromePage, navidromeItem } from "./navidrome";
+import {
+  isActiveMusicProvider,
+  isSupportedMusicItem,
+} from "../../../shared/music";
 
 const loaded = new Map<string, MediaItem>();
 function rememberItem(item: MediaItem) {
@@ -20,28 +24,32 @@ const pages = new Map<string, Promise<QueryResult>>();
 export const isRemote = (item: MediaItem) =>
   item.sourceRef && item.sourceRef.kind !== "local";
 export async function providers(): Promise<MusicProviderSummary[]> {
-  return (await runtime()).list().map((p) => ({
-    id: p.id,
-    name:
-      (
-        {
-          netease: "网易云音乐",
-          qq: "QQ 音乐",
-          kugou: "酷狗音乐",
-          bodian: "波点音乐",
-          ytm: "YouTube Music",
-          spotify: "Spotify",
-        } as Record<string, string>
-      )[p.id] ?? p.displayName,
-    capabilities: {
-      ...p.capabilities,
-      personalFm: Boolean(p.recommendations?.getPersonalFm),
-      dailyRecommendations: Boolean(p.recommendations?.getDailySongs),
-      createPlaylist: Boolean(p.mutations?.createPlaylist),
-    },
-  }));
+  return (await runtime())
+    .list()
+    .filter((p) => isActiveMusicProvider(p.id))
+    .map((p) => ({
+      id: p.id,
+      name:
+        (
+          {
+            netease: "网易云音乐",
+            qq: "QQ 音乐",
+            kugou: "酷狗音乐",
+            bodian: "波点音乐",
+            ytm: "YouTube Music",
+            spotify: "Spotify",
+          } as Record<string, string>
+        )[p.id] ?? p.displayName,
+      capabilities: {
+        ...p.capabilities,
+        personalFm: Boolean(p.recommendations?.getPersonalFm),
+        dailyRecommendations: Boolean(p.recommendations?.getDailySongs),
+        createPlaylist: Boolean(p.mutations?.createPlaylist),
+      },
+    }));
 }
 export async function provider(id: string) {
+  if (!isActiveMusicProvider(id)) throw new Error("该音乐来源已停用");
   return (await runtime()).provider(id);
 }
 export function cachedMusic(id: string) {
@@ -246,6 +254,26 @@ async function fetchPage(
       method === "getCloudTracks"
         ? await p.catalog[method](limit, offset, c)
         : await p.catalog[method](scope.remoteId, limit, offset, c);
+  } else if (scope.section === "liked") {
+    const user = await p.auth?.getLoginStatus();
+    if (!user)
+      throw new QueryFailure("auth-required", "登录后查看我喜欢的音乐");
+    let liked: any;
+    for (let cursor = 0; !liked;) {
+      const page = await p.library?.getUserPlaylists(user.id, 100, cursor);
+      liked = page?.items.find((row: any) => row.isLiked === true);
+      if (liked || !page?.hasMore || !page.items.length) break;
+      const next = page.nextOffset ?? cursor + page.items.length;
+      if (next <= cursor) break;
+      cursor = next;
+    }
+    if (!liked) return { items: [], total: 0 };
+    answer = await p.catalog!.getPlaylistTracks!(
+      liked.id,
+      limit,
+      offset,
+      liked,
+    );
   } else if (scope.section === "mine" || scope.section === "albums") {
     const user = await p.auth?.getLoginStatus();
     if (!user) throw new QueryFailure("auth-required", "请先登录该音乐平台");
@@ -329,6 +357,7 @@ export async function musicItems(ids: string[]) {
     remote.filter((id) => !loaded.has(id)),
   );
   for (const item of restored) {
+    if (!isSupportedMusicItem(item)) continue;
     if (item.remoteData && item.sourceRef?.kind === "online") {
       loaded.delete(item.id);
       cached.push(await songItem(item.sourceRef.providerId, item.remoteData));
@@ -345,7 +374,7 @@ export async function musicItems(ids: string[]) {
     }
   }
   const result = [
-    ...cached,
+    ...cached.filter(isSupportedMusicItem),
     ...(local.length ? await window.media.musicItems(local) : []),
   ];
   return ids

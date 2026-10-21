@@ -1,13 +1,32 @@
 import { normalizeLayout, defaultLayout } from "./policy";
 export { defaultLayout } from "./policy";
 import type { BrowseMemory } from "../../../shared/types";
+import { isActiveMusicProvider } from "../../../shared/music";
 
 import type { BrowseLocation } from "../../../shared/navigation";
 export type BrowseScope = BrowseLocation;
+export function availableScope(scope: BrowseScope): BrowseScope {
+  if (scope.musicSource === "navidrome")
+    return { view: "libraries", type: "music" };
+  if (
+    scope.view === "music" &&
+    scope.providerId &&
+    !isActiveMusicProvider(scope.providerId)
+  )
+    return {
+      view: "music",
+      type: "music",
+      musicSource: "online",
+      providerId: "netease",
+      section: "discover",
+    };
+  return scope;
+}
 const memories = new Map<string, BrowseMemory>();
 const dirty = new Set<string>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 export function scopeKey(scope: BrowseScope) {
+  if (scope.localOnly) return `${scope.view}:${scope.type}:local`;
   if (scope.view === "music")
     return `music:${scope.musicSource}:${scope.providerId ?? scope.serverId ?? ""}:${scope.section ?? "home"}:${scope.remoteKind ?? ""}:${scope.remoteId ?? ""}`;
   if (scope.view === "libraries") return `libraries:${scope.type}`;
@@ -212,7 +231,7 @@ export function readLastScope(): BrowseScope | null {
         "recent",
         "folders",
       ].includes(scope.view)
-      ? scope
+      ? availableScope(scope)
       : null;
   } catch {
     return null;
@@ -242,7 +261,7 @@ export function readLastNormalScope(): BrowseScope | null {
       !["image", "music", "video", "novel", "comic"].includes(scope.type)
     )
       return null;
-    return scope;
+    return availableScope(scope);
   } catch {
     return null;
   }
@@ -270,7 +289,7 @@ export function readLastTypeScope(type: string): BrowseScope | null {
       scope?.type === type &&
       ["library", "music", "libraries", "folders"].includes(scope.view)
     )
-      return scope;
+      return availableScope(scope);
     const old = readLastNormalScope();
     return old?.type === type && old.view !== "type" ? old : null;
   } catch {

@@ -17,9 +17,17 @@ export default function StandardGrid({
   select,
   contextMenu,
   removeRecent,
+  interactive,
 }: LayoutProps) {
   const { ref, width, height } = useViewport();
   const [scroll, setScroll] = useState(memory.scrollTop ?? 0);
+  const frozen = useRef<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    if (!interactive) frozen.current = ref.current.scrollTop;
+    else if (frozen.current !== undefined)
+      ref.current.scrollTop = frozen.current;
+  }, [interactive]);
   const restored = useRef(false),
     consumed = useRef<number | undefined>(undefined);
   const columns = Math.max(1, Math.floor((width - 80) / 230));
@@ -96,7 +104,16 @@ export default function StandardGrid({
           clearFocus?.();
       }}
       onScroll={(e) => {
+        if (!interactive) {
+          if (
+            frozen.current !== undefined &&
+            e.currentTarget.scrollTop !== frozen.current
+          )
+            e.currentTarget.scrollTop = frozen.current;
+          return;
+        }
         setScroll(e.currentTarget.scrollTop);
+        frozen.current = e.currentTarget.scrollTop;
         if (restored.current)
           remember({ scrollTop: e.currentTarget.scrollTop });
       }}

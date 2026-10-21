@@ -5,10 +5,13 @@ import { report } from "./store";
 export function useVideoOverlay(
   root: RefObject<HTMLDivElement | null>,
   close: () => void,
+  floating = false,
 ) {
   const [surface, setSurface] = useState<HTMLElement>();
   const closeRef = useRef(close);
   closeRef.current = close;
+  const floatingRef = useRef(floating);
+  floatingRef.current = floating;
   useEffect(() => {
     const popup = window.open("about:blank", "kaleid-video-controls");
     if (!popup) {
@@ -59,25 +62,38 @@ export function useVideoOverlay(
       frame = requestAnimationFrame(() => {
         if (disposed || popup.closed) return;
         const visible =
-          !document.hidden &&
-          !document.querySelector("dialog[open],.modal-backdrop,.context-menu");
-        const regions = capturing
-          ? [{ x: 0, y: 0, width: popup.innerWidth, height: popup.innerHeight }]
-          : [
-              ...target.querySelectorAll<HTMLElement>(
-                ".video-header:not([inert]),.video-controls:not([inert]),.video-panel,.video-message",
-              ),
-            ]
-              .filter((node) => getComputedStyle(node).display !== "none")
-              .map((node) => {
-                const rect = node.getBoundingClientRect();
-                return {
-                  x: rect.x,
-                  y: rect.y,
-                  width: rect.width,
-                  height: rect.height,
-                };
-              });
+          (floatingRef.current || !document.hidden) &&
+          (floatingRef.current ||
+            !document.querySelector(
+              "dialog[open],.modal-backdrop,.context-menu",
+            ));
+        const regions =
+          floatingRef.current ||
+          capturing ||
+          target.querySelector(".music-quick-panel")
+            ? [
+                {
+                  x: 0,
+                  y: 0,
+                  width: popup.innerWidth,
+                  height: popup.innerHeight,
+                },
+              ]
+            : [
+                ...target.querySelectorAll<HTMLElement>(
+                  ".video-header:not([inert]),.video-controls:not([inert]),.video-panel,.video-message,.music-unified-dock > *",
+                ),
+              ]
+                .filter((node) => getComputedStyle(node).display !== "none")
+                .map((node) => {
+                  const rect = node.getBoundingClientRect();
+                  return {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
+                  };
+                });
         const state = { visible, regions };
         const serialized = JSON.stringify(state);
         if (previous === serialized) return;

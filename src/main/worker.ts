@@ -10,6 +10,8 @@ import ffmpegStatic from "ffmpeg-static";
 import { parseFile } from "music-metadata";
 import yauzl from "yauzl";
 import iconv from "iconv-lite";
+import { ComicArchives } from "./comicArchive";
+import { ComicLibrary } from "./comicLibrary";
 import { detect } from "chardet";
 import {
   probeVideo,
@@ -61,7 +63,7 @@ CREATE TABLE IF NOT EXISTS music_playlists(id TEXT PRIMARY KEY,name TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS music_playlist_tracks(playlistId TEXT NOT NULL REFERENCES music_playlists(id) ON DELETE CASCADE,mediaId TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,position INTEGER NOT NULL,PRIMARY KEY(playlistId,mediaId));
 CREATE TABLE IF NOT EXISTS music_overrides(mediaId TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,originalMetadata TEXT NOT NULL,originalCover TEXT,fields TEXT NOT NULL DEFAULT '{}',lyric TEXT,source TEXT);
 CREATE TABLE IF NOT EXISTS audio_analysis(mediaId TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,fileIdentity TEXT,changeTimeMs INTEGER NOT NULL,gainDb REAL NOT NULL,analyzedAt INTEGER NOT NULL);
-PRAGMA user_version=3;`);
+`);
 const mediaColumns = new Set(
   (db.prepare("PRAGMA table_info(media)").all() as any[]).map(
     (column) => column.name,
@@ -75,6 +77,13 @@ db.exec(
   "CREATE INDEX IF NOT EXISTS idx_media_identity ON media(type,fileIdentity)",
 );
 const watcherHandles = new Map<string, FSWatcher>();
+const comicArchives = new ComicArchives(
+  path.join(dataDir, "cache", "comics"),
+  path.join(process.env.MEDIA_BROWSER_COMIC_RUNTIME ?? "", "7z.exe"),
+);
+const comicLibrary = new ComicLibrary(db, item);
+const comicSessions = new Map<string, string>();
+await comicLibrary.migrate(dataDir);
 const watcherTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingDirtyPaths = new Map<string, Set<string>>();
 const pendingRescans = new Set<string>();
@@ -849,32 +858,6 @@ async function zipRead(file: string, name: string): Promise<Buffer> {
     });
   });
 }
-const comicManifest = new Map<string, { key: string; pages: string[] }>();
-async function comicFiles(file: string): Promise<string[]> {
-  const stat = await fs.stat(file);
-  const key = `${stat.mtimeMs}:${stat.size}`;
-  const cached = comicManifest.get(file);
-  if (cached?.key === key) return cached.pages;
-  const pages = stat.isDirectory()
-    ? (await fs.readdir(file, { withFileTypes: true }))
-        .filter(
-          (e) =>
-            e.isFile() &&
-            EXTENSIONS.image.has(path.extname(e.name).toLowerCase()),
-        )
-        .map((e) => e.name)
-        .sort(naturalSort)
-    : (await zipEntries(file))
-        .filter((e) =>
-          EXTENSIONS.image.has(path.extname(e.fileName).toLowerCase()),
-        )
-        .map((e) => e.fileName)
-        .sort(naturalSort);
-  if (comicManifest.size >= 64)
-    comicManifest.delete(comicManifest.keys().next().value!);
-  comicManifest.set(file, { key, pages });
-  return pages;
-}
 async function thumbnail(input: string | Buffer, id: string) {
   const target = path.join(dataDir, "cache", `${id}.jpg`);
   await sharp(input, { limitInputPixels: 100_000_000 })
@@ -1048,7 +1031,8 @@ async function scan(
               () => true,
               () => false,
             ))) ||
-          (comicDirectory && pageStamp !== oldMetadata.pageStamp);
+          (comicDirectory && pageStamp !== oldMetadata.pageStamp) ||
+          (lib.type === "comic" && oldMetadata.comicIndexVersion !== 1);
         // A changed source file becomes the new canonical import. Keep its stable
         // media ID, but discard online metadata tied to the previous audio bytes.
         if (contentChanged && lib.type === "music" && old)
@@ -1109,17 +1093,26 @@ async function scan(
               }
             }
             if (lib.type === "comic") {
-              comicManifest.delete(file);
+              comicArchives.invalidate(file);
               const pageCache = path.resolve(dataDir, "cache", id);
               if (isWithin(path.resolve(dataDir, "cache"), pageCache))
                 await fs.rm(pageCache, { recursive: true, force: true });
-              const pages = await comicFiles(file);
-              metadata = { pageCount: pages.length };
-              if (pages[0])
+              const manifest = await comicArchives.manifest(file);
+              const pages = manifest.pages;
+              metadata = {
+                pageCount: pages.length,
+                comicInfo: manifest.info,
+                comicIndexVersion: 1,
+              };
+              const coverIndex =
+                Number.isSafeInteger(manifest.info.coverIndex) &&
+                manifest.info.coverIndex! >= 0 &&
+                manifest.info.coverIndex! < pages.length
+                  ? manifest.info.coverIndex!
+                  : 0;
+              if (pages[coverIndex])
                 cover = await thumbnail(
-                  comicDirectory
-                    ? path.join(file, pages[0])
-                    : await zipRead(file, pages[0]),
+                  await comicArchives.page(file, coverIndex),
                   id,
                 );
             }
@@ -1175,6 +1168,12 @@ async function scan(
         if (membership.changes) {
           changedIds.add(id);
           structural = true;
+        }
+        if (lib.type === "comic") {
+          const sourceRoot = lib.roots
+            .filter((root) => isWithin(root, canonical))
+            .sort((a, b) => b.length - a.length)[0];
+          if (sourceRoot) comicLibrary.autoGroup(id, normalized(sourceRoot));
         }
         if (
           lib.type === "video" &&
@@ -1341,7 +1340,7 @@ async function purgeMediaIds(ids: string[]) {
       recursive: true,
       force: true,
     });
-    comicManifest.delete(row.path);
+    comicArchives.invalidate(row.path);
   }
   publishIndexChange([], removedIds, true, [...affectedLibraries], [...types]);
 }
@@ -1703,19 +1702,6 @@ async function searchMusicMetadata(
         coverUrl: song.albummid
           ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${encodeURIComponent(song.albummid)}.jpg`
           : "",
-      }));
-    })(),
-    (async () => {
-      const result: any = await fetchMusicJson(
-        `https://mobileservice.kugou.com/api/v3/search/song?format=json&keyword=${encoded}&page=1&pagesize=8`,
-      );
-      return (result?.data?.info ?? []).map((song: any) => ({
-        source: "kugou" as const,
-        remoteId: cleanMusicText(song.hash, 100),
-        title: cleanMusicText(song.songname),
-        artist: cleanMusicText(song.singername),
-        album: cleanMusicText(song.album_name),
-        coverUrl: cleanMusicText(song.trans_param?.union_cover, 1000),
       }));
     })(),
     (async () => {
@@ -2399,16 +2385,54 @@ const handlers: Record<string, (...args: any[]) => any> = {
     }
     return null;
   },
-  comicPages: async (id: string) => {
+  comicPages: async (id: string, session?: string) => {
     const media = item(id);
     if (media.type !== "comic") throw new Error("不是漫画");
+    if (session) comicSessions.set(id, session);
     const file = await authorizedFile(media);
-    const pages = await comicFiles(file);
-    return pages.map((name, index) => ({
-      name,
+    const manifest = await comicArchives.manifest(file);
+    return manifest.pages.map((entry, index) => ({
+      id: entry.name.replaceAll("\\", "/"),
+      name: entry.name,
+      ...manifest.metrics.get(entry.name),
       url: `media://asset/${id}/page/${index}?v=${media.resourceVersion ?? media.modifiedAt}`,
     }));
   },
+  comicPageMetrics: async (id: string, indices: number[]) => {
+    const media = item(id);
+    if (
+      media.type !== "comic" ||
+      !Array.isArray(indices) ||
+      indices.length > 12 ||
+      indices.some((i) => !Number.isSafeInteger(i) || i < 0)
+    )
+      throw new Error("无效的漫画页面请求");
+    const file = await authorizedFile(media);
+    return Promise.all(
+      indices.map(async (index) => ({
+        index,
+        ...(await comicArchives.dimensions(file, index)),
+      })),
+    );
+  },
+  releaseComic: (id: string, session?: string) => {
+    if (session && comicSessions.get(id) !== session) return;
+    comicSessions.delete(id);
+    const media = item(id);
+    if (media.type === "comic") comicArchives.release(media.path);
+  },
+  comicContext: (id: string) => comicLibrary.context(id),
+  comicWorks: () => comicLibrary.works(),
+  saveComicWork: (work: import("../shared/types").ComicWork) =>
+    comicLibrary.save(work),
+  deleteComicWork: (id: string) => comicLibrary.delete(id),
+  saveComicPreferences: (
+    id: string,
+    prefs: import("../shared/comic").ComicPreferences,
+  ) => comicLibrary.preferences(id, prefs),
+  saveComicBookmark: (mark: import("../shared/types").ComicBookmark) =>
+    comicLibrary.bookmark(mark),
+  deleteComicBookmark: (id: string) => comicLibrary.deleteBookmark(id),
   resource: async (id: string, variant: string, index?: number) => {
     const folder = folderTokens.get(id);
     if (folder && variant === "cover") {
@@ -2436,25 +2460,7 @@ const handlers: Record<string, (...args: any[]) => any> = {
     }
     if (variant === "page") {
       if (media.type !== "comic") throw new Error("不是漫画");
-      const pages = await comicFiles(file);
-      const name = pages[index ?? -1];
-      if (!name) throw new Error("页码不存在");
-      if (media.ext === "folder") {
-        const pagePath = await fs.realpath(path.join(file, name));
-        if (!isWithin(file, pagePath)) throw new Error("页面越界");
-        return { path: pagePath };
-      }
-      const pageCache = path.join(dataDir, "cache", id);
-      await fs.mkdir(pageCache, { recursive: true });
-      const cache = path.join(pageCache, `page-${index}${path.extname(name)}`);
-      if (
-        !(await fs.access(cache).then(
-          () => true,
-          () => false,
-        ))
-      )
-        await fs.writeFile(cache, await zipRead(file, name));
-      return { path: cache };
+      return { path: await comicArchives.page(file, index ?? -1) };
     }
     if (media.ext === "epub") {
       if ((await fs.stat(file)).size > 200 * 1024 * 1024)
@@ -2501,6 +2507,7 @@ const handlers: Record<string, (...args: any[]) => any> = {
   },
   clearCache: async () => {
     if (activeScans.size) throw new Error("请等待扫描结束后再清理缓存");
+    await comicArchives.clear();
     await fs.rm(path.join(dataDir, "cache"), { recursive: true, force: true });
     await fs.mkdir(path.join(dataDir, "cache"), { recursive: true });
     db.prepare(

@@ -88,6 +88,13 @@ export default function Gallery({
     if (vertical) node.scrollTop = value;
     else node.scrollLeft = value;
   };
+  const frozenOffset = useRef<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    if (!interactive) frozenOffset.current = readOffset(ref.current);
+    else if (frozenOffset.current !== undefined)
+      writeOffset(ref.current, frozenOffset.current);
+  }, [interactive]);
   useEffect(() => {
     let live = true;
     if (!source.external && source.getSnapshot().ready) {
@@ -183,7 +190,13 @@ export default function Gallery({
       data-layout-ready={metricsReady ? "true" : "false"}
       aria-label={vertical ? "等宽画廊" : "等高画廊"}
       onScroll={(e) => {
+        if (!interactive) {
+          if (frozenOffset.current !== undefined)
+            writeOffset(e.currentTarget, frozenOffset.current);
+          return;
+        }
         const value = readOffset(e.currentTarget);
+        frozenOffset.current = value;
         setScroll(value);
         if (restored.current) remember({ [offsetKey]: value });
       }}

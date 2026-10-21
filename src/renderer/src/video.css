@@ -14,6 +14,157 @@
   background: transparent;
   pointer-events: none;
 }
+.video-player[data-floating="true"] {
+  padding-top: 0;
+}
+.video-player[data-floating="true"] .video-body {
+  inset: 0;
+}
+.video-player[data-floating="true"] .video-header {
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  height: 42px;
+  min-height: 42px;
+  padding: 4px 8px;
+  gap: 4px;
+  border-radius: 9px;
+}
+.video-player[data-floating="true"] .video-viewport {
+  pointer-events: auto;
+  touch-action: none;
+}
+.video-player[data-floating="true"] .video-heading {
+  display: none;
+}
+.video-player[data-floating="true"] .video-header {
+  left: auto;
+  width: auto;
+  background: #15151590;
+  border: 0;
+  min-height: 34px;
+  height: 34px;
+  backdrop-filter: blur(8px);
+}
+.video-player[data-floating="true"] .video-header > button {
+  width: 30px;
+  height: 30px;
+}
+.video-player[data-floating="true"]
+  .video-controls
+  .video-toolbar
+  > :is(
+    select,
+    .video-toolbar-space,
+    [aria-label="上一集"],
+    [aria-label="下一集"],
+    [aria-label="播放设置"]
+  ) {
+  display: none;
+}
+.video-player[data-floating="true"] .video-controls .video-toolbar {
+  justify-content: center;
+}
+.video-player[data-floating="true"]
+  .video-toolbar
+  > :is(
+    [aria-label="截取片段"],
+    [aria-label="选集"],
+    [aria-label="字幕与音轨"]
+  ) {
+  display: none;
+}
+.pip-resize {
+  position: absolute;
+  z-index: 10;
+  pointer-events: auto;
+  touch-action: none;
+}
+.pip-resize-n,
+.pip-resize-s {
+  left: 8px;
+  right: 8px;
+  height: 7px;
+  cursor: ns-resize;
+}
+.pip-resize-n {
+  top: 0;
+}
+.pip-resize-s {
+  bottom: 0;
+}
+.pip-resize-e,
+.pip-resize-w {
+  top: 8px;
+  bottom: 8px;
+  width: 7px;
+  cursor: ew-resize;
+}
+.pip-resize-e {
+  right: 0;
+}
+.pip-resize-w {
+  left: 0;
+}
+.pip-resize-nw,
+.pip-resize-ne,
+.pip-resize-sw,
+.pip-resize-se {
+  width: 9px;
+  height: 9px;
+}
+.pip-resize-nw,
+.pip-resize-se {
+  cursor: nwse-resize;
+}
+.pip-resize-ne,
+.pip-resize-sw {
+  cursor: nesw-resize;
+}
+.pip-resize-nw,
+.pip-resize-ne {
+  top: 0;
+}
+.pip-resize-sw,
+.pip-resize-se {
+  bottom: 0;
+}
+.pip-resize-nw,
+.pip-resize-sw {
+  left: 0;
+}
+.pip-resize-ne,
+.pip-resize-se {
+  right: 0;
+}
+.video-player[data-floating="true"] .video-heading small,
+.video-player[data-floating="true"]
+  .video-header
+  > button[aria-label="导出任务"],
+.video-player[data-floating="true"]
+  .video-header
+  > button[aria-label="在文件夹中显示"] {
+  display: none;
+}
+.video-player[data-floating="true"] .video-header .back-button {
+  padding: 0 4px;
+  margin: 0;
+  font-size: 11px;
+}
+.video-player[data-floating="true"] .video-heading strong {
+  font-size: 11px;
+}
+.video-player[data-floating="true"] .video-controls {
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  padding: 8px 10px;
+}
+.video-player[data-floating="true"] .video-panel {
+  top: 54px;
+  bottom: 82px;
+  max-width: calc(100% - 16px);
+}
 .video-player[data-fullscreen="true"] {
   padding-top: 0;
 }
@@ -625,6 +776,30 @@ body:has(.video-player) .video-export-launcher {
 .video-player[data-reduced-motion="true"] *::after {
   transition: none !important;
   animation: none !important;
+}
+.video-player[data-floating="true"] .video-control-surface {
+  padding: 7px 8px;
+  border-radius: 10px;
+}
+.video-player[data-floating="true"] .video-toolbar {
+  gap: 3px;
+}
+.video-player[data-floating="true"] .video-toolbar > button {
+  width: 28px;
+  height: 28px;
+}
+.video-player[data-floating="true"] .video-volume input {
+  width: 42px;
+}
+.video-player[data-floating="true"] .video-toolbar > [aria-label="截取片段"],
+.video-player[data-floating="true"] .video-toolbar > [aria-label="选集"],
+.video-player[data-floating="true"] .video-toolbar > [aria-label="字幕与音轨"] {
+  display: none;
+}
+@media (max-width: 380px) {
+  .video-player[data-floating="true"] .video-toolbar > select {
+    display: none;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .video-player *,

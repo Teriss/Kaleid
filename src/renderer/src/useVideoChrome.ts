@@ -15,6 +15,7 @@ export function useVideoChrome(
   sessionKey: string,
   reducedMotion: boolean,
   surfaceDocument: Document = document,
+  floating = false,
 ) {
   const [phase, setPhase] = useState<"visible" | "hiding" | "hidden">(
     "visible",
@@ -36,7 +37,8 @@ export function useVideoChrome(
       return (
         lock.current ||
         pointers.size > 0 ||
-        !!document.querySelector(modalSelector) ||
+        (!floating && !!document.querySelector(modalSelector)) ||
+        (floating && !!node?.matches(":hover")) ||
         !!node?.querySelector(hoveredChrome) ||
         (surfaceDocument.hasFocus() &&
           !!focused &&
@@ -131,7 +133,7 @@ export function useVideoChrome(
       surfaceWindow.removeEventListener("keydown", key, true);
       surfaceWindow.removeEventListener("blur", blur);
     };
-  }, [root, sessionKey, reducedMotion, surfaceDocument]);
+  }, [root, sessionKey, reducedMotion, surfaceDocument, floating]);
 
   useEffect(() => {
     activity();

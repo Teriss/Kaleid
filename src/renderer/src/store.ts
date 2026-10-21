@@ -1,3 +1,4 @@
+import { isSupportedMusicItem, isSupportedMusicId } from "../../shared/music";
 import { musicItems, isRemote } from "./music/catalog";
 import { create } from "zustand";
 import {
@@ -125,6 +126,10 @@ export const usePlayback = create<Playback>((set, get) => ({
   queueVisible: false,
   matchOpen: false,
   play: (track, queue) => {
+    if (!isSupportedMusicItem(track)) {
+      useApp.getState().notify("该音乐来源已停用");
+      return;
+    }
     if (track.missing) {
       useApp.getState().notify("文件不可用，请检查来源文件夹", "error");
       return;
@@ -132,16 +137,19 @@ export const usePlayback = create<Playback>((set, get) => ({
     ++playbackGeneration;
     const previous = get();
     const same = previous.track?.id === track.id;
+    const eligible = queue?.filter((m) => m.type === "music" && !m.kind);
+    const supported = eligible?.filter(isSupportedMusicItem);
+    if (supported && supported.length !== eligible!.length)
+      useApp.getState().notify("已跳过停用来源的队列条目");
     if (!same) window.dispatchEvent(new Event("music-stop-and-clear"));
     set({
       track,
       origin: browseOrigin
         ? { trackId: track.id, scope: structuredClone(browseOrigin) }
         : previous.origin,
-      queue:
-        queue?.filter((m) => m.type === "music" && !m.kind) ?? previous.queue,
+      queue: supported ?? previous.queue,
       queueIds:
-        queue?.filter((m) => m.type === "music" && !m.kind).map((m) => m.id) ??
+        supported?.map((m) => m.id) ??
         (previous.queueIds.includes(track.id) ? previous.queueIds : [track.id]),
       playing: true,
       position: 0,
@@ -157,11 +165,27 @@ export const usePlayback = create<Playback>((set, get) => ({
       });
   },
   setQueueIds: (ids) => {
-    const unique = [...new Set(ids)].slice(0, 100000);
+    const unique = [...new Set(ids)]
+      .filter(isSupportedMusicId)
+      .slice(0, 100000);
+    if (ids.some((id) => !isSupportedMusicId(id)))
+      useApp.getState().notify("已跳过停用来源的队列条目");
     set({ queueIds: unique });
     persistMusicSession();
   },
   restore: (session, tracks) => {
+    const queueIds = session.queueIds.filter(isSupportedMusicId);
+    if (queueIds.length !== session.queueIds.length)
+      useApp.getState().notify("已跳过停用来源的队列条目");
+    tracks = tracks.filter(isSupportedMusicItem);
+    session = {
+      ...session,
+      queueIds,
+      trackId:
+        session.trackId && isSupportedMusicId(session.trackId)
+          ? session.trackId
+          : undefined,
+    };
     const track = tracks.find((entry) => entry.id === session.trackId) ?? null;
     set({
       track,

@@ -3,6 +3,10 @@ import type { VideoOverlayState } from "../shared/video";
 
 /** A layered window can blend over mpv's child HWND; DOM z-index cannot. */
 export function installVideoOverlay(getWindow: () => BrowserWindow | null) {
+  const getMainWindow = getWindow;
+  let hostWindow: BrowserWindow | undefined;
+  getWindow = () =>
+    hostWindow && !hostWindow.isDestroyed() ? hostWindow : getMainWindow();
   let overlay: BrowserWindow | undefined;
   let state: VideoOverlayState = { visible: false, regions: [] };
   let suspended = false;
@@ -78,7 +82,7 @@ export function installVideoOverlay(getWindow: () => BrowserWindow | null) {
     }
   };
   ipcMain.handle("video:overlay", (event, value: VideoOverlayState) => {
-    const parent = getWindow();
+    const parent = getMainWindow();
     if (
       !parent ||
       event.sender !== parent.webContents ||
@@ -163,6 +167,17 @@ export function installVideoOverlay(getWindow: () => BrowserWindow | null) {
     parent.on("leave-full-screen", sync);
   }
   return {
+    setHostWindow(window: BrowserWindow) {
+      hostWindow = window;
+      overlay?.setParentWindow(window);
+      overlay?.setAlwaysOnTop(window.isAlwaysOnTop());
+      sync();
+      pointer();
+    },
+    refresh() {
+      sync();
+      pointer();
+    },
     bindWindow,
     onEdgeActivity(callback: (active: boolean) => void) {
       onEdgeActivity = callback;

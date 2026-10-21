@@ -265,6 +265,49 @@ export default function Player({
   const [audioUrl, setAudioUrl] = useState<string | undefined>();
   const settings = useApp((app) => app.settings);
   const audio = useRef<HTMLAudioElement>(null);
+  const playRequest = useRef(0);
+  useEffect(
+    () =>
+      window.video.onAudioFocus((serial) => {
+        ++playRequest.current;
+        audio.current?.pause();
+        usePlayback.setState({ playing: false });
+        void window.video.audioFocusAck(serial).catch(report);
+      }),
+    [],
+  );
+  async function startMusic() {
+    const element = audio.current;
+    const current = usePlayback.getState();
+    if (
+      !element ||
+      !current.track ||
+      !current.playing ||
+      !element.getAttribute("src")
+    )
+      return;
+    const request = ++playRequest.current;
+    const trackId = current.track.id;
+    try {
+      const granted = await window.video.musicFocus();
+      const next = usePlayback.getState();
+      if (
+        !granted ||
+        request !== playRequest.current ||
+        !next.playing ||
+        next.track?.id !== trackId
+      )
+        return;
+      ensureAudioGraph();
+      void audioGraph.current?.context.resume();
+      await element.play();
+    } catch (error: any) {
+      if (request === playRequest.current && error.name !== "AbortError") {
+        usePlayback.setState({ playing: false });
+        report(new Error("无法播放该音频，请检查文件或编码"));
+      }
+    }
+  }
   const lyricsOwner = useRef("");
   useEffect(() => startLyricClock(() => audio.current), []);
   useEffect(() => {
@@ -646,15 +689,14 @@ export default function Player({
     const element = audio.current;
     if (!element || !track || !audioUrl) return;
     if (state.playing) {
-      ensureAudioGraph();
-      void audioGraph.current?.context.resume();
-      void element.play().catch((error) => {
-        if (error.name !== "AbortError") {
-          usePlayback.setState({ playing: false });
-          report(new Error("无法播放该音频，请检查文件或编码"));
-        }
-      });
-    } else element.pause();
+      void startMusic();
+    } else {
+      ++playRequest.current;
+      element.pause();
+    }
+    return () => {
+      ++playRequest.current;
+    };
   }, [track?.id, state.playing, audioUrl]);
   useEffect(() => {
     if (audio.current) {
@@ -721,7 +763,7 @@ export default function Player({
     if (!track) return;
     if (state.repeat === "one") {
       audio.current!.currentTime = 0;
-      void audio.current!.play().catch(report);
+      void startMusic();
     } else if (state.queueIds.length > 1 || state.repeat === "all")
       void state.next();
     else usePlayback.setState({ playing: false, position: 0 });
@@ -851,8 +893,7 @@ export default function Player({
         onTimeUpdate={tick}
         onEnded={end}
         onCanPlay={() => {
-          if (usePlayback.getState().playing && audio.current)
-            void audio.current.play().catch(report);
+          void startMusic();
         }}
         onLoadedMetadata={() => {
           const element = audio.current!;
@@ -865,51 +906,6 @@ export default function Player({
           );
         }}
       />
-      {track && !state.expanded && (
-        <div className={`mini-player ${queueVisible ? "controls-open" : ""}`}>
-          <button
-            className="mini-track"
-            onClick={() => usePlayback.setState({ expanded: true })}
-          >
-            <Cover item={track} />
-            <span>
-              <strong>{track.title}</strong>
-              <small>{track.artist || "本地音乐"}</small>
-            </span>
-          </button>
-          <div className="mini-center">
-            {controls}
-            <div className="play-timeline">
-              <span>{time(state.position)}</span>
-              <input
-                aria-label="音乐播放进度"
-                type="range"
-                min="0"
-                max={state.duration || 1}
-                step="0.1"
-                value={Math.min(state.position, state.duration || 1)}
-                onChange={(e) => state.seekTo(Number(e.target.value))}
-              />
-              <span>{time(state.duration)}</span>
-            </div>
-          </div>
-          <div className="mini-actions">
-            <IconButton
-              label="播放队列"
-              active={queueVisible}
-              onClick={() => setQueueVisible(!queueVisible)}
-            >
-              <ListMusic size={19} />
-            </IconButton>
-            <IconButton
-              label="展开音乐播放器"
-              onClick={() => usePlayback.setState({ expanded: true })}
-            >
-              <Maximize2 size={16} />
-            </IconButton>
-          </div>
-        </div>
-      )}
       {queueVisible && track && (
         <aside
           className={`queue-panel ${state.expanded ? "queue-in-stage" : ""}`}
@@ -1509,7 +1505,7 @@ export default function Player({
           </div>
           <div className="music-match-results">
             {matchLoading ? (
-              <p>正在搜索网易云、QQ 音乐、酷狗与 AMLL…</p>
+              <p>正在搜索网易云、QQ 音乐与 AMLL…</p>
             ) : candidates.length ? (
               candidates.map((entry) => (
                 <button

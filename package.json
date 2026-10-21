@@ -8,11 +8,12 @@
   "main": "out/main/index.js",
   "scripts": {
     "video:prepare": "node scripts/prepare-video.mjs",
+    "comic:prepare": "node scripts/prepare-comic.mjs",
     "test:navigation": "node --experimental-transform-types --test scripts/test-navigation.mjs",
     "test:navigation:playback": "node scripts/test-navigation-playback.mjs",
     "test:video": "node --experimental-transform-types --test scripts/test-video.mjs scripts/test-video-tools.mjs",
-    "predev": "npm run video:prepare",
-    "prebuild": "npm run video:prepare",
+    "predev": "npm run comic:prepare && npm run video:prepare",
+    "prebuild": "npm run comic:prepare && npm run video:prepare",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build && node --check out/main/index.js",
     "preview": "electron-vite preview",
@@ -61,6 +62,16 @@
       "createDesktopShortcut": true
     },
     "extraResources": [
+      {
+        "from": "artifacts/comic-runtime",
+        "to": "comic-runtime",
+        "filter": [
+          "7z.exe",
+          "7z.dll",
+          "License.txt",
+          "runtime-lock.json"
+        ]
+      },
       {
         "from": "artifacts/video-runtime",
         "to": "video-runtime",

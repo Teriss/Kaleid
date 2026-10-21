@@ -139,7 +139,7 @@ export default function useBrowseTransition(reducedMotion: boolean) {
         previous.scope,
         target,
       );
-      wallTransition.kind = isContentNavigation(previous.scope, target)
+      wallTransition.kind = (previous.memory.layout === "bravais" && layout === "bravais") || isContentNavigation(previous.scope, target)
         ? "flip"
         : "wave";
       return;
@@ -210,7 +210,7 @@ export default function useBrowseTransition(reducedMotion: boolean) {
       active: wall && !reducedMotion,
       token,
       origin,
-      kind: isContentNavigation(previous.scope, target) ? "flip" : "wave",
+      kind: wall || isContentNavigation(previous.scope, target) ? "flip" : "wave",
       startSlotKey:
         wallNavigationDirection(previous.scope, target) === "push"
           ? source?.node.dataset.instance

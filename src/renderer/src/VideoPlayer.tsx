@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -24,6 +25,8 @@ import {
   RotateCw,
   Scissors,
   Download,
+  PictureInPicture2,
+  Pin,
 } from "lucide-react";
 import type { MediaItem } from "../../shared/types";
 import type {
@@ -32,7 +35,7 @@ import type {
   VideoState,
   VideoTrack,
 } from "../../shared/video";
-import { report, useApp, usePlayback } from "./store";
+import { report, useApp } from "./store";
 import { useVideoChrome } from "./useVideoChrome";
 import { useVideoOverlay } from "./useVideoOverlay";
 import "./video.css";
@@ -60,12 +63,22 @@ export default function VideoPlayer({
   close,
   switchItem,
   sort,
+  floating = false,
+  floatingReason,
+  minimize = close,
+  leave = close,
+  restore,
 }: {
   item: MediaItem;
   autoPlay: boolean;
   close(): void;
   switchItem(item: MediaItem): void;
   sort: "name" | "added" | "recent";
+  floating?: boolean;
+  floatingReason?: "manual" | "automatic";
+  minimize?(): void;
+  leave?(): void;
+  restore?(): void;
 }) {
   const [entry, setEntry] = useState({ item, fromStart: false });
   const [state, setState] = useState<VideoState>();
@@ -78,20 +91,34 @@ export default function VideoPlayer({
   const [dragPosition, setDragPosition] = useState<number>();
   const [edgeActive, setEdgeActive] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-  const surface = useVideoOverlay(root, close);
+  const surface = useVideoOverlay(root, close, floating);
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("video:music-surface", {
+        detail: floating ? null : (surface ?? null),
+      }),
+    );
+    return () => {
+      window.dispatchEvent(
+        new CustomEvent("video:music-surface", { detail: null }),
+      );
+    };
+  }, [surface, floating]);
   const viewport = useRef<HTMLDivElement>(null);
   const session = useRef("");
   const reducedMotion = useApp((s) => s.settings.reducedMotion);
   const { chrome, activity } = useVideoChrome(
     root,
-    state?.status !== "ready" ||
-      state.paused ||
-      !!panel ||
-      resumeNotice ||
-      edgeActive,
+    (!floating &&
+      (state?.status !== "ready" ||
+        state.paused ||
+        resumeNotice ||
+        edgeActive)) ||
+      !!panel,
     `${entry.item.id}:${retry}:${autoPlay}`,
     reducedMotion,
     surface?.ownerDocument,
+    floating,
   );
   const latest = useRef({ state, queue, panel, entry, close, switchItem });
   latest.current = { state, queue, panel, entry, close, switchItem };
@@ -147,8 +174,6 @@ export default function VideoPlayer({
     const unsubscribe = window.video.onState((next) => {
       if (next.sessionId !== id || session.current !== id) return;
       setState(next);
-      if (next.status === "ready" && !next.paused)
-        usePlayback.setState({ playing: false });
       if (next.resumed && next.status === "ready" && !wasResumed) {
         wasResumed = true;
         setResumeNotice(true);
@@ -182,7 +207,13 @@ export default function VideoPlayer({
       if (session.current === id) session.current = "";
       void window.video.close(id).catch(report);
     };
-  }, [entry.item.id, retry, autoPlay]);
+  }, [entry.item.id, retry]);
+  useEffect(() => {
+    if (session.current)
+      void window.video
+        .present(session.current, floating ? "floating" : "embedded", floating ? floatingReason : undefined)
+        .catch(report);
+  }, [floating, floatingReason, entry.item.id, retry]);
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;
@@ -202,8 +233,8 @@ export default function VideoPlayer({
             width: rect.width,
             height: rect.height,
             visible:
-              !modal &&
-              !document.hidden &&
+              (floating || !modal) &&
+              (floating || !document.hidden) &&
               latest.current.state?.status !== "error",
           })
           .catch(() => {});
@@ -220,6 +251,7 @@ export default function VideoPlayer({
     });
     const interval = setInterval(update, 500); // Display/DPI changes can occur without a DOM resize.
     window.addEventListener("resize", update);
+    window.addEventListener("video:surface-update", update);
     document.addEventListener("visibilitychange", update);
     update();
     return () => {
@@ -228,15 +260,16 @@ export default function VideoPlayer({
       mutations.disconnect();
       clearInterval(interval);
       window.removeEventListener("resize", update);
+      window.removeEventListener("video:surface-update", update);
       document.removeEventListener("visibilitychange", update);
     };
-  }, [state?.status, retry, entry.item.id, surface]);
+  }, [state?.status, retry, entry.item.id, surface, floating]);
   useEffect(() => {
     const escape = () => {
       if (latest.current.panel) setPanel(null);
       else if (latest.current.state?.fullscreen)
         void command({ type: "fullscreen", value: false });
-      else latest.current.close();
+      else if (!floating) leave();
     };
     const fullscreen = () =>
       void command({
@@ -245,6 +278,15 @@ export default function VideoPlayer({
       });
     const unsubscribe = window.video.onInput(({ sessionId, action }) => {
       if (sessionId !== session.current) return;
+      if (action === "close") {
+        latest.current.close();
+        return;
+      }
+      if (action === "surface-update") { window.dispatchEvent(new Event("video:surface-update")); return; }
+      if (action === "restore") {
+        restore?.();
+        return;
+      }
       activity();
       if (action === "edge-enter") {
         setEdgeActive(true);
@@ -262,6 +304,11 @@ export default function VideoPlayer({
         );
     });
     const key = (event: KeyboardEvent) => {
+      if (
+        (event.target as HTMLElement)?.closest(".music-unified-dock") ||
+        surface?.querySelector(".music-quick-panel")
+      )
+        return;
       if (document.querySelector("dialog[open],.modal-backdrop")) return;
       if (
         event.key !== "Escape" &&
@@ -328,7 +375,7 @@ export default function VideoPlayer({
         action();
       }
     };
-    window.addEventListener("keydown", key, true);
+    if (!floating) window.addEventListener("keydown", key, true);
     const controlsWindow = surface?.ownerDocument.defaultView;
     controlsWindow?.addEventListener("keydown", key, true);
     return () => {
@@ -336,9 +383,92 @@ export default function VideoPlayer({
       window.removeEventListener("keydown", key, true);
       controlsWindow?.removeEventListener("keydown", key, true);
     };
-  }, [command, activity, surface]);
+  }, [command, activity, surface, floating, minimize, leave, restore]);
   const index = queue.findIndex((target) => target.id === entry.item.id);
   const prefs = state?.preferences;
+  const pointerGesture = useRef<{
+    id: number;
+    edge?: string;
+    generation: number;
+  } | null>(null);
+  const clickTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const clickGeneration = useRef(0);
+  useEffect(
+    () => () => {
+      ++clickGeneration.current;
+      clearTimeout(clickTimer.current);
+      pointerGesture.current = null;
+    },
+    [floating, entry.item.id],
+  );
+  function beginGesture(
+    event: ReactPointerEvent<HTMLDivElement>,
+    edge?: string,
+  ) {
+    if (!floating || event.button !== 0) return;
+    if ((event.target as HTMLElement).closest("button,input,select,a")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearTimeout(clickTimer.current);
+    pointerGesture.current = {
+      id: event.pointerId,
+      edge,
+      generation: ++clickGeneration.current,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    void window.video
+      .windowGesture(session.current, {
+        type: "begin",
+        x: event.screenX,
+        y: event.screenY,
+        edge,
+      })
+      .catch(report);
+  }
+  function moveGesture(event: ReactPointerEvent<HTMLDivElement>) {
+    if (
+      !pointerGesture.current ||
+      event.pointerId !== pointerGesture.current.id
+    )
+      return;
+    void window.video
+      .windowGesture(session.current, {
+        type: "update",
+        x: event.screenX,
+        y: event.screenY,
+      })
+      .catch(report);
+  }
+  function endGesture(
+    event: ReactPointerEvent<HTMLDivElement>,
+    cancelled = false,
+  ) {
+    const gesture = pointerGesture.current;
+    if (!gesture || gesture.id !== event.pointerId) return;
+    pointerGesture.current = null;
+    void window.video
+      .windowGesture(session.current, {
+        type: "end",
+        x: event.screenX,
+        y: event.screenY,
+      })
+      .then(({ moved }) => {
+        if (
+          !cancelled &&
+          !moved &&
+          !gesture.edge &&
+          gesture.generation === clickGeneration.current
+        )
+          clickTimer.current = setTimeout(() => {
+            if (gesture.generation === clickGeneration.current)
+              void command({
+                type: "pause",
+                value: !latest.current.state?.paused,
+              });
+          }, 230);
+      })
+      .catch(report);
+  }
   const ready = state?.status === "ready" || state?.status === "ended";
   const togglePanel = (target: typeof panel) =>
     setPanel((current) => (current === target ? null : target));
@@ -378,11 +508,17 @@ export default function VideoPlayer({
       data-chrome={chrome}
       data-fullscreen={state?.fullscreen ?? false}
       data-reduced-motion={reducedMotion}
+      data-floating={floating}
     >
       <header className="video-header" inert={chrome !== "visible"}>
-        <button className="back-button" onClick={close}>
+        <button
+          className="back-button"
+          aria-label={floating ? "恢复主界面" : undefined}
+          title={floating ? "恢复主界面" : undefined}
+          onClick={floating ? restore : leave}
+        >
           <ArrowLeft size={18} />
-          返回媒体库
+          {!floating && "返回媒体库"}
         </button>
         <div className="video-heading">
           <strong title={entry.item.title}>{entry.item.title}</strong>
@@ -396,6 +532,27 @@ export default function VideoPlayer({
               .join(" · ")}
           </small>
         </div>
+        {floating && (
+          <button
+            aria-label="视频窗口置顶"
+            aria-pressed={state?.alwaysOnTop !== false}
+            onClick={() =>
+              void window.video
+                .pin(session.current, state?.alwaysOnTop === false)
+                .catch(report)
+            }
+          >
+            <Pin size={18} />
+          </button>
+        )}
+        {!floating && (
+          <button aria-label="独立视频小窗" onClick={minimize}>
+            <PictureInPicture2 size={18} />
+          </button>
+        )}
+        <button aria-label="关闭视频" onClick={close}>
+          <X size={18} />
+        </button>
         <button
           title="导出任务"
           aria-label="导出任务"
@@ -412,7 +569,23 @@ export default function VideoPlayer({
         </button>
       </header>
       <div className="video-body">
-        <div className="video-viewport" ref={viewport}>
+        <div
+          className="video-viewport"
+          ref={viewport}
+          aria-label={floating ? "画中画画面" : undefined}
+          onPointerDown={(event) => beginGesture(event)}
+          onPointerMove={moveGesture}
+          onPointerUp={(event) => endGesture(event)}
+          onPointerCancel={(event) => endGesture(event, true)}
+          onDoubleClick={(event) => {
+            if (floating) {
+              event.preventDefault();
+              ++clickGeneration.current;
+              clearTimeout(clickTimer.current);
+              void command({ type: "fullscreen", value: !state?.fullscreen });
+            }
+          }}
+        >
           {!ready && state?.status !== "error" && (
             <div className="video-message" role="status">
               <span className="video-loading" />
@@ -884,11 +1057,26 @@ export default function VideoPlayer({
           </div>
         </div>
       </footer>
+      {floating &&
+        !state?.fullscreen &&
+        ["n", "s", "w", "e", "nw", "ne", "sw", "se"].map((edge) => (
+          <div
+            key={edge}
+            className={`pip-resize pip-resize-${edge}`}
+            data-edge={edge}
+            onPointerDown={(event) => beginGesture(event, edge)}
+            onPointerMove={moveGesture}
+            onPointerUp={(event) => endGesture(event)}
+            onPointerCancel={(event) => endGesture(event, true)}
+          />
+        ))}
     </div>
   );
   return (
     <>
-      <div className="viewer viewer-video video-player video-underlay" />
+      {!floating && (
+        <div className="viewer viewer-video video-player video-underlay" />
+      )}
       {surface && createPortal(player, surface)}
     </>
   );

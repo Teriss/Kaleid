@@ -13,6 +13,7 @@ export interface BrowseLocation {
   type?: string;
   folder?: string;
   root?: boolean;
+  localOnly?: boolean;
   search?: string;
   musicSource?: "online" | "navidrome";
   providerId?: string;
@@ -133,15 +134,26 @@ export class NavigationHistory {
         .sort(([a], [b]) => a.localeCompare(b)),
     );
     return JSON.stringify({
-      ...entry,
-      overlay: entry.overlay === "layout" ? null : entry.overlay,
-      surfaceStack:
-        entry.overlay === "layout"
-          ? entry.surfaceStack?.filter((surface) => surface !== "overlay")
-          : entry.surfaceStack,
       scope,
       viewer: entry.viewer ? { id: entry.viewer.id } : undefined,
-      memory: { sort: entry.memory.sort },
+      musicDetailId: entry.musicExpanded ? entry.musicDetailId : undefined,
+      search: entry.search || undefined,
+    });
+  }
+  private saved(entry: NavigationEntry): NavigationEntry {
+    return structuredClone({
+      ...entry,
+      overlay: null,
+      settingsSection: "appearance",
+      queueOpen: false,
+      matchOpen: false,
+      createType: null,
+      manageId: undefined,
+      surfaceStack: entry.viewer
+        ? ["viewer"]
+        : entry.musicExpanded
+          ? ["music"]
+          : [],
     });
   }
   record(entry: NavigationEntry) {
@@ -154,7 +166,7 @@ export class NavigationHistory {
       return false;
     }
     this.entries.splice(this.cursor + 1);
-    this.entries.push(structuredClone(entry));
+    this.entries.push(this.saved(entry));
     this.cursor = this.entries.length - 1;
     if (this.entries.length > 200) {
       this.entries.shift();
@@ -163,14 +175,10 @@ export class NavigationHistory {
     return true;
   }
   replace(entry: NavigationEntry) {
-    if (this.cursor >= 0) this.entries[this.cursor] = structuredClone(entry);
+    if (this.cursor >= 0) this.entries[this.cursor] = this.saved(entry);
   }
   updateMemory(memory: BrowseMemory) {
-    if (this.current)
-      this.current.memory = {
-        ...structuredClone(memory),
-        sort: this.current.memory.sort,
-      };
+    if (this.current) this.current.memory = structuredClone(memory);
   }
   back(parentFallback?: NavigationEntry) {
     if (this.canBack) return structuredClone(this.entries[--this.cursor]);

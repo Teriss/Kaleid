@@ -1,0 +1,365 @@
+.content-navigation-body:has(.music-wall-menu) > .scope-pill {
+  display: none;
+}
+.wall-seam .content-navigation-body:has(.music-wall-menu) {
+  height: 100%;
+  gap: 0;
+}
+.music-wall-menu {
+  height: 100%;
+  min-height: 330px;
+  perspective: 1400px;
+  color: #ddd;
+}
+.music-wall-face {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  height: 100%;
+  backface-visibility: hidden;
+}
+.music-wall-heading {
+  text-align: center;
+  font-size: 19px;
+  letter-spacing: 0.2em;
+}
+.music-wall-sections {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.music-wall-sections button {
+  padding: 8px 12px;
+  color: #999;
+  border-radius: 13px;
+  font-weight: 650;
+}
+.music-wall-sections button.active {
+  color: #eee;
+  background: #ffffff16;
+}
+.music-wall-sections button:hover {
+  color: #fff;
+}
+.music-wall-bottom {
+  margin-top: auto;
+  display: grid;
+  gap: 17px;
+  padding-bottom: 14px;
+}
+.music-wall-avatar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  min-width: 0;
+}
+.music-wall-avatar img {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.music-wall-avatar strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.music-wall-tools {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+}
+.music-wall-tools button {
+  padding: 8px;
+}
+.music-filter-badge {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  overflow: hidden;
+}
+.music-wall-menu header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #aaa;
+  font-size: 13px;
+}
+.music-search-tabs {
+  display: grid;
+  gap: 8px;
+}
+.music-search-tabs button {
+  padding: 9px 7px;
+  display: flex;
+  gap: 8px;
+  text-align: left;
+  align-items: center;
+  border-radius: 9px;
+  font-size: 13px;
+}
+.music-search-tabs button.active {
+  background: #ffffff12;
+}
+.music-wall-search-field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #8887;
+  border-radius: 12px;
+}
+.music-wall-search-field input {
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  outline: none;
+  border: 0;
+  font-size: 14px;
+}
+.music-wall-search-hint {
+  color: #aaa;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 14px 0;
+}
+.wall-seam-spine .music-wall-sections button {
+  writing-mode: vertical-rl;
+  padding: 9px;
+  font-size: 17px;
+  letter-spacing: 0.14em;
+}
+.wall-seam-spine .music-wall-sections {
+  gap: 8px;
+}
+.wall-seam-spine .music-wall-face {
+  gap: 12px;
+}
+.wall-seam-spine .music-wall-menu {
+  min-height: 0;
+}
+.account-picture {
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #ffffff12;
+  overflow: hidden;
+  flex: none;
+}
+.account-picture img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.music-wall-avatar .account-picture img {
+  width: 100%;
+  height: 100%;
+}
+.music-account-platforms .account-picture img {
+  width: 100%;
+  height: 100%;
+}
+.music-liked-link {
+  color: #aaa;
+  font-size: 12px;
+  text-align: center;
+  padding: 8px 0;
+}
+.music-liked-link[aria-current="page"] {
+  color: #fff;
+}
+.wall-seam-face > .content-navigation-body {
+  height: 100%;
+}
+.wall-seam-content .music-wall-menu {
+  min-height: 0;
+}
+.wall-seam-content .music-wall-sections {
+  gap: 7px;
+}
+.wall-seam-content .music-wall-face {
+  gap: 12px;
+}
+.wall-seam-content .music-wall-bottom {
+  gap: 10px;
+}
+.wall-seam-content .music-wall-menu.is-search {
+  min-width: 0;
+}
+.wall-seam-content .music-wall-menu.is-search .music-wall-face {
+  gap: 20px;
+}
+.wall-empty-pair {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.wall-empty-half {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: #171717;
+  color: #aaa;
+}
+.wall-empty-half[data-empty-half="left"] {
+  left: 0;
+}
+.wall-empty-half[data-empty-half="right"] {
+  right: 0;
+}
+.wall-empty-half button {
+  pointer-events: auto;
+}
+.wall-filter-clear {
+  position: absolute;
+  bottom: 105px;
+  left: 30px;
+  z-index: 8;
+  padding: 10px;
+  background: #222;
+  border-radius: 12px;
+}
+.wall-filter-count {
+  display: block;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+}
+.music-wall-face > nav {
+  flex-shrink: 0;
+}
+.content-chrome:has(.music-wall-menu) {
+  top: 82px;
+  bottom: 110px;
+  left: 24px;
+  right: auto;
+  width: min(300px, calc(100vw - 120px));
+  overflow: auto;
+  background: #202020ee;
+  padding: 18px;
+}
+.modal.music-account-modal {
+  width: min(830px, calc(100vw - 36px));
+  max-width: calc(100vw - 36px);
+  max-height: calc(100vh - 48px);
+  padding: 0;
+}
+.modal.music-account-modal > header {
+  padding: 22px 25px;
+  margin-bottom: 0;
+}
+.music-account-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  min-height: 370px;
+}
+.music-account-platforms {
+  padding: 10px;
+  background: #151515;
+  border-right: 1px solid #ffffff0b;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.music-account-platforms button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  text-align: left;
+}
+.music-account-platforms button.active {
+  background: #ffffff13;
+  box-shadow: inset 3px 0 #d74855;
+}
+.music-account-platforms button > span:nth-child(2) {
+  flex: 1;
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+}
+.music-account-platforms small {
+  color: #999;
+}
+.music-account-platforms img {
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.platform-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #666;
+  flex: none;
+}
+.platform-netease {
+  background: #db2538;
+}
+.platform-qq {
+  background: #159b51;
+}
+.platform-kugou {
+  background: #2465e6;
+}
+.platform-bodian {
+  background: #168b80;
+}
+.platform-ytm {
+  background: #cb164b;
+}
+.platform-spotify {
+  background: #17a650;
+}
+.music-account-detail {
+  padding: 25px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+  overflow: auto;
+}
+.music-account-detail > h2 {
+  font-size: 24px;
+}
+.music-account-detail .button.primary {
+  margin-top: auto;
+}
+.music-account-avatar {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+@media (max-width: 700px) {
+  .music-account-layout {
+    grid-template-columns: 1fr;
+  }
+  .music-account-platforms {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+  .music-account-platforms button {
+    min-width: 145px;
+  }
+  .music-account-detail {
+    max-height: 55vh;
+  }
+}

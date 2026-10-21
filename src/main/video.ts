@@ -51,6 +51,7 @@ interface Playback {
   publishTimer?: ReturnType<typeof setTimeout>;
   blocker?: number;
   bounds?: VideoBounds;
+  logicalBounds?: VideoBounds;
   log: string;
   completed: boolean;
   saveJob: Promise<unknown>;
@@ -58,6 +59,15 @@ interface Playback {
   dialogOpen?: boolean;
   preferencesLoaded?: boolean;
   enhancer?: VideoEnhancer;
+  audioTicket?: number;
+  hostMoves?: Map<
+    string,
+    {
+      resolve(): void;
+      reject(error: Error): void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >;
 }
 const observed = [
   "pause",
@@ -73,6 +83,8 @@ export function installVideo(
   getWindow: () => BrowserWindow | null,
   call: Call,
   overlay?: {
+    setHostWindow(window: BrowserWindow): void;
+    refresh(): void;
     suspend(value: boolean): void;
     focusControls(reverse: boolean): boolean;
     onEdgeActivity(callback: (active: boolean) => void): void;
@@ -81,6 +93,248 @@ export function installVideo(
   let current: Playback | undefined;
   let opening: Promise<unknown> = Promise.resolve();
   let quitting = false;
+  let floating: BrowserWindow | undefined;
+  let closingFloating = false;
+  let presenting: Promise<void> = Promise.resolve();
+  let gesture:
+    | {
+        sessionId: string;
+        x: number;
+        y: number;
+        bounds: Electron.Rectangle;
+        edge: string;
+        moved: boolean;
+      }
+    | undefined;
+  let audioSerial = 0;
+  const audioAcks = new Map<number, () => void>();
+  const playbackWindow = () =>
+    floating &&
+    !floating.isDestroyed() &&
+    current?.state.presentation === "floating"
+      ? floating
+      : getWindow();
+  const windowPrefsPath = () =>
+    path.join(app.getPath("userData"), "video-window.json");
+  let windowSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let windowSave = Promise.resolve();
+  function setFloatingBounds(bounds: Electron.Rectangle) {
+    if (!floating) return;
+    let requested = { ...bounds };
+    // DIP rectangles can round outwards at fractional Windows scaling.
+    // Compensate measured size so restoring an already rounded rectangle
+    // cannot accumulate another pixel on each window migration.
+    for (let i = 0; i < 3; i++) {
+      floating.setBounds(requested);
+      const actual = floating.getBounds();
+      if (actual.width === bounds.width && actual.height === bounds.height)
+        break;
+      requested = {
+        ...requested,
+        width: Math.max(320, requested.width + bounds.width - actual.width),
+        height: Math.max(180, requested.height + bounds.height - actual.height),
+      };
+    }
+  }
+  const saveWindow = () => {
+    if (
+      !floating ||
+      floating.isDestroyed() ||
+      floating.isFullScreen() ||
+      floating.isMinimized()
+    )
+      return;
+    const value = {
+      ...floating.getBounds(),
+      alwaysOnTop: floating.isAlwaysOnTop(),
+    };
+    windowSave = windowSave
+      .then(() => fs.writeFile(windowPrefsPath(), JSON.stringify(value)))
+      .catch(console.error);
+  };
+  const closeFloating = () => {
+    gesture = undefined;
+    clearTimeout(windowSaveTimer);
+    saveWindow();
+    closingFloating = true;
+    floating?.destroy();
+    floating = undefined;
+    closingFloating = false;
+  };
+  const videoInput = (action: "close" | "restore") => {
+    if (current && !current.closed)
+      getWindow()?.webContents.send("video:input", {
+        sessionId: current.state.sessionId,
+        action,
+      });
+  };
+  async function present(p: Playback, mode: "embedded" | "floating") {
+    const main = getWindow();
+    if (!main || p.closed || current !== p) return;
+    if (mode === "floating" && !floating) {
+      const saved = await fs
+        .readFile(windowPrefsPath(), "utf8")
+        .then((value) => JSON.parse(value))
+        .catch(() => ({}));
+      if (p.closed || current !== p) return;
+      const display = screen.getDisplayMatching(main.getBounds()).workArea;
+      const requestedWidth = Math.max(
+        320,
+        Number.isFinite(saved.width) ? saved.width : 480,
+      );
+      const requestedHeight = Math.max(
+        180,
+        Number.isFinite(saved.height) ? saved.height : 310,
+      );
+      const area = screen.getDisplayMatching({
+        x: saved.x ?? display.x,
+        y: saved.y ?? display.y,
+        width: requestedWidth,
+        height: requestedHeight,
+      }).workArea;
+      const width = Math.min(area.width, requestedWidth);
+      const height = Math.min(area.height, requestedHeight);
+      const x = Math.max(
+        area.x,
+        Math.min(
+          area.x + area.width - width,
+          saved.x ?? area.x + area.width - width - 24,
+        ),
+      );
+      const y = Math.max(
+        area.y,
+        Math.min(
+          area.y + area.height - height,
+          saved.y ?? area.y + area.height - height - 24,
+        ),
+      );
+      floating = new BrowserWindow({
+        x,
+        y,
+        width,
+        height,
+        minWidth: 320,
+        minHeight: 180,
+        frame: false,
+        thickFrame: false,
+        resizable: true,
+        title: `Kaleid 视频 · ${p.item?.title ?? "正在播放"}`,
+        backgroundColor: "#000000",
+        alwaysOnTop: saved.alwaysOnTop !== false,
+        show: false,
+        autoHideMenuBar: true,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      });
+      floating.setMenu(null);
+      // Electron's frameless constructor can add the Windows resize border to
+      // the initial bounds. Apply the saved outer rectangle explicitly so it
+      // does not grow on every detach/restore cycle.
+      setFloatingBounds({ x, y, width, height });
+      floating.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      floating.webContents.on("will-navigate", (event) =>
+        event.preventDefault(),
+      );
+      const onWindowChange = () => {
+        overlay?.refresh();
+        if (current?.state.presentation === "floating") {
+          current.state.fullscreen = floating?.isFullScreen() ?? false;
+          refreshSurface(current);
+          send(current, true);
+        }
+        clearTimeout(windowSaveTimer);
+        windowSaveTimer = setTimeout(saveWindow, 250);
+      };
+      floating.on("move", onWindowChange);
+      floating.on("resize", onWindowChange);
+      floating.on("restore", onWindowChange);
+      floating.on("show", onWindowChange);
+      floating.on("hide", onWindowChange);
+      floating.on("minimize", onWindowChange);
+      floating.on("enter-full-screen", onWindowChange);
+      floating.on("leave-full-screen", onWindowChange);
+      floating.on("close", (event) => {
+        if (closingFloating) return;
+        event.preventDefault();
+        videoInput("close");
+        if (current) void cleanup(current);
+      });
+    }
+    if (p.closed || current !== p) return;
+    const target = mode === "floating" ? floating! : main;
+    if (p.state.presentation !== mode) {
+      if (p.state.presentation && playbackWindow()?.isFullScreen())
+        playbackWindow()?.setFullScreen(false);
+      p.state.presentation = mode;
+      p.state.fullscreen = target.isFullScreen();
+      const handle = target.getNativeWindowHandle();
+      const parent =
+        handle.length >= 8
+          ? handle.readBigUInt64LE().toString()
+          : String(handle.readUInt32LE());
+      if (p.host)
+        await new Promise<void>((resolve, reject) => {
+          const moveId = randomUUID();
+          const timer = setTimeout(() => {
+            p.hostMoves?.delete(moveId);
+            reject(new Error("视频窗口迁移超时"));
+          }, 3000);
+          (p.hostMoves ??= new Map()).set(moveId, { resolve, reject, timer });
+          p.host!.stdin.write(JSON.stringify({ parent, moveId }) + "\n");
+        });
+    }
+    if (p.closed || current !== p) return;
+    overlay?.setHostWindow(target);
+    await synchronizeSurface(p);
+    if (mode === "floating") {
+      p.state.alwaysOnTop = target.isAlwaysOnTop();
+      target.showInactive();
+    } else {
+      if (main.isMinimized()) main.restore();
+      main.show();
+      closeFloating();
+    }
+    send(p, true);
+  }
+  async function grantVideo(p: Playback, ticket: number) {
+    if (p.closed || current !== p || ticket !== audioSerial) return false;
+    const acknowledged = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        audioAcks.delete(ticket);
+        resolve(false);
+      }, 2000);
+      audioAcks.set(ticket, () => {
+        clearTimeout(timer);
+        audioAcks.delete(ticket);
+        resolve(true);
+      });
+      getWindow()?.webContents.send("video:audio-focus", ticket);
+    });
+    return acknowledged && !p.closed && current === p && ticket === audioSerial;
+  }
+  async function pauseVideo(p: Playback, paused: boolean) {
+    if (!paused) {
+      const ticket = ++audioSerial;
+      p.audioTicket = ticket;
+      if (!(await grantVideo(p, ticket))) return;
+      if (p.completed) {
+        p.completed = false;
+        p.state.status = "ready";
+        await raw(p, ["seek", 0, "absolute+exact"]);
+      }
+    } else {
+      ++audioSerial;
+      p.audioTicket = undefined;
+    }
+    if (p.closed || current !== p) return;
+    await raw(p, ["set_property", "pause", paused]);
+    p.state.paused = paused;
+    power(p);
+    send(p, true);
+  }
   let quitPending = false;
   const publishEdgeInput = (active: boolean) => {
     const p = current;
@@ -158,6 +412,69 @@ export function installVideo(
       );
     });
   }
+  async function synchronizeSurface(p: Playback, logical?: VideoBounds) {
+    if (p.closed || current !== p) return;
+    const window = playbackWindow();
+    if (!window) return;
+    const content = window.getContentBounds();
+    const scale = screen.getDisplayMatching(content).scaleFactor;
+    const input = logical ??
+      p.logicalBounds ?? {
+        x: 0,
+        y: 0,
+        width: content.width,
+        height: content.height,
+        visible: true,
+      };
+    if (logical) p.logicalBounds = logical;
+    const whole = p.state.fullscreen || p.state.presentation === "floating";
+    const x = whole ? 0 : Math.max(0, Math.min(content.width, input.x));
+    const y = whole ? 0 : Math.max(0, Math.min(content.height, input.y));
+    p.bounds = {
+      x: Math.round(x * scale),
+      y: Math.round(y * scale),
+      width: Math.round(
+        Math.max(
+          0,
+          Math.min(whole ? content.width : input.width, content.width - x),
+        ) * scale,
+      ),
+      height: Math.round(
+        Math.max(
+          0,
+          Math.min(whole ? content.height : input.height, content.height - y),
+        ) * scale,
+      ),
+      visible:
+        input.visible &&
+        (p.state.status === "ready" || p.state.status === "ended") &&
+        !p.dialogOpen,
+    };
+    if (!p.host) return;
+    const rectId = randomUUID();
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        p.hostMoves?.delete(rectId);
+        reject(new Error("画面尺寸同步超时"));
+      }, 3000);
+      (p.hostMoves ??= new Map()).set(rectId, { resolve, reject, timer });
+      p.host!.stdin.write(JSON.stringify({ ...p.bounds, rectId }) + "\n");
+    });
+    if (p.state.surface) {
+      p.state.surface.sizedAt ??= Date.now();
+      if (p.bounds.visible) p.state.surface.shownAt ??= Date.now();
+    }
+  }
+  function refreshSurface(p: Playback) {
+    overlay?.refresh();
+    void synchronizeSurface(p).catch((error) => {
+      if (!p.closed) console.warn(error);
+    });
+    getWindow()?.webContents.send("video:input", {
+      sessionId: p.state.sessionId,
+      action: "surface-update",
+    });
+  }
   function cleanup(p: Playback): Promise<void> {
     if (p.cleanupJob) return p.cleanupJob;
     p.cleanupJob = (async () => {
@@ -177,10 +494,20 @@ export function installVideo(
         job.reject(new Error("播放会话已结束"));
       }
       p.pending.clear();
+      for (const move of p.hostMoves?.values() ?? []) {
+        clearTimeout(move.timer);
+        move.reject(new Error("播放会话已结束"));
+      }
+      p.hostMoves?.clear();
       p.mpv?.kill();
       p.host?.stdin.end();
       p.host?.kill();
       if (current === p) current = undefined;
+      if (!current) {
+        const main = getWindow();
+        if (main) overlay?.setHostWindow(main);
+        closeFloating();
+      }
     })();
     return p.cleanupJob;
   }
@@ -333,6 +660,10 @@ export function installVideo(
       event.args?.[0] === "kaleid-input"
     ) {
       const action = event.args[1];
+      if (action === "toggle-pause") {
+        void pauseVideo(p, !p.state.paused).catch(console.error);
+        return;
+      }
       if (action === "activity" && ["tab", "backtab"].includes(event.args[2])) {
         const contents = getWindow()?.webContents;
         const modifiers: "shift"[] =
@@ -437,14 +768,31 @@ export function installVideo(
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (part) => {
         output += part;
-        if (!output.includes("\n")) return;
-        try {
-          const value = JSON.parse(output.split("\n")[0]);
-          clearTimeout(timer);
-          resolve(value.hwnd);
-        } catch {
-          clearTimeout(timer);
-          reject(new Error("无效的宿主窗口"));
+        while (output.includes("\n")) {
+          const end = output.indexOf("\n");
+          const line = output.slice(0, end);
+          output = output.slice(end + 1);
+          try {
+            const value = JSON.parse(line);
+            if (value.hwnd) {
+              clearTimeout(timer);
+              resolve(value.hwnd);
+            }
+            if (value.moved || value.resized) {
+              const id = value.moved ?? value.resized;
+              const move = p.hostMoves?.get(id);
+              p.hostMoves?.delete(id);
+              if (move) {
+                clearTimeout(move.timer);
+                value.ok
+                  ? move.resolve()
+                  : move.reject(new Error("视频窗口迁移失败"));
+              }
+            }
+          } catch {
+            clearTimeout(timer);
+            reject(new Error("无效的宿主窗口"));
+          }
         }
       });
       child.stdin.on("error", () => {});
@@ -496,8 +844,13 @@ export function installVideo(
       if (p.closed || current !== p) return;
       const window = getWindow();
       if (!window) throw new Error("窗口已关闭");
-      const hwnd = await spawnHost(p, window.getNativeWindowHandle());
+      const hwnd = await spawnHost(
+        p,
+        (playbackWindow() ?? window).getNativeWindowHandle(),
+      );
+      if (p.state.surface) p.state.surface.hostReadyAt = Date.now();
       if (p.closed || current !== p) return;
+      await synchronizeSurface(p);
       const pipe = [
         "",
         "",
@@ -511,7 +864,7 @@ export function installVideo(
       await fs.writeFile(
         inputFile,
         [
-          "SPACE cycle pause",
+          "SPACE script-message kaleid-input toggle-pause",
           "LEFT seek -5",
           "RIGHT seek 5",
           "Shift+LEFT seek -30",
@@ -525,7 +878,7 @@ export function installVideo(
           "MBTN_FORWARD script-message kaleid-input forward",
           "GO_BACK script-message kaleid-input back",
           "GO_FORWARD script-message kaleid-input forward",
-          "MBTN_LEFT cycle pause",
+          "MBTN_LEFT script-message kaleid-input toggle-pause",
           "MBTN_LEFT_DBL script-message kaleid-input fullscreen",
           "MOUSE_MOVE script-message kaleid-input activity",
           "WHEEL_UP add volume 5",
@@ -633,6 +986,7 @@ export function installVideo(
           index === 0 ? "select" : "auto",
         ]).catch(console.warn);
       p.state.status = "ready";
+      await synchronizeSurface(p);
       const gpu = (await app.getGPUInfo("complete").catch(() => ({}))) as any;
       if (p.closed || current !== p) return;
       const devices: any[] = gpu.gpuDevice ?? [];
@@ -652,9 +1006,15 @@ export function installVideo(
         nvidia,
       );
       void p.enhancer.update();
-      p.state.paused = !input.autoPlay;
+      const shouldPlay =
+        input.autoPlay &&
+        p.audioTicket !== undefined &&
+        (await grantVideo(p, p.audioTicket));
+      if (p.closed || current !== p) return;
+      p.state.paused = !shouldPlay;
       send(p, true);
-      await raw(p, ["set_property", "pause", !input.autoPlay]);
+      await raw(p, ["set_property", "pause", !shouldPlay]);
+      if (p.state.surface) p.state.surface.playbackAt = Date.now();
       power(p);
       p.timer = setInterval(() => {
         void save(p).catch(console.error);
@@ -711,6 +1071,8 @@ export function installVideo(
             tracks: [],
             preferences: videoPreferences(),
             fullscreen: window.isFullScreen(),
+            presentation: "embedded",
+            surface: { startedAt: Date.now() },
             resumed: false,
           },
           pending: new Map(),
@@ -721,6 +1083,7 @@ export function installVideo(
           saveJob: Promise.resolve(),
         };
         current = p;
+        if (input.autoPlay) p.audioTicket = ++audioSerial;
         // Replay the cursor edge state after a session swap in case the pointer
         // entered the edge before this playback session took ownership.
         overlay?.onEdgeActivity(publishEdgeInput);
@@ -742,6 +1105,23 @@ export function installVideo(
         )
           throw new Error("无效的选集请求");
         return call("videoQueue", args[0], args[1]);
+      }
+      if (method === "audioFocusAck") {
+        if (typeof args[0] === "number") audioAcks.get(args[0])?.();
+        return;
+      }
+      if (method === "musicFocus") {
+        const ticket = ++audioSerial;
+        const p = current;
+        if (p && !p.closed) {
+          p.audioTicket = undefined;
+          p.state.paused = true;
+          if (p.socket && p.state.status === "ready")
+            await raw(p, ["set_property", "pause", true]);
+          power(p);
+          send(p, true);
+        }
+        return ticket === audioSerial;
       }
       if (method === "exports") return exports.list();
       if (method === "cancelExport") {
@@ -822,6 +1202,90 @@ export function installVideo(
         return;
       }
       const p = active(args[0]);
+      if (method === "windowGesture") {
+        const value = args[1];
+        if (
+          !value ||
+          !["begin", "update", "end"].includes(value.type) ||
+          ![value.x, value.y].every(
+            (n) => Number.isFinite(n) && Math.abs(n) < 1000000,
+          ) ||
+          (value.edge &&
+            !["n", "s", "w", "e", "nw", "ne", "sw", "se"].includes(value.edge))
+        )
+          throw new Error("无效窗口操作");
+        if (
+          !floating ||
+          p.state.presentation !== "floating" ||
+          floating.isFullScreen()
+        ) {
+          gesture = undefined;
+          return { moved: false };
+        }
+        if (value.type === "begin") {
+          gesture = {
+            sessionId: p.state.sessionId,
+            x: value.x,
+            y: value.y,
+            bounds: floating.getBounds(),
+            edge: value.edge ?? "",
+            moved: false,
+          };
+          return { moved: false };
+        }
+        if (!gesture || gesture.sessionId !== p.state.sessionId)
+          return { moved: false };
+        const dx = Math.round(value.x - gesture.x),
+          dy = Math.round(value.y - gesture.y);
+        if (Math.abs(dx) + Math.abs(dy) > 4) gesture.moved = true;
+        if (gesture.moved) {
+          const b = gesture.bounds,
+            edge = gesture.edge;
+          const next = { ...b };
+          if (!edge) {
+            next.x += dx;
+            next.y += dy;
+          }
+          if (edge.includes("e")) next.width = Math.max(320, b.width + dx);
+          if (edge.includes("s")) next.height = Math.max(180, b.height + dy);
+          if (edge.includes("w")) {
+            next.width = Math.max(320, b.width - dx);
+            next.x = b.x + b.width - next.width;
+          }
+          if (edge.includes("n")) {
+            next.height = Math.max(180, b.height - dy);
+            next.y = b.y + b.height - next.height;
+          }
+          setFloatingBounds(next);
+        }
+        const moved = gesture.moved;
+        if (value.type === "end") {
+          gesture = undefined;
+          saveWindow();
+        }
+        return { moved };
+      }
+      if (method === "present") {
+        if (!["embedded", "floating"].includes(args[1]))
+          throw new Error("无效显示方式");
+        const mode = args[1];
+        if (args[2] !== undefined && !["manual", "automatic"].includes(args[2]))
+          throw new Error("无效画中画来源");
+        p.state.presentationReason =
+          mode === "floating" ? (args[2] ?? "manual") : undefined;
+        presenting = presenting.catch(() => {}).then(() => present(p, mode));
+        await presenting;
+        return;
+      }
+      if (method === "pin") {
+        if (typeof args[1] !== "boolean") throw new Error("无效置顶状态");
+        floating?.setAlwaysOnTop(args[1]);
+        p.state.alwaysOnTop = args[1];
+        if (floating) overlay?.setHostWindow(floating);
+        saveWindow();
+        send(p, true);
+        return;
+      }
       if (method === "bounds") {
         const bounds = args[1] as VideoBounds;
         if (
@@ -834,25 +1298,7 @@ export function installVideo(
           )
         )
           throw new Error("无效画面区域");
-        const content = window.getContentBounds();
-        const scale = screen.getDisplayMatching(content).scaleFactor;
-        const x = Math.max(0, Math.min(content.width, bounds.x));
-        const y = Math.max(0, Math.min(content.height, bounds.y));
-        p.bounds = {
-          x: Math.round(x * scale),
-          y: Math.round(y * scale),
-          width: Math.round(
-            Math.max(0, Math.min(bounds.width, content.width - x)) * scale,
-          ),
-          height: Math.round(
-            Math.max(0, Math.min(bounds.height, content.height - y)) * scale,
-          ),
-          visible:
-            bounds.visible === true &&
-            (p.state.status === "ready" || p.state.status === "ended") &&
-            !p.dialogOpen,
-        };
-        p.host?.stdin.write(JSON.stringify(p.bounds) + "\n");
+        await synchronizeSurface(p, bounds);
         return;
       }
       if (method === "subtitle") {
@@ -917,18 +1363,13 @@ export function installVideo(
             await raw(p, ["set_property", "ab-loop-b", range.end]);
             await raw(p, ["seek", range.start, "absolute+exact"]);
           }
-          await raw(p, ["set_property", "pause", !range]);
+          await pauseVideo(p, !range);
           break;
         }
         case "pause":
           if (typeof command.value !== "boolean")
             throw new Error("无效暂停状态");
-          if (p.completed && !command.value) {
-            p.completed = false;
-            p.state.status = "ready";
-            await raw(p, ["seek", 0, "absolute+exact"]);
-          }
-          await raw(p, ["set_property", "pause", command.value]);
+          await pauseVideo(p, command.value);
           break;
         case "seek":
           if (
@@ -979,8 +1420,9 @@ export function installVideo(
         case "fullscreen":
           if (typeof command.value !== "boolean")
             throw new Error("无效全屏状态");
-          window.setFullScreen(command.value);
+          (playbackWindow() ?? window).setFullScreen(command.value);
           p.state.fullscreen = command.value;
+          refreshSurface(p);
           break;
         default:
           throw new Error("不支持的播放操作");
@@ -990,14 +1432,16 @@ export function installVideo(
   );
   function bindWindow(window: BrowserWindow) {
     window.on("enter-full-screen", () => {
-      if (current) {
+      if (current && current.state.presentation !== "floating") {
         current.state.fullscreen = true;
+        refreshSurface(current);
         send(current, true);
       }
     });
     window.on("leave-full-screen", () => {
-      if (current) {
+      if (current && current.state.presentation !== "floating") {
         current.state.fullscreen = false;
+        refreshSurface(current);
         send(current, true);
       }
     });
@@ -1042,6 +1486,7 @@ export function installVideo(
       quitting = true;
       await exports.stop();
       if (current) await cleanup(current);
+      await windowSave;
       app.quit();
     } finally {
       quitPending = false;

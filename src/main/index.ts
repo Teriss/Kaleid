@@ -170,6 +170,7 @@ function validateSettings(input: Settings): Settings {
   );
   return {
     navigationAutoHide: input.navigationAutoHide !== false,
+    videoAutoPictureInPicture: input.videoAutoPictureInPicture === true,
     reducedMotion: Boolean(input.reducedMotion),
     navigationPosition: ["top", "bottom", "left", "right"].includes(
       input.navigationPosition,
@@ -211,6 +212,9 @@ void app
     process.env.MEDIA_BROWSER_VIDEO_RUNTIME = app.isPackaged
       ? path.join(process.resourcesPath, "video-runtime")
       : path.resolve(here, "../../artifacts/video-runtime");
+    process.env.MEDIA_BROWSER_COMIC_RUNTIME = app.isPackaged
+      ? path.join(process.resourcesPath, "comic-runtime")
+      : path.resolve(here, "../../artifacts/comic-runtime");
     const musicService = installMusic(() => window, call);
     const videoOverlay = installVideoOverlay(() => window);
     const videoService = installVideo(() => window, call, videoOverlay);
@@ -336,6 +340,15 @@ void app
       "restoreMusicMetadata",
       "searchMusicMetadata",
       "comicPages",
+      "comicPageMetrics",
+      "comicContext",
+      "comicWorks",
+      "saveComicWork",
+      "deleteComicWork",
+      "saveComicPreferences",
+      "saveComicBookmark",
+      "deleteComicBookmark",
+      "releaseComic",
       "setVideoCover",
       "settings",
       "saveSettings",

@@ -8,6 +8,7 @@ import {
   Keyboard,
   X,
   AudioLines,
+  Video,
 } from "lucide-react";
 import { IconButton, Modal } from "./components";
 import { act, useApp } from "./store";
@@ -32,6 +33,7 @@ export default function SettingsPanel({
     { id: "storage", label: "存储", icon: HardDrive },
     { id: "shortcuts", label: "快捷操作", icon: Keyboard },
     { id: "music", label: "音乐", icon: AudioLines },
+    { id: "video", label: "视频", icon: Video },
   ];
   const active = search
     ? (groups.find((group) => group.label.includes(search))?.id ?? section)
@@ -61,6 +63,27 @@ export default function SettingsPanel({
         <span className="settings-version">Kaleid 0.4.0 preview 5</span>
       </aside>
       <main className="settings-body">
+        {active === "video" && (
+          <label className="setting-row">
+            <span>
+              <strong>离开视频播放页后自动进入画中画</strong>
+              <small>
+                关闭时，返回或切库会停止播放并保存进度；手动画中画继续播放。
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              aria-label="自动进入画中画"
+              checked={settings.videoAutoPictureInPicture ?? false}
+              onChange={(e) =>
+                void setSettings({
+                  ...settings,
+                  videoAutoPictureInPicture: e.target.checked,
+                })
+              }
+            />
+          </label>
+        )}
         <div className="settings-heading">
           <h2>{groups.find((group) => group.id === active)?.label}</h2>
           <IconButton label="关闭设置" onClick={close}>

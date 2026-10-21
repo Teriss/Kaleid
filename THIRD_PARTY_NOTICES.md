@@ -48,3 +48,12 @@ Music adapters, lyrics, visualizers, audio effects, and backend bridges are deri
 - The matching application and vendored source, dependency lockfiles, and build instructions are included in `Kaleid-Source.zip` alongside each preview package. Upstream copyright and license notices are retained in source files.
 
 Other dependencies retain their respective package license files under node_modules. The source archive contains the lockfile required to reproduce their exact versions.
+
+## 7-Zip comic archive runtime
+
+Comic archive reading bundles the unmodified Windows x64 `7z.exe` and `7z.dll` from Igor Pavlov's official 7-Zip 26.04 distribution. The exact release URL, archive SHA-256 and individual file hashes are pinned in `scripts/comic-runtime.json`. `scripts/prepare-comic.mjs` verifies all hashes. The installer is unpacked into build artifacts; it is not run or installed on the user's computer.
+
+- Upstream release and corresponding source: https://github.com/ip7z/7zip/releases/tag/26.04
+- Copyright (C) 1999–2026 Igor Pavlov. Most code is GNU LGPL; other portions use BSD terms, and RAR decompression portions carry the unRAR restriction. The complete upstream `License.txt` is shipped beside the binaries in `resources/comic-runtime/`.
+- This component is distributed separately from application code and is only invoked as a console process for local archive reading. No changes have been made to its binaries. Users may replace both binaries with compatible versions in that resource directory.
+- Reader behaviour was researched using Venera, Mihon, OpenComic, Komga and Kavita. No source files or assets from those applications are incorporated in this implementation.

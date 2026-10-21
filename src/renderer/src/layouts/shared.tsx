@@ -205,12 +205,9 @@ export function Poster({
         disabled={!item}
         onDragStart={(event) => event.preventDefault()}
         onClick={(event) => {
-          if (!item) return;
+          if (!item || (mode === "grid" && event.detail > 1)) return;
           select?.(item, index, event);
-          if (mode !== "grid" || item.kind) activate();
-        }}
-        onDoubleClick={() => {
-          if (item && !item.kind && mode === "grid") activate();
+          activate();
         }}
         onContextMenu={(event) => item && contextMenu?.(item, index, event)}
       >

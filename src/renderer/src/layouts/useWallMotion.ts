@@ -96,6 +96,9 @@ export function useWallMotion(options: Options) {
       const o = latest.current;
       if (!o.interactive || e.button !== 0 || !e.isPrimary || pointer.current)
         return;
+      // Suppress only the click produced by the drag, never the next gesture
+      // on a menu/control that deliberately does not start wall panning.
+      didDrag.current = false;
       const target = e.target as HTMLElement;
       if (
         target.closest(

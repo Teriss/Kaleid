@@ -16,12 +16,7 @@ export function runtime() {
       getQqPort: async () => 2,
       getNeteaseApiStatus: async () => ({ status: "running", port: 1 }),
       getQqApiStatus: async () => ({ status: "running", port: 2 }),
-      kugouRequest: (op, params) => window.music.request("kugou", op, params),
-      bodianRequest: (op, params) => window.music.request("bodian", op, params),
       ytmRequest: (op, params) => window.music.request("ytm", op, params),
-      spotifyRequest: (op, params) =>
-        window.music.request("spotify", op, params),
-      getKugouApiStatus: async () => ({ status: "running" }),
     };
     loading =
       import("../../../../vendor/folia/src/services/onlineMusic/providerRegistry").then(

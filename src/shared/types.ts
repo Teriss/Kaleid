@@ -91,9 +91,12 @@ export interface MediaItem {
   missing: boolean;
   lastOpened?: number;
   progress?: Progress;
+  comicInfo?: import("./comic").ComicInfo;
   libraryIds: string[];
 }
 export interface Progress {
+  comicPageId?: string;
+  comicOffset?: number;
   completed?: boolean;
   position?: number;
   duration?: number;
@@ -162,10 +165,35 @@ export interface FolderNode {
   count: number;
 }
 export interface ComicPage {
+  id: string;
   name: string;
   url: string;
+  width?: number;
+  height?: number;
+}
+export interface ComicWork {
+  id: string;
+  title: string;
+  chapterIds: string[];
+  preferences?: Partial<import("./comic").ComicPreferences>;
+  automatic?: boolean;
+}
+export interface ComicBookmark {
+  id: string;
+  mediaId: string;
+  pageId: string;
+  page: number;
+  offset: number;
+  createdAt: number;
+}
+export interface ComicContext {
+  work?: ComicWork;
+  chapters: MediaItem[];
+  preferences: Partial<import("./comic").ComicPreferences>;
+  bookmarks: ComicBookmark[];
 }
 export interface Settings {
+  videoAutoPictureInPicture: boolean;
   navigationAutoHide: boolean;
   reducedMotion: boolean;
   navigationPosition: "top" | "bottom" | "left" | "right";
@@ -186,6 +214,7 @@ export interface Settings {
   lyricsPresentation: "split" | "fullscreen" | "wall";
 }
 export const DEFAULT_SETTINGS: Settings = {
+  videoAutoPictureInPicture: false,
   navigationAutoHide: true,
   reducedMotion: false,
   navigationPosition: "right",
@@ -262,7 +291,22 @@ export interface AppAPI {
   ): Promise<void>;
   restoreMusicMetadata(id: string): Promise<void>;
   searchMusicMetadata(id: string): Promise<MusicMetadataCandidate[]>;
-  comicPages(id: string): Promise<ComicPage[]>;
+  comicPages(id: string, session?: string): Promise<ComicPage[]>;
+  comicPageMetrics(
+    id: string,
+    indices: number[],
+  ): Promise<{ index: number; width?: number; height?: number }[]>;
+  comicContext(id: string): Promise<ComicContext>;
+  comicWorks(): Promise<ComicWork[]>;
+  saveComicWork(work: ComicWork): Promise<ComicWork>;
+  deleteComicWork(id: string): Promise<void>;
+  saveComicPreferences(
+    id: string,
+    preferences: Partial<import("./comic").ComicPreferences>,
+  ): Promise<void>;
+  saveComicBookmark(bookmark: ComicBookmark): Promise<void>;
+  deleteComicBookmark(id: string): Promise<void>;
+  releaseComic(id: string, session?: string): Promise<void>;
   setVideoCover(id: string, data: string): Promise<void>;
   reveal(id: string): Promise<void>;
   settings(): Promise<Settings>;

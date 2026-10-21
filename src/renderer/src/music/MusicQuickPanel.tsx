@@ -1,7 +1,17 @@
 import { EQUALIZER_PRESETS } from "./equalizer";
 import { visualizerChoices } from "./appearanceOptions";
 import { useEffect, useRef, useState } from "react";
-import { Crosshair, Home, Settings2, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import {
+  Crosshair,
+  Home,
+  Settings2,
+  Play,
+  Pause,
+  SkipBack,
+  SkipForward,
+} from "lucide-react";
+import { Cover } from "../components";
 import type { Library, Settings } from "../../../shared/types";
 import type { BrowseLocation } from "../../../shared/navigation";
 import { act, report, useApp, usePlayback } from "../store";
@@ -39,6 +49,45 @@ export default function MusicQuickPanel({
 }) {
   const [open, setOpen] = useState(false),
     [tab, setTab] = useState("播放");
+  const [hover, setHover] = useState(false);
+  const [videoSurface, setVideoSurface] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const update = (event: Event) => {
+      setVideoSurface((event as CustomEvent<HTMLElement | null>).detail);
+      setOpen(false);
+      setHover(false);
+    };
+    window.addEventListener("video:music-surface", update);
+    return () => window.removeEventListener("video:music-surface", update);
+  }, []);
+  const hide = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const dragging = useRef(false);
+  const dismissHover = () => {
+    clearTimeout(hide.current);
+    hide.current = setTimeout(() => {
+      if (!dragging.current) setHover(false);
+    }, 300);
+  };
+  useEffect(() => () => clearTimeout(hide.current), []);
+  useEffect(() => {
+    const release = () => {
+      dragging.current = false;
+      if (
+        !root.current?.matches(":hover") &&
+        !root.current?.contains(
+          root.current?.ownerDocument.activeElement ?? null,
+        )
+      )
+        dismissHover();
+    };
+    const owner = videoSurface?.ownerDocument.defaultView ?? window;
+    owner.addEventListener("pointerup", release);
+    owner.addEventListener("pointercancel", release);
+    return () => {
+      owner.removeEventListener("pointerup", release);
+      owner.removeEventListener("pointercancel", release);
+    };
+  }, [videoSurface]);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]),
     [busy, setBusy] = useState(false);
   const [styles, setStyles] = useState<{ mode: string; label: string }[]>([]);
@@ -73,13 +122,14 @@ export default function MusicQuickPanel({
         setOpen(false);
       }
     };
-    document.addEventListener("pointerdown", outside);
-    document.addEventListener("keydown", escape);
+    const owner = root.current?.ownerDocument ?? document;
+    owner.addEventListener("pointerdown", outside);
+    owner.addEventListener("keydown", escape);
     return () => {
-      document.removeEventListener("pointerdown", outside);
-      document.removeEventListener("keydown", escape);
+      owner.removeEventListener("pointerdown", outside);
+      owner.removeEventListener("keydown", escape);
     };
-  }, [open]);
+  }, [open, videoSurface]);
   const home = () => {
     if (scope.view === "music")
       navigate({
@@ -89,13 +139,13 @@ export default function MusicQuickPanel({
         remoteKind: undefined,
         search: undefined,
       });
-    else if (scope.libraryId)
+    else if (scope.type === "music" && scope.libraryId)
       navigate({
         view: "library",
         type: scope.type,
         libraryId: scope.libraryId,
       });
-    else navigate({ view: "libraries", type: scope.type ?? "music" });
+    else navigate({ view: "libraries", type: "music" });
     setOpen(false);
   };
   async function locate() {
@@ -206,8 +256,85 @@ export default function MusicQuickPanel({
     localStorage.setItem(key, value);
     window.dispatchEvent(new Event("music-appearance-change"));
   };
-  return (
-    <div className="music-quick-dock" ref={root}>
+  const content = (
+    <div
+      className={`music-quick-dock music-unified-dock ${open ? "settings-open" : ""}`}
+      ref={root}
+      onPointerEnter={() => {
+        clearTimeout(hide.current);
+        setHover(true);
+      }}
+      onPointerLeave={dismissHover}
+      onFocusCapture={() => {
+        clearTimeout(hide.current);
+        setHover(true);
+      }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node))
+          dismissHover();
+      }}
+      onPointerDownCapture={() => {
+        dragging.current = true;
+      }}
+      onPointerUpCapture={() => {
+        dragging.current = false;
+      }}
+      onPointerCancelCapture={() => {
+        dragging.current = false;
+        dismissHover();
+      }}
+    >
+      {p.track && hover && !open && (
+        <section className="music-dock-controls" aria-label="音乐悬浮控制">
+          <button
+            className="music-dock-title"
+            aria-label="展开音乐播放器"
+            onClick={() =>
+              usePlayback.setState({ expanded: true, queueVisible: false })
+            }
+          >
+            <strong>{p.track.title}</strong>
+            <small>{p.track.artist || "本地音乐"}</small>
+          </button>
+          <div className="music-dock-transport">
+            <button aria-label="上一首" onClick={() => p.next(-1)}>
+              <SkipBack size={17} />
+            </button>
+            <button
+              aria-label={p.playing ? "暂停音乐" : "播放音乐"}
+              onClick={p.toggle}
+            >
+              {p.playing ? <Pause size={20} /> : <Play size={20} />}
+            </button>
+            <button aria-label="下一首" onClick={() => p.next()}>
+              <SkipForward size={17} />
+            </button>
+          </div>
+          <input
+            aria-label="音乐播放进度"
+            type="range"
+            min={0}
+            max={p.duration || 1}
+            step={0.1}
+            value={Math.min(p.position, p.duration || 1)}
+            onChange={(e) => p.seekTo(Number(e.target.value))}
+          />
+          <label>
+            音量
+            <input
+              aria-label="悬浮音乐音量"
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={p.volume}
+              onChange={(e) =>
+                usePlayback.setState({ volume: Number(e.target.value) })
+              }
+            />
+          </label>
+        </section>
+      )}
       {open && (
         <section className="music-quick-panel" aria-label="音乐快捷设置">
           <div className="quick-destinations">
@@ -499,13 +626,17 @@ export default function MusicQuickPanel({
         </section>
       )}
       <button
-        className="quick-toggle"
+        className="quick-toggle music-cover-toggle"
         aria-label={open ? "收起音乐快捷设置" : "音乐快捷设置"}
         aria-expanded={open}
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          setHover(false);
+          setOpen(!open);
+        }}
       >
-        {open ? <X size={18} /> : <Settings2 size={18} />}
+        {p.track ? <Cover item={p.track} /> : <Settings2 size={18} />}
       </button>
     </div>
   );
+  return videoSurface ? createPortal(content, videoSurface) : content;
 }
