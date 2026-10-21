@@ -4,6 +4,7 @@ import App from "./App";
 import MusicWindow from "./music/MusicWindow";
 import "./music/folia.css";
 import "./styles.css";
+import "./reader.css";
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },

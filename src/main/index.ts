@@ -21,6 +21,7 @@ import { installMusic } from "./music";
 import { installVideo } from "./video";
 import { installVideoOverlay } from "./videoOverlay";
 import type { MediaQuery, Settings } from "../shared/types";
+import { normalizeReaderSettings } from "../shared/readerSettings";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 app.setPath(
@@ -164,6 +165,9 @@ async function validatedRoots(roots: unknown) {
   return [...new Set(result)];
 }
 function validateSettings(input: Settings): Settings {
+  const reader = normalizeReaderSettings(
+    input as Settings & { readerBackgroundColor?: unknown },
+  );
   return {
     navigationAutoHide: input.navigationAutoHide !== false,
     reducedMotion: Boolean(input.reducedMotion),
@@ -172,19 +176,7 @@ function validateSettings(input: Settings): Settings {
     )
       ? input.navigationPosition
       : "right",
-    readerTheme: input.readerTheme === "dark" ? "dark" : "paper",
-    readerMode: input.readerMode === "paged" ? "paged" : "scroll",
-    readerBackgroundColor:
-      typeof input.readerBackgroundColor === "string" &&
-      /^#[0-9a-f]{6}$/i.test(input.readerBackgroundColor)
-        ? input.readerBackgroundColor
-        : "#eee8db",
-    fontSize: Math.max(14, Math.min(32, Number(input.fontSize) || 20)),
-    lineHeight: Math.max(1.4, Math.min(2.6, Number(input.lineHeight) || 1.9)),
-    readerWidth: Math.max(
-      500,
-      Math.min(1100, Number(input.readerWidth) || 760),
-    ),
+    ...reader,
     comicMode: ["single", "double", "scroll"].includes(input.comicMode)
       ? input.comicMode
       : "single",

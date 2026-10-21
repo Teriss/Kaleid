@@ -18,6 +18,7 @@ import {
   matchingSubtitles,
 } from "./videoFiles";
 import { videoPreferences } from "../shared/video";
+import { normalizeStoredSettings } from "../shared/readerSettings";
 import {
   DEFAULT_SETTINGS,
   type Library,
@@ -2489,7 +2490,11 @@ const handlers: Record<string, (...args: any[]) => any> = {
     publishIndexChange([id]);
   },
   settings: () => {
-    return { ...DEFAULT_SETTINGS, ...(preference("settings") ?? {}) };
+    const stored = preference("settings") ?? {};
+    const settings = normalizeStoredSettings(stored);
+    if (JSON.stringify(stored) !== JSON.stringify(settings))
+      savePreference("settings", settings);
+    return settings;
   },
   saveSettings: (settings: unknown) => {
     savePreference("settings", settings);

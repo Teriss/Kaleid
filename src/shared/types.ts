@@ -100,6 +100,8 @@ export interface Progress {
   cfi?: string;
   page?: number;
   scroll?: number;
+  textOffset?: number;
+  href?: string;
 }
 export interface MediaQuery {
   libraryId?: string;
@@ -167,12 +169,12 @@ export interface Settings {
   navigationAutoHide: boolean;
   reducedMotion: boolean;
   navigationPosition: "top" | "bottom" | "left" | "right";
-  readerTheme: "paper" | "dark";
+  readerTheme: import("./readerColors").ReaderTheme;
   readerMode: "scroll" | "paged";
-  readerBackgroundColor: string;
+  readerFont: import("./readerColors").ReaderFont;
   fontSize: number;
   lineHeight: number;
-  readerWidth: number;
+  readerPadding: number;
   comicMode: "single" | "double" | "scroll";
   comicRtl: boolean;
   equalizerEnabled: boolean;
@@ -189,10 +191,10 @@ export const DEFAULT_SETTINGS: Settings = {
   navigationPosition: "right",
   readerTheme: "paper",
   readerMode: "scroll",
-  readerBackgroundColor: "#eee8db",
+  readerFont: "serif",
   fontSize: 20,
   lineHeight: 1.9,
-  readerWidth: 760,
+  readerPadding: 6,
   comicMode: "single",
   comicRtl: false,
   equalizerEnabled: false,

@@ -21,6 +21,14 @@ dist/
 /scripts/smoke-*.mjs
 /scripts/encode-folia-demo.mjs
 
+# Keep the reader regression coverage in the repository.
+!tests/
+!tests/unit/
+!tests/unit/readerColors.test.ts
+!tests/unit/readerGestures.test.ts
+!tests/e2e/
+!tests/e2e/reader.spec.ts
+
 # Generated packaging files and temporary output.
 /build/icon.ico
 /build/icon.png

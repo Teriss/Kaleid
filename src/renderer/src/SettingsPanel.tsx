@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { IconButton, Modal } from "./components";
 import { act, useApp } from "./store";
+import ReaderPreferences from "./ReaderPreferences";
 
 export default function SettingsPanel({
   close,
@@ -141,110 +142,7 @@ export default function SettingsPanel({
         {active === "reading" && (
           <>
             <h3>小说阅读</h3>
-            <div className="settings-group">
-              <div className="setting-row">
-                <strong>默认主题</strong>
-                <select
-                  aria-label="默认阅读主题"
-                  value={settings.readerTheme}
-                  onChange={(event) => {
-                    const readerTheme = event.target
-                      .value as typeof settings.readerTheme;
-                    const previousDefault =
-                      settings.readerTheme === "paper" ? "#eee8db" : "#202020";
-                    const nextDefault =
-                      readerTheme === "paper" ? "#eee8db" : "#202020";
-                    void act(() =>
-                      setSettings({
-                        ...settings,
-                        readerTheme,
-                        readerBackgroundColor:
-                          settings.readerBackgroundColor === previousDefault
-                            ? nextDefault
-                            : settings.readerBackgroundColor,
-                      }),
-                    );
-                  }}
-                >
-                  <option value="paper">纸色</option>
-                  <option value="dark">深色</option>
-                </select>
-              </div>
-              <div className="setting-row">
-                <strong>翻页模式</strong>
-                <select
-                  aria-label="默认翻页模式"
-                  value={settings.readerMode}
-                  onChange={(event) =>
-                    void act(() =>
-                      setSettings({
-                        ...settings,
-                        readerMode: event.target
-                          .value as typeof settings.readerMode,
-                      }),
-                    )
-                  }
-                >
-                  <option value="scroll">连续滚动</option>
-                  <option value="paged">分页翻页</option>
-                </select>
-              </div>
-              <div className="setting-row">
-                <strong>阅读背景</strong>
-                <input
-                  aria-label="默认阅读背景颜色"
-                  type="color"
-                  value={settings.readerBackgroundColor}
-                  onChange={(event) =>
-                    void act(() =>
-                      setSettings({
-                        ...settings,
-                        readerBackgroundColor: event.target.value,
-                      }),
-                    )
-                  }
-                />
-              </div>
-              <div className="setting-row">
-                <strong>字号</strong>
-                <input
-                  aria-label="默认阅读字号"
-                  type="range"
-                  min="14"
-                  max="32"
-                  value={settings.fontSize}
-                  onChange={(event) =>
-                    void act(() =>
-                      setSettings({
-                        ...settings,
-                        fontSize: Number(event.target.value),
-                      }),
-                    )
-                  }
-                />
-                <span>{settings.fontSize}</span>
-              </div>
-              <div className="setting-row">
-                <strong>行距</strong>
-                <input
-                  aria-label="默认阅读行距"
-                  type="range"
-                  min="1.4"
-                  max="2.6"
-                  step=".1"
-                  value={settings.lineHeight}
-                  onChange={(event) =>
-                    void act(() =>
-                      setSettings({
-                        ...settings,
-                        lineHeight: Number(event.target.value),
-                      }),
-                    )
-                  }
-                />
-                <span>{settings.lineHeight}</span>
-              </div>
-            </div>
+            <ReaderPreferences />
           </>
         )}
         {active === "music" && (
