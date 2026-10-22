@@ -2322,10 +2322,14 @@ const handlers: Record<string, (...args: any[]) => any> = {
     db
       .prepare("UPDATE media SET lastOpened=? WHERE id=?")
       .run(Date.now(), id) && undefined,
-  saveProgress: (id: string, progress: unknown) =>
-    db
+  saveProgress: (id: string, progress: unknown) => {
+    const result = db
       .prepare("UPDATE media SET progress=? WHERE id=? AND type<>'music'")
-      .run(JSON.stringify(progress), id) && undefined,
+      .run(JSON.stringify(progress), id);
+    // Video playback also saves from the native host. Notify cached directory
+    // lists so the watch indicator is current when the player closes.
+    if (result.changes && item(id).type === "video") publishIndexChange([id]);
+  },
   readText: async (id: string, encoding?: string) => {
     const media = item(id);
     if (media.type !== "novel" || media.ext !== "txt")

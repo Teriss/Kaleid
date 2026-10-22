@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -37,7 +38,7 @@ function textOffsetAtViewport(container: HTMLElement, paged: boolean) {
   const caret = doc.caretRangeFromPoint?.(x, y);
   const paragraph =
     caret?.startContainer.parentElement?.closest<HTMLElement>("p[data-offset]");
-  if (caret && paragraph) {
+  if (caret && paragraph && container.contains(paragraph)) {
     const prefix = doc.createRange();
     prefix.selectNodeContents(paragraph);
     prefix.setEnd(caret.startContainer, caret.startOffset);
@@ -107,8 +108,14 @@ function restoreTextOffset(
   range.collapse(true);
   const rect = range.getBoundingClientRect();
   const bounds = container.getBoundingClientRect();
-  if (paged) container.scrollLeft += rect.left - bounds.left - 4;
-  else container.scrollTop += rect.top - bounds.top - 42;
+  if (paged) {
+    const width =
+      container
+        .querySelector<HTMLElement>(".book-text")
+        ?.getBoundingClientRect().width || container.clientWidth;
+    const absoluteX = container.scrollLeft + rect.left - bounds.left;
+    container.scrollLeft = Math.floor((absoluteX + 1) / width) * width;
+  } else container.scrollTop += rect.top - bounds.top - 42;
   if (!rect.width && !rect.height) {
     paragraph.scrollIntoView({ block: "start", inline: "nearest" });
   }
@@ -168,9 +175,7 @@ export default function NovelViewer({
   const applySeek = useRef<(value: number) => Promise<boolean>>(
     async () => false,
   );
-  const [pageWidth, setPageWidth] = useState(() =>
-    Math.round(window.innerWidth * (1 - (settings.readerPadding * 2) / 100)),
-  );
+  const [txtViewport, setTxtViewport] = useState({ width: 0, height: 0 });
   const container = useRef<HTMLDivElement>(null);
   const epubHost = useRef<HTMLDivElement>(null);
   const pageAnimation = useRef<Animation | null>(null);
@@ -352,14 +357,14 @@ export default function NovelViewer({
     if (!el || !direction) return;
     if (settingsRef.current.readerMode === "paged") {
       const article = el.querySelector<HTMLElement>(".book-text");
-      const style = article ? getComputedStyle(article) : null;
-      const width =
-        Number.parseFloat(style?.columnWidth ?? "0") || el.clientWidth;
-      const gap = Number.parseFloat(style?.columnGap ?? "0") || 0;
+      const width = article?.getBoundingClientRect().width || el.clientWidth;
       const max = Math.max(0, el.scrollWidth - el.clientWidth);
       const target = Math.max(
         0,
-        Math.min(max, el.scrollLeft + direction * (width + gap)),
+        Math.min(
+          max,
+          (Math.round(el.scrollLeft / width) + Math.sign(direction)) * width,
+        ),
       );
       if (target === el.scrollLeft) return;
       el.scrollLeft = target;
@@ -436,6 +441,22 @@ export default function NovelViewer({
     const el = container.current;
     if (!el) return;
     const progress = currentProgress.current;
+    const paged = settingsRef.current.readerMode === "paged";
+    const max = Math.max(
+      0,
+      paged
+        ? el.scrollWidth - el.clientWidth
+        : el.scrollHeight - el.clientHeight,
+    );
+    if (
+      progress.scroll !== undefined &&
+      (progress.scroll <= 0 || progress.scroll >= 1)
+    ) {
+      if (paged) el.scrollLeft = progress.scroll >= 1 ? max : 0;
+      else el.scrollTop = progress.scroll >= 1 ? max : 0;
+      captureTextProgress(el);
+      return;
+    }
     if (progress.textOffset != null && text) {
       if (
         restoreTextOffset(
@@ -443,16 +464,18 @@ export default function NovelViewer({
           progress.textOffset,
           settingsRef.current.readerMode === "paged",
         )
-      )
+      ) {
+        captureTextProgress(el);
         return;
+      }
     }
-    if (settingsRef.current.readerMode === "paged")
-      el.scrollLeft =
-        (progress.scroll ?? 0) * Math.max(0, el.scrollWidth - el.clientWidth);
-    else
-      el.scrollTop =
-        progress.position ??
-        (progress.scroll ?? 0) * Math.max(0, el.scrollHeight - el.clientHeight);
+    const target =
+      progress.scroll !== undefined
+        ? progress.scroll * max
+        : (progress.position ?? 0);
+    if (paged) el.scrollLeft = target;
+    else el.scrollTop = target;
+    captureTextProgress(el);
   }
 
   useEffect(() => {
@@ -465,7 +488,6 @@ export default function NovelViewer({
       .then((result) => {
         if (!live) return;
         setText(result.text);
-        requestAnimationFrame(restoreTxtProgress);
       })
       .catch((err) => {
         if (live) setError(String(err));
@@ -645,9 +667,13 @@ export default function NovelViewer({
     const update = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const contentWidth =
-          element.clientWidth * (1 - (settings.readerPadding * 2) / 100);
-        setPageWidth(Math.max(1, Math.round(contentWidth)));
+        const width = element.clientWidth,
+          height = element.clientHeight;
+        setTxtViewport((previous) =>
+          previous.width === width && previous.height === height
+            ? previous
+            : { width, height },
+        );
       });
     };
     const observer = new ResizeObserver(update);
@@ -659,11 +685,11 @@ export default function NovelViewer({
     };
   }, [item.ext, settings.readerPadding]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (item.ext !== "txt" || !text) return;
     const el = container.current;
     if (!el) return;
-    requestAnimationFrame(restoreTxtProgress);
+    restoreTxtProgress();
   }, [
     settings.readerMode,
     settings.readerFont,
@@ -671,6 +697,8 @@ export default function NovelViewer({
     settings.lineHeight,
     settings.readerPadding,
     text,
+    txtViewport.width,
+    txtViewport.height,
   ]);
 
   useEffect(() => {
@@ -759,9 +787,16 @@ export default function NovelViewer({
     const max = paged
       ? el.scrollWidth - el.clientWidth
       : el.scrollHeight - el.clientHeight;
+    const position = Math.max(
+      0,
+      Math.min(Math.max(0, max), paged ? el.scrollLeft : el.scrollTop),
+    );
+    const fraction =
+      max > 0 ? (max - position <= 2 ? 1 : position / max) : text ? 1 : 0;
     persistProgress({
-      position: paged ? el.scrollLeft : el.scrollTop,
-      scroll: max > 0 ? (paged ? el.scrollLeft : el.scrollTop) / max : 0,
+      position,
+      scroll: fraction,
+      completed: fraction === 1,
       textOffset:
         textOffsetAtViewport(el, paged) ?? currentProgress.current.textOffset,
     });
@@ -771,13 +806,23 @@ export default function NovelViewer({
     const fraction = value / 1000;
     if (item.ext === "txt") {
       const el = container.current;
-      if (!el) return false;
-      const restored = restoreTextOffset(
-        el,
-        Math.round(text.length * fraction),
-        settingsRef.current.readerMode === "paged",
+      if (!el || !text) return false;
+      const paged = settingsRef.current.readerMode === "paged";
+      const max = Math.max(
+        0,
+        paged
+          ? el.scrollWidth - el.clientWidth
+          : el.scrollHeight - el.clientHeight,
       );
-      if (!restored) return false;
+      if (paged) {
+        const width =
+          el.querySelector<HTMLElement>(".book-text")?.getBoundingClientRect()
+            .width || el.clientWidth;
+        el.scrollLeft =
+          fraction >= 1
+            ? max
+            : Math.min(max, Math.round((fraction * max) / width) * width);
+      } else el.scrollTop = fraction * max;
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => resolve()),
       );
@@ -788,10 +833,11 @@ export default function NovelViewer({
     return sessionRef.current?.seek(fraction) ?? false;
   };
 
-  const txtOffset = currentProgress.current.textOffset ?? 0;
   const actualProgressValue =
     item.ext === "txt"
-      ? Math.round((txtOffset / Math.max(1, text.length)) * 1000)
+      ? Math.round(
+          Math.max(0, Math.min(1, currentProgress.current.scroll ?? 0)) * 1000,
+        )
       : wholeBookReady
         ? Math.round(wholeBookProgress * 1000)
         : Math.round(chapterProgress * 1000);
@@ -807,7 +853,6 @@ export default function NovelViewer({
       style={
         {
           "--reader-padding": `${settings.readerPadding}%`,
-          "--reader-page-width": `${pageWidth}px`,
           "--reader-size": `${settings.fontSize}px`,
           "--reader-line": settings.lineHeight,
           "--reader-bg": palette.background,

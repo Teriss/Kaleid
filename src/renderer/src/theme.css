@@ -1,0 +1,377 @@
+:root {
+  color-scheme: dark;
+  --ui-highlight: 255 255 255;
+  --app-bg: #141414;
+  --app-surface: #242424;
+  --app-text: #ededed;
+  --app-muted: #999;
+  --app-line: #ffffff18;
+  --ui-000: #000;
+  --ui-0000006b: #0000006b;
+  --ui-0001: #0001;
+  --ui-0002: #0002;
+  --ui-0003: #0003;
+  --ui-0004: #0004;
+  --ui-0005: #0005;
+  --ui-0006: #0006;
+  --ui-0007: #0007;
+  --ui-0008: #0008;
+  --ui-0009: #0009;
+  --ui-000b: #000b;
+  --ui-09090988: #09090988;
+  --ui-101010ad: #101010ad;
+  --ui-111: #111;
+  --ui-111111: #111111;
+  --ui-1118: #1118;
+  --ui-141414: #141414;
+  --ui-151515: #151515;
+  --ui-15151590: #15151590;
+  --ui-151515cc: #151515cc;
+  --ui-161616: #161616;
+  --ui-16161633: #16161633;
+  --ui-16161644: #16161644;
+  --ui-161616b3: #161616b3;
+  --ui-171717: #171717;
+  --ui-17171799: #17171799;
+  --ui-171717a6: #171717a6;
+  --ui-18181877: #18181877;
+  --ui-191919b8: #191919b8;
+  --ui-1a1a1a: #1a1a1a;
+  --ui-1b1b1b: #1b1b1b;
+  --ui-1b1b1b99: #1b1b1b99;
+  --ui-1b1b1bd4: #1b1b1bd4;
+  --ui-1c1c1c: #1c1c1c;
+  --ui-1d1d1d: #1d1d1d;
+  --ui-1e1e1e: #1e1e1e;
+  --ui-1e1e1ed9: #1e1e1ed9;
+  --ui-202020: #202020;
+  --ui-20202099: #20202099;
+  --ui-202020e8: #202020e8;
+  --ui-202020f2: #202020f2;
+  --ui-222: #222;
+  --ui-2224: #2224;
+  --ui-222d: #222d;
+  --ui-222e: #222e;
+  --ui-232323e8: #232323e8;
+  --ui-242424: #242424;
+  --ui-242424f2: #242424f2;
+  --ui-252525: #252525;
+  --ui-252525cc: #252525cc;
+  --ui-252525dd: #252525dd;
+  --ui-252525e6: #252525e6;
+  --ui-262626: #262626;
+  --ui-262626f2: #262626f2;
+  --ui-292929: #292929;
+  --ui-292929f5: #292929f5;
+  --ui-303030: #303030;
+  --ui-333: #333;
+  --ui-333d: #333d;
+  --ui-34343433: #34343433;
+  --ui-454545: #454545;
+  --ui-5d5d5d: #5d5d5d;
+  --ui-666: #666;
+  --ui-6d6d6d: #6d6d6d;
+  --ui-6e6e6e: #6e6e6e;
+  --ui-737373: #737373;
+  --ui-777: #777;
+  --ui-858585: #858585;
+  --ui-888: #888;
+  --ui-8d8d8d: #8d8d8d;
+  --ui-8f8f8f: #8f8f8f;
+  --ui-929292: #929292;
+  --ui-999: #999;
+  --ui-999999: #999999;
+  --ui-a8a8a8: #a8a8a8;
+  --ui-a9a9a9: #a9a9a9;
+  --ui-aaa: #aaa;
+  --ui-aaaaaa: #aaaaaa;
+  --ui-b8b8b8: #b8b8b8;
+  --ui-bbb: #bbb;
+  --ui-ccc: #ccc;
+  --ui-d4d4d4: #d4d4d4;
+  --ui-d8d8d8: #d8d8d8;
+  --ui-ddd: #ddd;
+  --ui-dddddd: #dddddd;
+  --ui-dedede: #dedede;
+  --ui-e1e1e1: #e1e1e1;
+  --ui-e2e2e2: #e2e2e2;
+  --ui-e4e4e4: #e4e4e4;
+  --ui-e5e5e5: #e5e5e5;
+  --ui-e5e5e51b: #e5e5e51b;
+  --ui-e5e5e533: #e5e5e533;
+  --ui-e7e7e7: #e7e7e7;
+  --ui-e8e8e8: #e8e8e8;
+  --ui-ededed: #ededed;
+  --ui-eee: #eee;
+  --ui-f0f0f0: #f0f0f0;
+  --ui-f1f1f1: #f1f1f1;
+  --ui-f3f3f3: #f3f3f3;
+  --ui-f5f5f5: #f5f5f5;
+  --ui-fff: #fff;
+  --ui-fff1: #fff1;
+  --ui-fff5: #fff5;
+  --ui-ffffff: #ffffff;
+  --ui-ffffff03: #ffffff03;
+  --ui-ffffff04: #ffffff04;
+  --ui-ffffff05: #ffffff05;
+  --ui-ffffff06: #ffffff06;
+  --ui-ffffff07: #ffffff07;
+  --ui-ffffff08: #ffffff08;
+  --ui-ffffff09: #ffffff09;
+  --ui-ffffff0a: #ffffff0a;
+  --ui-ffffff0c: #ffffff0c;
+  --ui-ffffff0d: #ffffff0d;
+  --ui-ffffff0e: #ffffff0e;
+  --ui-ffffff0f: #ffffff0f;
+  --ui-ffffff10: #ffffff10;
+  --ui-ffffff12: #ffffff12;
+  --ui-ffffff14: #ffffff14;
+  --ui-ffffff15: #ffffff15;
+  --ui-ffffff17: #ffffff17;
+  --ui-ffffff18: #ffffff18;
+  --ui-ffffff20: #ffffff20;
+  --ui-ffffff22: #ffffff22;
+  --ui-ffffff26: #ffffff26;
+  --ui-ffffff65: #ffffff65;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ui-highlight: 30 40 30;
+  --app-bg: #eeefec;
+  --app-surface: #fafbf8;
+  --app-text: #242a25;
+  --app-muted: #626b63;
+  --app-line: #243a2526;
+  --ui-000: #eeeeee;
+  --ui-0000006b: #eeeeee6b;
+  --ui-0001: #eeeeee11;
+  --ui-0002: #eeeeee22;
+  --ui-0003: #eeeeee33;
+  --ui-0004: #eeeeee44;
+  --ui-0005: #eeeeee55;
+  --ui-0006: #eeeeee66;
+  --ui-0007: #eeeeee77;
+  --ui-0008: #eeeeee88;
+  --ui-0009: #eeeeee99;
+  --ui-000b: #eeeeeebb;
+  --ui-09090988: #eeeeee88;
+  --ui-101010ad: #eeeeeead;
+  --ui-111: #f1f1f1;
+  --ui-111111: #f1f1f1;
+  --ui-1118: #f1f1f188;
+  --ui-141414: #f2f2f2;
+  --ui-151515: #f3f3f3;
+  --ui-15151590: #f3f3f390;
+  --ui-151515cc: #f3f3f3cc;
+  --ui-161616: #f3f3f3;
+  --ui-16161633: #f3f3f333;
+  --ui-16161644: #f3f3f344;
+  --ui-161616b3: #f3f3f3b3;
+  --ui-171717: #f4f4f4;
+  --ui-17171799: #f4f4f499;
+  --ui-171717a6: #f4f4f4a6;
+  --ui-18181877: #f4f4f477;
+  --ui-191919b8: #f5f5f5b8;
+  --ui-1a1a1a: #f5f5f5;
+  --ui-1b1b1b: #f6f6f6;
+  --ui-1b1b1b99: #f6f6f699;
+  --ui-1b1b1bd4: #f6f6f6d4;
+  --ui-1c1c1c: #f6f6f6;
+  --ui-1d1d1d: #f7f7f7;
+  --ui-1e1e1e: #f7f7f7;
+  --ui-1e1e1ed9: #f7f7f7d9;
+  --ui-202020: #f8f8f8;
+  --ui-20202099: #f8f8f899;
+  --ui-202020e8: #f8f8f8e8;
+  --ui-202020f2: #f8f8f8f2;
+  --ui-222: #f9f9f9;
+  --ui-2224: #f9f9f944;
+  --ui-222d: #f9f9f9dd;
+  --ui-222e: #f9f9f9ee;
+  --ui-232323e8: #fafafae8;
+  --ui-242424: #fafafa;
+  --ui-242424f2: #fafafaf2;
+  --ui-252525: #ebebeb;
+  --ui-252525cc: #ebebebcc;
+  --ui-252525dd: #ebebebdd;
+  --ui-252525e6: #ebebebe6;
+  --ui-262626: #eaeaea;
+  --ui-262626f2: #eaeaeaf2;
+  --ui-292929: #e7e7e7;
+  --ui-292929f5: #e7e7e7f5;
+  --ui-303030: #e0e0e0;
+  --ui-333: #dddddd;
+  --ui-333d: #dddddddd;
+  --ui-34343433: #dcdcdc33;
+  --ui-454545: #cacaca;
+  --ui-5d5d5d: #acacac;
+  --ui-666: #a0a0a0;
+  --ui-6d6d6d: #989898;
+  --ui-6e6e6e: #969696;
+  --ui-737373: #909090;
+  --ui-777: #8b8b8b;
+  --ui-858585: #7c7c7c;
+  --ui-888: #7a7a7a;
+  --ui-8d8d8d: #767676;
+  --ui-8f8f8f: #747474;
+  --ui-929292: #727272;
+  --ui-999: #6c6c6c;
+  --ui-999999: #6c6c6c;
+  --ui-a8a8a8: #606060;
+  --ui-a9a9a9: #5f5f5f;
+  --ui-aaa: #5e5e5e;
+  --ui-aaaaaa: #5e5e5e;
+  --ui-b8b8b8: #535353;
+  --ui-bbb: #515151;
+  --ui-ccc: #434343;
+  --ui-d4d4d4: #3d3d3d;
+  --ui-d8d8d8: #3a3a3a;
+  --ui-ddd: #363636;
+  --ui-dddddd: #363636;
+  --ui-dedede: #353535;
+  --ui-e1e1e1: #323232;
+  --ui-e2e2e2: #323232;
+  --ui-e4e4e4: #303030;
+  --ui-e5e5e5: #2f2f2f;
+  --ui-e5e5e51b: #2f2f2f1b;
+  --ui-e5e5e533: #2f2f2f33;
+  --ui-e7e7e7: #2e2e2e;
+  --ui-e8e8e8: #2d2d2d;
+  --ui-ededed: #292929;
+  --ui-eee: #282828;
+  --ui-f0f0f0: #262626;
+  --ui-f1f1f1: #262626;
+  --ui-f3f3f3: #242424;
+  --ui-f5f5f5: #222222;
+  --ui-fff: #1a1a1a;
+  --ui-fff1: #1a1a1a11;
+  --ui-fff5: #1a1a1a55;
+  --ui-ffffff: #1a1a1a;
+  --ui-ffffff03: #1a1a1a03;
+  --ui-ffffff04: #1a1a1a04;
+  --ui-ffffff05: #1a1a1a05;
+  --ui-ffffff06: #1a1a1a06;
+  --ui-ffffff07: #1a1a1a07;
+  --ui-ffffff08: #1a1a1a08;
+  --ui-ffffff09: #1a1a1a09;
+  --ui-ffffff0a: #1a1a1a0a;
+  --ui-ffffff0c: #1a1a1a0c;
+  --ui-ffffff0d: #1a1a1a0d;
+  --ui-ffffff0e: #1a1a1a0e;
+  --ui-ffffff0f: #1a1a1a0f;
+  --ui-ffffff10: #1a1a1a10;
+  --ui-ffffff12: #1a1a1a12;
+  --ui-ffffff14: #1a1a1a14;
+  --ui-ffffff15: #1a1a1a15;
+  --ui-ffffff17: #1a1a1a17;
+  --ui-ffffff18: #1a1a1a18;
+  --ui-ffffff20: #1a1a1a20;
+  --ui-ffffff22: #1a1a1a22;
+  --ui-ffffff26: #1a1a1a26;
+  --ui-ffffff65: #1a1a1a65;
+}
+:root {
+  --muted: var(--app-muted);
+  --accent: var(--app-text);
+  --line: var(--app-line);
+}
+body {
+  color: var(--app-text);
+  background: var(--app-bg);
+}
+.music-stage {
+  background-color: var(--app-bg);
+}
+.viewer.video-player {
+  color-scheme: inherit;
+}
+.viewer.video-underlay,
+.video-viewport {
+  background: #000;
+}
+.archive-shelf {
+  color: var(--app-text);
+}
+.archive-heading,
+.archive-mode button,
+.archive-pagination output,
+.archive-open small {
+  color: var(--app-muted);
+}
+.archive-heading i {
+  background: var(--app-line);
+}
+.archive-mode button[aria-pressed="true"] {
+  color: var(--app-text);
+  background: var(--app-line);
+}
+.archive-open:hover strong {
+  color: var(--app-text);
+}
+.reader-toolbar,
+.reader-progress-bar,
+.reader-settings-popover {
+  color: var(--app-text);
+  background: var(--app-surface);
+}
+
+.reader :is(.reader-chrome, .reader-drawer, .reader-more-popover) {
+  --reader-fg: var(--app-text);
+  --reader-muted: var(--app-muted);
+  --reader-panel: var(--app-surface);
+  --reader-border: var(--app-line);
+  --reader-accent: var(--app-text);
+}
+
+.modal {
+  color: var(--app-text);
+  background: var(--app-surface);
+}
+:root[data-theme="light"] {
+  --ui-0000006b: #0000006b;
+  --ui-0001: #0001;
+  --ui-0002: #0002;
+  --ui-0003: #0003;
+  --ui-0004: #0004;
+  --ui-0005: #0005;
+  --ui-0006: #0006;
+  --ui-0007: #0007;
+  --ui-0008: #0008;
+  --ui-0009: #0009;
+  --ui-000b: #000b;
+}
+.poster-caption strong {
+  color: #eee;
+}
+.poster-caption small {
+  color: #bbb;
+}
+
+:root[data-theme="light"] {
+  --ui-777: #626b63;
+  --ui-888: #626b63;
+  --ui-999: #626b63;
+  --ui-aaa: #586159;
+  --ui-bbb: #515950;
+}
+:root[data-theme="light"]
+  :is(
+    .side-rail,
+    .top-types,
+    .top-actions,
+    .scope-pill,
+    .music-source-tabs,
+    .music-source-details,
+    .music-quick-panel,
+    .music-dock-controls,
+    .queue-panel,
+    .media-context-menu,
+    .companion-mini,
+    .wall-menu-panel
+  ) {
+  background-color: var(--app-surface);
+  color: var(--app-text);
+}
+:root[data-theme="light"] .music-stage > header {
+  color: var(--app-text);
+}

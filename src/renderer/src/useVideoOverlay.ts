@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { report } from "./store";
+import { applyTheme } from "./theme";
+let sharedPopup: Window | null = null;
+let closeTimer: ReturnType<typeof setTimeout> | undefined;
+window.addEventListener("beforeunload", () => {
+  clearTimeout(closeTimer);
+  if (sharedPopup && !sharedPopup.closed) sharedPopup.close();
+  sharedPopup = null;
+});
 
 /** Keep React state in the main renderer and portal controls into a layered window. */
 export function useVideoOverlay(
@@ -13,19 +21,24 @@ export function useVideoOverlay(
   const floatingRef = useRef(floating);
   floatingRef.current = floating;
   useEffect(() => {
-    const popup = window.open("about:blank", "kaleid-video-controls");
+    clearTimeout(closeTimer);
+    const popup =
+      sharedPopup && !sharedPopup.closed
+        ? sharedPopup
+        : window.open("about:blank", "kaleid-video-controls");
     if (!popup) {
       report(new Error("无法创建视频控制层，请重新打开播放器。"));
       closeRef.current();
       return;
     }
+    sharedPopup = popup;
     let disposed = false;
     let frame = 0;
     let capturing = false;
     let previous = "";
     const target = popup.document;
     target.title = "Kaleid 视频控件";
-    const base = target.createElement("base");
+    const base = target.querySelector("base") ?? target.createElement("base");
     base.href = document.baseURI;
     target.head.append(base);
     target.documentElement.style.setProperty(
@@ -50,6 +63,17 @@ export function useVideoOverlay(
         });
     };
     copyStyles();
+    const copyTheme = () => {
+      applyTheme(document.documentElement.dataset.theme, target);
+      target.documentElement.dataset.motion =
+        document.documentElement.dataset.motion ?? "full";
+    };
+    copyTheme();
+    const themeObserver = new MutationObserver(copyTheme);
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme", "data-motion"],
+    });
     const styles = new MutationObserver(copyStyles);
     styles.observe(document.head, {
       childList: true,
@@ -65,7 +89,7 @@ export function useVideoOverlay(
           (floatingRef.current || !document.hidden) &&
           (floatingRef.current ||
             !document.querySelector(
-              "dialog[open],.modal-backdrop,.context-menu",
+              "dialog[open],.modal-backdrop,.context-menu,.media-context-menu",
             ));
         const regions =
           floatingRef.current ||
@@ -81,10 +105,14 @@ export function useVideoOverlay(
               ]
             : [
                 ...target.querySelectorAll<HTMLElement>(
-                  ".video-header:not([inert]),.video-controls:not([inert]),.video-panel,.video-message,.music-unified-dock > *",
+                  ".video-header:not([inert]),.video-controls:not([inert]),.video-panel,.video-message,.card-video-controls,.music-unified-dock > *",
                 ),
               ]
-                .filter((node) => getComputedStyle(node).display !== "none")
+                .filter(
+                  (node) =>
+                    getComputedStyle(node).display !== "none" &&
+                    getComputedStyle(node).visibility !== "hidden",
+                )
                 .map((node) => {
                   const rect = node.getBoundingClientRect();
                   return {
@@ -175,9 +203,13 @@ export function useVideoOverlay(
     update();
     return () => {
       disposed = true;
+      void window.video
+        .overlay({ visible: false, regions: [] })
+        .catch(() => {});
       clearInterval(interval);
       cancelAnimationFrame(frame);
       styles.disconnect();
+      themeObserver.disconnect();
       mutations.disconnect();
       modals.disconnect();
       sizes.disconnect();
@@ -190,7 +222,11 @@ export function useVideoOverlay(
       popup.removeEventListener("resize", update);
       popup.removeEventListener("blur", up);
       popup.removeEventListener("beforeunload", unload);
-      if (!popup.closed) popup.close();
+      // Presentation changes reuse the control layer as well as the decoder.
+      closeTimer = setTimeout(() => {
+        if (!popup.closed) popup.close();
+        if (sharedPopup === popup) sharedPopup = null;
+      }, 100);
     };
   }, [root]);
   return surface;

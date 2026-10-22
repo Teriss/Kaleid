@@ -1,5 +1,16 @@
 # Third-party notices
 
+## Wenku8 Flutter archive shelf
+
+The archive shelf geometry, continuous extraction wave and inertial snapping are adapted from Wenku8 Flutter by mikufoxxx, MewX and contributors.
+
+- Repository: https://github.com/mikufoxxx/Wenku8_Flutter
+- Pinned revision: `689e8979002c69aaff60930fa45a9468998c51ab`.
+- The Flutter distribution is GPL version 3 according to its NOTICE; the original GPL-2.0-or-later LICENSE is retained upstream. Both notices and the full GPL v3 text are preserved in `vendor/wenku8/`.
+- The TypeScript adaptation in `archiveShelfModel.ts` remains GPL-3.0-only. The GPLv3/AGPLv3 combination uses the section 13 permission in those licenses; existing AGPL portions retain their license.
+- Modifications dated 2026-10-22, provenance and unmodified reference Dart sources: `vendor/wenku8/ADAPTATIONS.md` and `vendor/wenku8/lib/`.
+- Editable source, original reference sources and license notices are included in Kaleid-Source.zip; notices are also included in the desktop package. No novel files, cover images, illustrations, fonts, or Wenku8 branding are copied from that project.
+
 ## FFmpeg
 
 The Windows desktop package includes the FFmpeg 6.1.1 static Windows build distributed by `ffmpeg-static` 5.3.0. The included build identifies itself as GPL v3 and its build configuration enables GPL and version 3 components. Its README and full license are shipped beside `ffmpeg.exe` in `resources/app.asar.unpacked/node_modules/ffmpeg-static/`.

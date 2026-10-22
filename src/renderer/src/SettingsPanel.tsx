@@ -94,6 +94,27 @@ export default function SettingsPanel({
           <>
             <h3>显示与动效</h3>
             <div className="settings-group">
+              <label className="setting-row">
+                <span>
+                  <strong>界面主题</strong>
+                  <small>统一所有界面；保留阅读纸色与歌词自定义背景。</small>
+                </span>
+                <select
+                  aria-label="界面主题"
+                  value={settings.theme}
+                  onChange={(event) =>
+                    void act(() =>
+                      setSettings({
+                        ...settings,
+                        theme: event.target.value as "dark" | "light",
+                      }),
+                    )
+                  }
+                >
+                  <option value="dark">深色</option>
+                  <option value="light">亮色</option>
+                </select>
+              </label>
               <div className="setting-row">
                 <strong>固定显示导航</strong>
                 <button

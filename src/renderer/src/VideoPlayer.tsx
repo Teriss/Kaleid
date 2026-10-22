@@ -40,6 +40,12 @@ import { useVideoChrome } from "./useVideoChrome";
 import { useVideoOverlay } from "./useVideoOverlay";
 import "./video.css";
 import VideoClipPanel from "./VideoClipPanel";
+import {
+  startVideo,
+  stopVideo,
+  useVideoSession,
+  videoBounds,
+} from "./videoSession";
 
 function clock(seconds: number) {
   const n = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
@@ -68,6 +74,7 @@ export default function VideoPlayer({
   minimize = close,
   leave = close,
   restore,
+  sharedSessionId,
 }: {
   item: MediaItem;
   autoPlay: boolean;
@@ -79,6 +86,7 @@ export default function VideoPlayer({
   minimize?(): void;
   leave?(): void;
   restore?(): void;
+  sharedSessionId?: string;
 }) {
   const [entry, setEntry] = useState({ item, fromStart: false });
   const [state, setState] = useState<VideoState>();
@@ -163,11 +171,11 @@ export default function VideoPlayer({
     };
   }, [entry.item.folder, sort]);
   useEffect(() => {
-    const id = crypto.randomUUID();
+    const id = sharedSessionId ?? crypto.randomUUID();
     session.current = id;
     handledEnd.current = "";
     setEdgeActive(false);
-    setState(undefined);
+    setState(sharedSessionId ? useVideoSession.getState().state : undefined);
     setResumeNotice(false);
     let noticeTimer: ReturnType<typeof setTimeout> | undefined;
     let wasResumed = false;
@@ -185,13 +193,11 @@ export default function VideoPlayer({
       }
       if (next.status === "ready") handledEnd.current = "";
     });
-    void window.video
-      .open({
-        mediaId: entry.item.id,
-        sessionId: id,
-        autoPlay,
-        fromStart: entry.fromStart,
-      })
+    void (
+      sharedSessionId && retry === 0
+        ? Promise.resolve(useVideoSession.getState().state)
+        : startVideo(entry.item, autoPlay, entry.fromStart, id)
+    )
       .then((initial) => {
         if (session.current === id)
           setState((previous) =>
@@ -205,13 +211,17 @@ export default function VideoPlayer({
       unsubscribe();
       clearTimeout(noticeTimer);
       if (session.current === id) session.current = "";
-      void window.video.close(id).catch(report);
+      if (!sharedSessionId) void stopVideo(id).catch(report);
     };
-  }, [entry.item.id, retry]);
+  }, [entry.item.id, retry, sharedSessionId]);
   useEffect(() => {
     if (session.current)
       void window.video
-        .present(session.current, floating ? "floating" : "embedded", floating ? floatingReason : undefined)
+        .present(
+          session.current,
+          floating ? "floating" : "embedded",
+          floating ? floatingReason : undefined,
+        )
         .catch(report);
   }, [floating, floatingReason, entry.item.id, retry]);
   useEffect(() => {
@@ -226,18 +236,16 @@ export default function VideoPlayer({
         const modal = document.querySelector(
           "dialog[open],.modal-backdrop,.context-menu",
         );
-        void window.video
-          .bounds(session.current, {
-            x: rect.x,
-            y: rect.y,
-            width: rect.width,
-            height: rect.height,
-            visible:
-              (floating || !modal) &&
-              (floating || !document.hidden) &&
-              latest.current.state?.status !== "error",
-          })
-          .catch(() => {});
+        void videoBounds(session.current, {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          visible:
+            (floating || !modal) &&
+            (floating || !document.hidden) &&
+            latest.current.state?.status !== "error",
+        }).catch(() => {});
       });
     };
     const observer = new ResizeObserver(update);
@@ -282,7 +290,10 @@ export default function VideoPlayer({
         latest.current.close();
         return;
       }
-      if (action === "surface-update") { window.dispatchEvent(new Event("video:surface-update")); return; }
+      if (action === "surface-update") {
+        window.dispatchEvent(new Event("video:surface-update"));
+        return;
+      }
       if (action === "restore") {
         restore?.();
         return;

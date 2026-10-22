@@ -59,6 +59,24 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 let window: BrowserWindow | null = null;
+let appTheme: Settings["theme"] = "dark";
+function synchronizeTheme(theme: Settings["theme"]) {
+  appTheme = theme === "light" ? "light" : "dark";
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    if (win === window) {
+      win.setBackgroundColor(appTheme === "light" ? "#eeefec" : "#141414");
+      win.setTitleBarOverlay({
+        color: "#00000000",
+        symbolColor: appTheme === "light" ? "#303630" : "#dedede",
+        height: 36,
+      });
+    } else if (win.webContents.getURL().endsWith("#music-mini")) {
+      win.setBackgroundColor(appTheme === "light" ? "#eeefec" : "#141414");
+    }
+    win.webContents.send("app:theme", appTheme);
+  }
+}
 let requestId = 0;
 const pending = new Map<
   number,
@@ -169,6 +187,7 @@ function validateSettings(input: Settings): Settings {
     input as Settings & { readerBackgroundColor?: unknown },
   );
   return {
+    theme: input.theme === "light" ? "light" : "dark",
     navigationAutoHide: input.navigationAutoHide !== false,
     videoAutoPictureInPicture: input.videoAutoPictureInPicture === true,
     reducedMotion: Boolean(input.reducedMotion),
@@ -208,14 +227,18 @@ function validateSettings(input: Settings): Settings {
 }
 void app
   .whenReady()
-  .then(() => {
+  .then(async () => {
     process.env.MEDIA_BROWSER_VIDEO_RUNTIME = app.isPackaged
       ? path.join(process.resourcesPath, "video-runtime")
       : path.resolve(here, "../../artifacts/video-runtime");
     process.env.MEDIA_BROWSER_COMIC_RUNTIME = app.isPackaged
       ? path.join(process.resourcesPath, "comic-runtime")
       : path.resolve(here, "../../artifacts/comic-runtime");
-    const musicService = installMusic(() => window, call);
+    const musicService = installMusic(
+      () => window,
+      call,
+      () => appTheme,
+    );
     const videoOverlay = installVideoOverlay(() => window);
     const videoService = installVideo(() => window, call, videoOverlay);
     service = utilityProcess.fork(path.join(here, "worker.js"), [], {
@@ -512,7 +535,15 @@ void app
       }
       if (!forwarded.has(method)) throw new Error("不支持的操作");
       if (method === "addRoots") args[1] = await validatedRoots(args[1]);
-      if (method === "saveSettings") args[0] = validateSettings(args[0]);
+      if (method === "saveSettings") {
+        args[0] = {
+          ...validateSettings(args[0]),
+          theme: args[0]?.theme === "light" ? "light" : "dark",
+        };
+        await call(method, ...args);
+        synchronizeTheme(args[0].theme);
+        return;
+      }
       if (method === "query") {
         const q = args[0] as MediaQuery;
         if (
@@ -524,20 +555,29 @@ void app
       }
       return call(method, ...args);
     });
+    ipcMain.handle("app:theme", (event) => {
+      if (
+        !BrowserWindow.fromWebContents(event.sender) ||
+        event.senderFrame !== event.sender.mainFrame
+      )
+        throw new Error("无效主题来源");
+      return appTheme;
+    });
+    appTheme = (await call("settings")).theme === "light" ? "light" : "dark";
     function createWindow() {
       window = new BrowserWindow({
         width: 1440,
         height: 940,
         minWidth: 1000,
         minHeight: 680,
-        backgroundColor: "#101014",
+        backgroundColor: appTheme === "light" ? "#eeefec" : "#141414",
         title: "Kaleid",
         icon: applicationIcon,
         autoHideMenuBar: true,
         titleBarStyle: "hidden",
         titleBarOverlay: {
           color: "#00000000",
-          symbolColor: "#dedede",
+          symbolColor: appTheme === "light" ? "#303630" : "#dedede",
           height: 36,
         },
         webPreferences: {

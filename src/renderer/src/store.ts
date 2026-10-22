@@ -1,6 +1,7 @@
 import { isSupportedMusicItem, isSupportedMusicId } from "../../shared/music";
 import { musicItems, isRemote } from "./music/catalog";
 import { create } from "zustand";
+import { applyTheme } from "./theme";
 import {
   DEFAULT_SETTINGS,
   type Library,
@@ -51,6 +52,7 @@ export const useApp = create<AppState>((set, get) => ({
   setSettings: async (settings) => {
     await window.media.saveSettings(settings);
     set({ settings });
+    applyTheme(settings.theme);
   },
 }));
 export function report(error: unknown) {

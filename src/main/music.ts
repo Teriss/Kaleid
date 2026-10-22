@@ -24,6 +24,7 @@ const PROVIDERS = new Set(["netease", "qq", "ytm"]);
 export function installMusic(
   getMain: () => BrowserWindow | null,
   localCall: (method: string, ...args: any[]) => Promise<any>,
+  getTheme: () => "dark" | "light" = () => "dark",
 ) {
   const projectRoot = fs.existsSync(path.join(app.getAppPath(), "vendor"))
     ? app.getAppPath()
@@ -806,6 +807,12 @@ export function installMusic(
           : path.resolve(projectRoot, "build/kaleid-icon.png"),
         frame: false,
         transparent: name === "lyrics",
+        backgroundColor:
+          name === "lyrics"
+            ? "#00000000"
+            : getTheme() === "light"
+              ? "#eeefec"
+              : "#141414",
         alwaysOnTop: true,
         resizable: true,
         webPreferences: {

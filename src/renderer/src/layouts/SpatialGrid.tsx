@@ -24,6 +24,7 @@ export default function SpatialGrid({
   memory,
   remember,
   open,
+  openSingle,
   favorite,
   selected,
   clearFocus,
@@ -206,7 +207,18 @@ export default function SpatialGrid({
           ? { carouselPosition: flow.current.current }
           : { spatialCamera: cameraRef.current },
       );
+      setIndex(at);
       open(entry, at);
+    } else if (entry.kind === "folder" && openSingle) {
+      void openSingle(entry, at).then((opened) => {
+        if (opened === false) snap(at);
+        else if (opened === true) {
+          flow.cancel();
+          flow.move(at);
+          setIndex(at);
+          remember({ carouselPosition: at, focusIndex: at, focusId: entry.id });
+        }
+      });
     } else snap(at);
   }
   useEffect(() => {

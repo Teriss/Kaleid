@@ -5,6 +5,9 @@ import MusicWindow from "./music/MusicWindow";
 import "./music/folia.css";
 import "./styles.css";
 import "./reader.css";
+import "./theme.css";
+import { initializeTheme } from "./theme";
+initializeTheme();
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },

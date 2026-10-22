@@ -32,6 +32,20 @@ export interface LayoutProps {
   reducedMotion: boolean;
   remember(patch: Partial<BrowseMemory>): void;
   open(item: MediaItem, index: number): void;
+  /** Undefined means a newer navigation/open request superseded this attempt. */
+  openSingle?(item: MediaItem, index: number): Promise<boolean | undefined>;
+  resolveSingle?(item: MediaItem): Promise<MediaItem | undefined>;
+  playInline?(item: MediaItem, index: number, anchor: MediaItem): Promise<void>;
+  onBrowseMotion?(keepControls?: boolean): void;
+  cardVideo?: {
+    id: string;
+    item: MediaItem;
+    anchorId: string;
+    expanded: boolean;
+  };
+  inlineMusic?: { anchorId: string; item: MediaItem };
+  stopCardVideo?(): void;
+  expandCardVideo?(): void;
   favorite(item: MediaItem): void;
   selected?(item: MediaItem, index: number): boolean;
   clearFocus?(): void;

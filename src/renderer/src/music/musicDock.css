@@ -1,0 +1,108 @@
+.music-quick-dock.music-unified-dock {
+  width: 48px;
+  height: 48px;
+}
+.music-unified-dock > .music-dock-controls,
+.music-unified-dock > .music-quick-panel {
+  position: absolute;
+  left: var(--dock-panel-x);
+  right: auto;
+  bottom: auto;
+  top: 60px;
+  margin: 0;
+  max-height: var(--dock-panel-space);
+  overflow-y: auto;
+  width: min(330px, calc(100vw - 24px));
+}
+.music-unified-dock[data-panels-above="true"] > .music-dock-controls,
+.music-unified-dock[data-panels-above="true"] > .music-quick-panel {
+  top: auto;
+  bottom: 60px;
+}
+.music-unified-dock .music-cover-toggle {
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+.music-unified-dock[data-dock-dragging="true"] .music-cover-toggle {
+  cursor: grabbing;
+}
+.music-unified-dock[data-dock-collapsed="true"] {
+  width: 24px;
+  height: 80px;
+}
+.music-unified-dock[data-dock-collapsed="true"] .music-cover-toggle {
+  width: 24px;
+  height: 80px;
+  border-radius: 0 11px 11px 0;
+  background: var(--app-surface);
+  color: var(--app-text);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding-top: 9px;
+  gap: 14px;
+  box-shadow: 0 3px 18px #0004;
+}
+.music-unified-dock[data-dock-edge="right"] .music-cover-toggle {
+  border-radius: 11px 0 0 11px;
+}
+.music-unified-dock[data-dock-collapsed="true"] .cover {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex: none;
+}
+.music-edge-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 18px;
+}
+.music-edge-state i {
+  display: block;
+  width: 2px;
+  height: 4px;
+  background: currentColor;
+  border-radius: 2px;
+}
+.music-edge-state.is-playing i {
+  animation: music-edge-pulse 0.8s ease-in-out infinite alternate;
+}
+.music-edge-state.is-playing i:nth-child(2) {
+  animation-delay: -0.3s;
+}
+.music-edge-state.is-playing i:nth-child(3) {
+  animation-delay: -0.6s;
+}
+@keyframes music-edge-pulse {
+  to {
+    height: 16px;
+  }
+}
+[data-motion="reduced"] .music-edge-state i {
+  animation: none !important;
+  height: 8px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .music-edge-state i {
+    animation: none !important;
+    height: 8px;
+  }
+}
+
+.music-unified-dock .music-cover-toggle {
+  transition:
+    height 160ms ease,
+    border-radius 160ms ease;
+}
+.music-unified-dock[data-dock-dragging="true"] .music-cover-toggle,
+[data-motion="reduced"] .music-unified-dock .music-cover-toggle {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .music-unified-dock .music-cover-toggle {
+    transition: none;
+  }
+}

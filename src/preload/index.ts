@@ -6,8 +6,11 @@ const video = {
     id: string,
     value: Parameters<VideoAPI["windowGesture"]>[1],
   ) => ipcRenderer.invoke("video:call", "windowGesture", id, value),
-  present: (id: string, mode: "embedded" | "floating", reason?: "manual" | "automatic") =>
-    ipcRenderer.invoke("video:call", "present", id, mode, reason),
+  present: (
+    id: string,
+    mode: "card" | "embedded" | "floating",
+    reason?: "manual" | "automatic",
+  ) => ipcRenderer.invoke("video:call", "present", id, mode, reason),
   pin: (id: string, value: boolean) =>
     ipcRenderer.invoke("video:call", "pin", id, value),
   musicFocus: () => ipcRenderer.invoke("video:call", "musicFocus"),
@@ -122,6 +125,13 @@ const api: Record<string, any> = Object.fromEntries(
     (...args: unknown[]) => ipcRenderer.invoke("media:call", method, args),
   ]),
 );
+api.appTheme = () => ipcRenderer.invoke("app:theme");
+api.onTheme = (callback: (theme: "dark" | "light") => void) => {
+  const listener = (_event: unknown, theme: "dark" | "light") =>
+    callback(theme);
+  ipcRenderer.on("app:theme", listener);
+  return () => ipcRenderer.removeListener("app:theme", listener);
+};
 api.onScan = (callback: (status: unknown) => void) => {
   const listener = (_event: unknown, status: unknown) => callback(status);
   ipcRenderer.on("library:scan", listener);

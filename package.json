@@ -42,6 +42,7 @@
       "vendor/folia/src/**/*",
       "vendor/folia/shared/**/*",
       "vendor/folia/ADAPTATIONS.md",
+      "vendor/wenku8/**/*",
       "LICENSE",
       "THIRD_PARTY_NOTICES.md"
     ],

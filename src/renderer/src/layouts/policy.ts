@@ -6,13 +6,25 @@ export const ALL_LAYOUTS: readonly MediaLayout[] = [
   "carousel",
   "gallery",
   "verticalGallery",
+  "archiveShelf",
+  "recordCrate",
+  "screeningRoom",
+  "photoLightbox",
 ];
 export function supportedLayouts(type?: string): readonly MediaLayout[] {
-  return type === "image"
-    ? ALL_LAYOUTS
-    : ALL_LAYOUTS.filter(
-        (layout) => layout !== "gallery" && layout !== "verticalGallery",
-      );
+  return ALL_LAYOUTS.filter((layout) =>
+    layout === "recordCrate"
+      ? type === "music"
+      : layout === "screeningRoom"
+        ? type === "video"
+        : layout === "photoLightbox"
+          ? type === "image"
+          : layout === "archiveShelf"
+            ? type === "novel" || type === "comic"
+            : layout === "gallery" || layout === "verticalGallery"
+              ? type === "image"
+              : true,
+  );
 }
 export function defaultLayout(type?: string): MediaLayout {
   if (type === "video") return "spatial";

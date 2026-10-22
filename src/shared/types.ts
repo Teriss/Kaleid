@@ -1,6 +1,15 @@
 export type MediaType = "image" | "music" | "video" | "novel" | "comic";
 export type MediaLayout =
-  "grid" | "bravais" | "spatial" | "gallery" | "verticalGallery" | "carousel";
+  | "grid"
+  | "bravais"
+  | "spatial"
+  | "gallery"
+  | "verticalGallery"
+  | "carousel"
+  | "archiveShelf"
+  | "recordCrate"
+  | "screeningRoom"
+  | "photoLightbox";
 export type WallMode = "finite" | "infinite";
 export type MusicRepeat = "off" | "all" | "one";
 export type MusicOrder = "sequential" | "shuffle";
@@ -41,6 +50,8 @@ export interface BrowseMemory {
   scrollTop?: number;
   wallFocusId?: string;
   wallMode?: WallMode;
+  archiveShelfMode?: WallMode;
+  showcaseMode?: WallMode;
   wallLayoutVersion?: number;
   wallManualScale?: boolean;
   wallStartSlotKey?: string;
@@ -193,6 +204,7 @@ export interface ComicContext {
   bookmarks: ComicBookmark[];
 }
 export interface Settings {
+  theme: "dark" | "light";
   videoAutoPictureInPicture: boolean;
   navigationAutoHide: boolean;
   reducedMotion: boolean;
@@ -214,6 +226,7 @@ export interface Settings {
   lyricsPresentation: "split" | "fullscreen" | "wall";
 }
 export const DEFAULT_SETTINGS: Settings = {
+  theme: "dark",
   videoAutoPictureInPicture: false,
   navigationAutoHide: true,
   reducedMotion: false,
@@ -235,6 +248,8 @@ export const DEFAULT_SETTINGS: Settings = {
   lyricsPresentation: "split",
 };
 export interface AppAPI {
+  appTheme(): Promise<Settings["theme"]>;
+  onTheme(callback: (theme: Settings["theme"]) => void): () => void;
   chooseFolders(): Promise<string[]>;
   libraries(): Promise<Library[]>;
   statistics(): Promise<Record<MediaType, number>>;

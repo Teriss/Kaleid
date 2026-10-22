@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/mikufoxxx/Wenku8_Flutter",
+  "revision": "689e8979002c69aaff60930fa45a9468998c51ab",
+  "license": "GPL-3.0-only (Flutter distribution); GPL-2.0-or-later upstream notices retained",
+  "retrieved": "2026-10-22",
+  "files": [
+    "lib/archive_wave.dart",
+    "lib/archive_shelf_geometry.dart",
+    "lib/archive_scroll_simulation.dart",
+    "LICENSE",
+    "NOTICE",
+    "assets/licenses/GPL-3.0.txt"
+  ]
+}
+

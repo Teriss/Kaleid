@@ -20,6 +20,8 @@ import { PagedMediaSource } from "../layouts/source";
 import { effectControls, useMusicEffects } from "./effects";
 import { isRemote, musicPage } from "./catalog";
 import { useLyricPresentation, setLyricTheme } from "./lyricPresentation";
+import { useMusicDock } from "./useMusicDock";
+import "./musicDock.css";
 
 const labels: Record<string, string> = {
   highpass: "高通滤波",
@@ -96,6 +98,11 @@ export default function MusicQuickPanel({
       void visualizerChoices().then(setStyles).catch(report);
   }, [open, tab]);
   const root = useRef<HTMLDivElement>(null);
+  const dock = useMusicDock(root, videoSurface, () => {
+    setOpen(false);
+    setHover(false);
+    clearTimeout(hide.current);
+  });
   const settings = useApp((s) => s.settings),
     p = usePlayback(),
     fx = useMusicEffects();
@@ -260,9 +267,14 @@ export default function MusicQuickPanel({
     <div
       className={`music-quick-dock music-unified-dock ${open ? "settings-open" : ""}`}
       ref={root}
+      style={dock.style}
+      data-dock-collapsed={dock.collapsed}
+      data-dock-edge={dock.edge}
+      data-dock-dragging={dock.dragging}
+      data-panels-above={dock.above}
       onPointerEnter={() => {
         clearTimeout(hide.current);
-        setHover(true);
+        if (!dock.collapsed && !dock.dragging) setHover(true);
       }}
       onPointerLeave={dismissHover}
       onFocusCapture={() => {
@@ -284,7 +296,7 @@ export default function MusicQuickPanel({
         dismissHover();
       }}
     >
-      {p.track && hover && !open && (
+      {p.track && hover && !open && !dock.collapsed && !dock.dragging && (
         <section className="music-dock-controls" aria-label="音乐悬浮控制">
           <button
             className="music-dock-title"
@@ -335,7 +347,7 @@ export default function MusicQuickPanel({
           </label>
         </section>
       )}
-      {open && (
+      {open && !dock.collapsed && !dock.dragging && (
         <section className="music-quick-panel" aria-label="音乐快捷设置">
           <div className="quick-destinations">
             <button onClick={home}>
@@ -627,14 +639,41 @@ export default function MusicQuickPanel({
       )}
       <button
         className="quick-toggle music-cover-toggle"
-        aria-label={open ? "收起音乐快捷设置" : "音乐快捷设置"}
+        {...dock.handlers}
+        aria-label={
+          dock.collapsed
+            ? "展开音乐标签"
+            : open
+              ? "收起音乐快捷设置"
+              : "音乐快捷设置"
+        }
+        title={
+          dock.collapsed
+            ? `${p.track?.title ?? "音乐"} · ${p.playing ? "正在播放" : "已暂停"}`
+            : undefined
+        }
         aria-expanded={open}
         onClick={() => {
+          if (dock.collapsed) {
+            dock.expand();
+            setHover(Boolean(p.track));
+            return;
+          }
           setHover(false);
           setOpen(!open);
         }}
       >
         {p.track ? <Cover item={p.track} /> : <Settings2 size={18} />}
+        {dock.collapsed && (
+          <span
+            className={`music-edge-state ${p.playing ? "is-playing" : ""}`}
+            aria-label={p.playing ? "正在播放" : "已暂停"}
+          >
+            <i />
+            <i />
+            <i />
+          </span>
+        )}
       </button>
     </div>
   );

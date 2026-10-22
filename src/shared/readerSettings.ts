@@ -56,5 +56,6 @@ export function normalizeStoredSettings(input: unknown): Settings {
     ...DEFAULT_SETTINGS,
     ...current,
     ...normalizeReaderSettings(stored),
+    theme: stored.theme === "light" ? "light" : "dark",
   } as Settings;
 }

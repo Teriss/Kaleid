@@ -168,7 +168,7 @@ export function installVideo(
         action,
       });
   };
-  async function present(p: Playback, mode: "embedded" | "floating") {
+  async function present(p: Playback, mode: "card" | "embedded" | "floating") {
     const main = getWindow();
     if (!main || p.closed || current !== p) return;
     if (mode === "floating" && !floating) {
@@ -266,6 +266,7 @@ export function installVideo(
     if (p.closed || current !== p) return;
     const target = mode === "floating" ? floating! : main;
     if (p.state.presentation !== mode) {
+      const previousMode = p.state.presentation;
       if (p.state.presentation && playbackWindow()?.isFullScreen())
         playbackWindow()?.setFullScreen(false);
       p.state.presentation = mode;
@@ -275,7 +276,7 @@ export function installVideo(
         handle.length >= 8
           ? handle.readBigUInt64LE().toString()
           : String(handle.readUInt32LE());
-      if (p.host)
+      if (p.host && (previousMode === "floating" || mode === "floating"))
         await new Promise<void>((resolve, reject) => {
           const moveId = randomUUID();
           const timer = setTimeout(() => {
@@ -1055,7 +1056,9 @@ export function installVideo(
           !/^[a-f0-9]{32}$/.test(input.mediaId) ||
           typeof input.sessionId !== "string" ||
           !/^[\w-]{1,100}$/.test(input.sessionId) ||
-          typeof input.autoPlay !== "boolean"
+          typeof input.autoPlay !== "boolean" ||
+          (input.presentation !== undefined &&
+            !["card", "embedded"].includes(input.presentation))
         )
           throw new Error("无效的播放请求");
         // Assign the new session synchronously; older asynchronous startup cannot regain ownership.
@@ -1071,7 +1074,7 @@ export function installVideo(
             tracks: [],
             preferences: videoPreferences(),
             fullscreen: window.isFullScreen(),
-            presentation: "embedded",
+            presentation: input.presentation ?? "embedded",
             surface: { startedAt: Date.now() },
             resumed: false,
           },
@@ -1081,6 +1084,17 @@ export function installVideo(
           log: "",
           completed: false,
           saveJob: Promise.resolve(),
+          ...(input.presentation === "card"
+            ? {
+                logicalBounds: {
+                  x: 0,
+                  y: 0,
+                  width: 1,
+                  height: 1,
+                  visible: false,
+                },
+              }
+            : {}),
         };
         current = p;
         if (input.autoPlay) p.audioTicket = ++audioSerial;
@@ -1266,7 +1280,7 @@ export function installVideo(
         return { moved };
       }
       if (method === "present") {
-        if (!["embedded", "floating"].includes(args[1]))
+        if (!["card", "embedded", "floating"].includes(args[1]))
           throw new Error("无效显示方式");
         const mode = args[1];
         if (args[2] !== undefined && !["manual", "automatic"].includes(args[2]))

@@ -57,7 +57,13 @@ export const DEFAULT_VIDEO_PREFERENCES: VideoPreferences = {
 };
 export interface VideoState {
   presentationReason?: "manual" | "automatic";
-  surface?: { startedAt: number; hostReadyAt?: number; sizedAt?: number; shownAt?: number; playbackAt?: number };
+  surface?: {
+    startedAt: number;
+    hostReadyAt?: number;
+    sizedAt?: number;
+    shownAt?: number;
+    playbackAt?: number;
+  };
   enhancement?: VideoEnhancement;
   sessionId: string;
   mediaId: string;
@@ -69,7 +75,7 @@ export interface VideoState {
   preferences: VideoPreferences;
   fullscreen: boolean;
   resumed: boolean;
-  presentation?: "embedded" | "floating";
+  presentation?: "card" | "embedded" | "floating";
   alwaysOnTop?: boolean;
   error?: {
     kind: "offline" | "damaged" | "decode" | "engine";
@@ -100,7 +106,11 @@ export interface VideoAPI {
       edge?: string;
     },
   ): Promise<{ moved: boolean }>;
-  present(sessionId: string, mode: "embedded" | "floating", reason?: "manual" | "automatic"): Promise<void>;
+  present(
+    sessionId: string,
+    mode: "card" | "embedded" | "floating",
+    reason?: "manual" | "automatic",
+  ): Promise<void>;
   pin(sessionId: string, value: boolean): Promise<void>;
   musicFocus(): Promise<boolean>;
   audioFocusAck(serial: number): Promise<void>;
@@ -111,6 +121,7 @@ export interface VideoAPI {
     sessionId: string;
     autoPlay: boolean;
     fromStart?: boolean;
+    presentation?: "card" | "embedded";
   }): Promise<VideoState>;
   close(sessionId: string): Promise<void>;
   command(sessionId: string, command: VideoCommand): Promise<void>;

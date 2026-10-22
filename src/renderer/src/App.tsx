@@ -37,6 +37,9 @@ import {
   X,
   PanelsTopLeft,
   Pencil,
+  Disc3,
+  Clapperboard,
+  Images,
 } from "lucide-react";
 import {
   NavigationHistory,
@@ -87,6 +90,10 @@ import BravaisWall from "./layouts/BravaisWall";
 import SpatialGrid from "./layouts/SpatialGrid";
 import LibraryCarousel from "./layouts/LibraryCarousel";
 import StandardGrid from "./layouts/StandardGrid";
+import ArchiveShelf from "./layouts/ArchiveShelf";
+import RecordCrate from "./layouts/RecordCrate";
+import ScreeningRoom from "./layouts/ScreeningRoom";
+import PhotoLightbox from "./layouts/PhotoLightbox";
 import Player from "./Player";
 import AutoHideNavigation from "./components/AutoHideNavigation";
 import { ContentNavigationContext } from "./layouts/ContentNavigation";
@@ -107,6 +114,12 @@ import {
 import Viewer from "./Viewers";
 import SettingsPanel from "./SettingsPanel";
 import useBrowseTransition from "./layouts/useBrowseTransition";
+import {
+  hideVideo,
+  startVideo,
+  stopVideo,
+  useVideoSession,
+} from "./videoSession";
 
 const LAYOUTS = [
   { id: "bravais", label: "Bravais 墙面", icon: PanelsTopLeft },
@@ -115,6 +128,10 @@ const LAYOUTS = [
   { id: "gallery", label: "等高画廊", icon: Grid2X2 },
   { id: "verticalGallery", label: "等宽画廊", icon: Grid2X2 },
   { id: "carousel", label: "封面流", icon: List },
+  { id: "archiveShelf", label: "立体书架", icon: Layers3 },
+  { id: "recordCrate", label: "唱片箱", icon: Disc3 },
+  { id: "screeningRoom", label: "放映厅", icon: Clapperboard },
+  { id: "photoLightbox", label: "摄影灯箱", icon: Images },
 ] as const;
 type Overlay =
   | "libraries"
@@ -129,6 +146,13 @@ interface ViewerSession {
   item: MediaItem;
   index: number;
   source?: PagedMediaSource;
+}
+interface CardVideoSession {
+  id: string;
+  item: MediaItem;
+  anchorId: string;
+  expanded: boolean;
+  origin: string;
 }
 
 export default function App() {
@@ -175,8 +199,18 @@ export default function App() {
   const [videoPiPReason, setVideoPiPReason] = useState<
     "manual" | "automatic"
   >();
+  const [cardVideo, setCardVideo] = useState<CardVideoSession | null>(null);
+  const cardVideoRef = useRef(cardVideo);
+  cardVideoRef.current = cardVideo;
+  const cardRequest = useRef(0);
+  const inlineMusicAnchor = useRef<
+    { anchorId: string; mediaId: string } | undefined
+  >(undefined);
   const inlineVideo = viewer?.item.type === "video" ? viewer.item : undefined;
-  const activeVideo = inlineVideo ?? videoPlayback?.item;
+  const activeVideo =
+    cardVideo && !cardVideo.expanded
+      ? undefined
+      : (inlineVideo ?? videoPlayback?.item);
   useEffect(() => {
     if (inlineVideo) setVideoPlayback({ item: inlineVideo, sort: memory.sort });
   }, [inlineVideo]);
@@ -230,10 +264,20 @@ export default function App() {
       (scope.view === "favorites" || scope.view === "recent"
         ? ((scope.type as MediaType | undefined) ?? previousType)
         : undefined));
+  const layoutsForView = supportedLayouts(currentType).filter((layout) =>
+    ["recordCrate", "screeningRoom", "photoLightbox"].includes(layout)
+      ? !["favorites", "recent"].includes(scope.view) ||
+        Boolean(scope.localOnly)
+      : layout !== "archiveShelf" ||
+        Boolean(scope.type) ||
+        scope.view === "library",
+  );
   useLayoutEffect(() => {
     const layout = normalizeLayout(
       memoryRef.current.layout,
-      currentType ?? "mixed",
+      !layoutsForView.includes(memoryRef.current.layout)
+        ? "mixed"
+        : (currentType ?? "mixed"),
     );
     if (layout !== memoryRef.current.layout) {
       memoryRef.current = { ...memoryRef.current, layout };
@@ -493,6 +537,18 @@ export default function App() {
           );
           return updated ? { ...current, item: updated } : current;
         });
+        setCardVideo((current) => {
+          if (!current) return current;
+          if (change.removedIds.includes(current.item.id)) {
+            void stopVideo(current.id).catch(report);
+            cardVideoRef.current = null;
+            return null;
+          }
+          const updated = change.updated.find(
+            (item) => item.id === current.item.id,
+          );
+          return updated ? { ...current, item: updated } : current;
+        });
         const state = usePlayback.getState();
         if (state.track && change.removedIds.includes(state.track.id))
           usePlayback.setState({
@@ -561,6 +617,8 @@ export default function App() {
     rememberScope = true,
     restoring = false,
   ) {
+    if (cardVideoRef.current && !cardVideoRef.current.expanded)
+      stopCardPlayback();
     next = availableScope(next);
     if (inlineVideo) {
       if (!settings.videoAutoPictureInPicture) setVideoPlayback(null);
@@ -704,13 +762,19 @@ export default function App() {
     if (parent) navigate(parent);
   }
   function changeLayout(layout: MediaLayout) {
-    if (!supportedLayouts(currentType).includes(layout)) return;
+    if (cardVideoRef.current && !cardVideoRef.current.expanded)
+      stopCardPlayback();
+    if (!layoutsForView.includes(layout)) return;
+    ++mediaOpenSerial.current;
     browseTransition.start(snapshotRef.current(), scope, layout);
     remember({ layout });
     setMemory({ ...memoryRef.current, layout });
     setOverlay(null);
   }
   function changeSort(sort: BrowseMemory["sort"]) {
+    if (cardVideoRef.current && !cardVideoRef.current.expanded)
+      stopCardPlayback();
+    ++mediaOpenSerial.current;
     remember({ sort, focusId: undefined, focusIndex: 0, scrollTop: 0 });
     setMemory({ ...memoryRef.current, sort });
   }
@@ -721,7 +785,11 @@ export default function App() {
     );
     if (result.errors.length) report(new Error(result.errors.join("；")));
   }
-  async function open(item: MediaItem, index: number) {
+  async function open(
+    item: MediaItem,
+    index: number,
+    onlySingle = false,
+  ): Promise<boolean | undefined> {
     const request = ++mediaOpenSerial.current;
     const navigation = navigationSerial.current;
     const typeNavigation = typeNavigationSerial.current;
@@ -732,7 +800,7 @@ export default function App() {
     presentationSnapshot.current = null;
     if (item.missing) {
       useApp.getState().notify("文件不可用，请检查来源文件夹", "error");
-      return;
+      return true;
     }
     remember({ focusId: item.id, focusIndex: index });
     if (item.kind) {
@@ -776,11 +844,13 @@ export default function App() {
             },
             live,
           );
+        else if (onlySingle) return false;
         else navigate(destination);
       } catch (error) {
         if (live()) report(error);
       }
-      return;
+      if (onlySingle && !live()) return;
+      return true;
     }
     await openMedia(
       item,
@@ -788,6 +858,52 @@ export default function App() {
       { scope, query, items: media.source.cachedItems() },
       live,
     );
+    return true;
+  }
+  async function openFolderChoice(folder: string) {
+    const request = ++mediaOpenSerial.current;
+    const navigation = navigationSerial.current;
+    const typeNavigation = typeNavigationSerial.current;
+    const live = () =>
+      request === mediaOpenSerial.current &&
+      navigation === navigationSerial.current &&
+      typeNavigation === typeNavigationSerial.current;
+    try {
+      const result = await window.media.query({
+        libraryId: scope.libraryId,
+        folder,
+        sort: memory.sort,
+        limit: 2,
+      });
+      if (!live()) return;
+      if (
+        result.total === 1 &&
+        result.items.length === 1 &&
+        !result.items[0].kind
+      ) {
+        const item = result.items[0];
+        presentationSnapshot.current = null;
+        setOverlay(null);
+        await openMedia(
+          item,
+          0,
+          {
+            scope,
+            query: {
+              libraryId: scope.libraryId,
+              type: item.type,
+              folder: item.folder,
+              sort: memory.sort,
+            },
+            items: [item],
+            queueIds: [item.id],
+          },
+          live,
+        );
+      } else navigate({ view: "folders", libraryId: scope.libraryId, folder });
+    } catch (error) {
+      if (live()) report(error);
+    }
   }
   async function openMedia(
     item: MediaItem,
@@ -800,6 +916,8 @@ export default function App() {
     },
     live: () => boolean,
   ) {
+    if (cardVideoRef.current && !cardVideoRef.current.expanded)
+      stopCardPlayback();
     if (item.type === "music") {
       musicDestination.current = { open: true, id: item.id };
       if (viewer?.item.type === "video") setViewer(null);
@@ -842,6 +960,152 @@ export default function App() {
       });
     } else setViewer({ item, index });
   }
+  async function resolveSingleForLayout(entry: MediaItem) {
+    if (entry.kind !== "folder") return;
+    const navigation = navigationSerial.current,
+      typeNavigation = typeNavigationSerial.current;
+    const single = await singleCollectionMedia(entry, (child) =>
+      child.kind === "folder"
+        ? window.media.query({
+            libraryId: scope.libraryId ?? child.libraryIds[0],
+            type: child.type,
+            folder: child.path,
+            browse: true,
+            sort: memory.sort,
+            limit: 2,
+          })
+        : musicPage(collectionLocation(child), {
+            type: "music",
+            offset: 0,
+            limit: 2,
+          }),
+    );
+    return navigation === navigationSerial.current &&
+      typeNavigation === typeNavigationSerial.current
+      ? single
+      : undefined;
+  }
+  function stopCardPlayback(keepControls = false) {
+    ++cardRequest.current;
+    const current = cardVideoRef.current;
+    if (!current) return;
+    void hideVideo(current.id);
+    if (keepControls) {
+      // Keep the captured control window alive until the drag is released.
+      void window.video
+        .command(current.id, { type: "pause", value: true })
+        .catch(() => {});
+      return;
+    }
+    void stopVideo(current.id).catch(report);
+    if (!keepControls) {
+      cardVideoRef.current = null;
+      setCardVideo(null);
+      setVideoPlayback(null);
+    }
+  }
+  function expandCardPlayback() {
+    const current = cardVideoRef.current;
+    if (!current || useVideoSession.getState().id !== current.id) return;
+    void hideVideo(current.id);
+    cardVideoRef.current = { ...current, expanded: true };
+    setCardVideo(cardVideoRef.current);
+    setViewer({ item: current.item, index: 0 });
+  }
+  function returnToCard() {
+    const current = cardVideoRef.current;
+    if (
+      !current ||
+      current.origin !== `${scopeKey(scope)}:${memory.layout}` ||
+      current.item.id !== activeVideo?.id ||
+      useVideoSession.getState().id !== current.id
+    )
+      return false;
+    void hideVideo(current.id);
+    cardVideoRef.current = { ...current, expanded: false };
+    setCardVideo(cardVideoRef.current);
+    setViewer(null);
+    setVideoPlayback(null);
+    setVideoPiPReason(undefined);
+    void window.video
+      .command(current.id, { type: "pause", value: false })
+      .catch(report);
+    return true;
+  }
+  async function playInline(item: MediaItem, index: number, anchor: MediaItem) {
+    if (item.missing) {
+      useApp.getState().notify("文件不可用，请检查来源文件夹", "error");
+      return;
+    }
+    remember({ focusId: anchor.id, focusIndex: index });
+    if (item.type === "music") {
+      const state = usePlayback.getState();
+      inlineMusicAnchor.current = { anchorId: anchor.id, mediaId: item.id };
+      if (state.track?.id === item.id) state.toggle();
+      else {
+        state.play(
+          item,
+          media.source.cachedItems().filter((entry) => !entry.kind),
+        );
+        const queue = anchor.kind
+          ? Promise.resolve([item.id])
+          : scope.view === "music"
+            ? stableQueue(scope, query.search ?? "")
+            : window.media.musicQueueIds(query);
+        void queue
+          .then((ids) => {
+            if (usePlayback.getState().track?.id === item.id)
+              usePlayback.getState().setQueueIds(ids);
+          })
+          .catch(report);
+      }
+      return;
+    }
+    const previous = cardVideoRef.current;
+    if (
+      previous?.item.id === item.id &&
+      useVideoSession.getState().id === previous.id &&
+      useVideoSession.getState().state?.status !== "error"
+    ) {
+      const state = useVideoSession.getState().state;
+      await window.video
+        .command(previous.id, { type: "pause", value: !state?.paused })
+        .catch(report);
+      return;
+    }
+    if (previous) stopCardPlayback();
+    setViewer(null);
+    setVideoPlayback(null);
+    const request = ++cardRequest.current,
+      id = crypto.randomUUID();
+    const started = startVideo(item, true, false, id, "card");
+    const value = {
+      id,
+      item,
+      anchorId: anchor.id,
+      expanded: false,
+      origin: `${scopeKey(scope)}:${memory.layout}`,
+    };
+    cardVideoRef.current = value;
+    setCardVideo(value);
+    try {
+      await started;
+    } catch (error) {
+      if (request === cardRequest.current) {
+        stopCardPlayback();
+        report(error);
+      }
+    }
+  }
+  useEffect(() => {
+    const current = cardVideoRef.current;
+    if (
+      current &&
+      !current.expanded &&
+      current.origin !== `${key}:${memory.layout}`
+    )
+      stopCardPlayback();
+  }, [key, memory.layout]);
   const closeViewerDirect = useCallback(() => {
     setViewer((current) => {
       current?.source?.dispose();
@@ -879,6 +1143,7 @@ export default function App() {
   };
   const closeViewer = () => closeSurface(closeViewerDirect);
   function closeOverlay() {
+    ++mediaOpenSerial.current;
     if (overlay === "layout") {
       setOverlay(null);
       return;
@@ -1892,12 +2157,63 @@ export default function App() {
     source: wallFilter.active ? wallFilter.source : media.source,
     memory: wallFilter.active ? wallFilter.memory : memoryRef.current,
     remember: wallFilter.active ? wallFilter.remember : remember,
-    open: (item: MediaItem, index: number) =>
+    open: (item: MediaItem, index: number) => {
+      if (memory.layout === "recordCrate" && item.kind === "collection") {
+        remember({ focusId: item.id, focusIndex: index });
+        navigate(collectionLocation(item));
+        return;
+      }
+      if (
+        cardVideoRef.current?.anchorId === item.id &&
+        !cardVideoRef.current.expanded
+      ) {
+        expandCardPlayback();
+        return;
+      }
+      const state = usePlayback.getState();
+      if (
+        memory.layout === "recordCrate" &&
+        (state.track?.id === item.id ||
+          (inlineMusicAnchor.current?.anchorId === item.id &&
+            state.track?.id === inlineMusicAnchor.current.mediaId))
+      ) {
+        usePlayback.setState({ expanded: true, queueVisible: false });
+        return;
+      }
       void open(
         item,
         wallFilter.active
           ? Math.max(0, wallFilter.originalIndex(item.id))
           : index,
+      );
+    },
+    resolveSingle: resolveSingleForLayout,
+    playInline:
+      memory.layout === "recordCrate" || memory.layout === "screeningRoom"
+        ? playInline
+        : undefined,
+    onBrowseMotion:
+      memory.layout === "screeningRoom"
+        ? (keepControls?: boolean) => stopCardPlayback(keepControls)
+        : undefined,
+    cardVideo: cardVideo ?? undefined,
+    inlineMusic:
+      inlineMusicAnchor.current &&
+      usePlayback.getState().track?.id === inlineMusicAnchor.current.mediaId
+        ? {
+            anchorId: inlineMusicAnchor.current.anchorId,
+            item: usePlayback.getState().track!,
+          }
+        : undefined,
+    stopCardVideo: () => stopCardPlayback(),
+    expandCardVideo: expandCardPlayback,
+    openSingle: (item: MediaItem, index: number) =>
+      open(
+        item,
+        wallFilter.active
+          ? Math.max(0, wallFilter.originalIndex(item.id))
+          : index,
+        true,
       ),
     favorite,
     selected: (item: MediaItem) => focused?.item.id === item.id,
@@ -2128,6 +2444,14 @@ export default function App() {
                 {...layoutProps}
                 vertical={memory.layout === "verticalGallery"}
               />
+            ) : memory.layout === "archiveShelf" ? (
+              <ArchiveShelf {...layoutProps} />
+            ) : memory.layout === "recordCrate" ? (
+              <RecordCrate {...layoutProps} />
+            ) : memory.layout === "screeningRoom" ? (
+              <ScreeningRoom {...layoutProps} />
+            ) : memory.layout === "photoLightbox" ? (
+              <PhotoLightbox {...layoutProps} />
             ) : (
               <StandardGrid {...layoutProps} />
             )}
@@ -2601,7 +2925,18 @@ export default function App() {
           sort={videoPlayback?.sort ?? memory.sort}
           floating={!inlineVideo}
           floatingReason={videoPiPReason}
+          sharedSessionId={
+            cardVideo?.expanded && cardVideo.item.id === activeVideo.id
+              ? cardVideo.id
+              : undefined
+          }
           leave={() => {
+            if (returnToCard()) return;
+            if (cardVideoRef.current) {
+              stopCardPlayback();
+              setViewer(null);
+              return;
+            }
             if (settings.videoAutoPictureInPicture) {
               setVideoPiPReason("automatic");
               presentationSnapshot.current ??= snapshotRef.current();
@@ -2625,6 +2960,11 @@ export default function App() {
             setViewer({ item: activeVideo, index: 0 });
           }}
           close={() => {
+            if (cardVideoRef.current) {
+              stopCardPlayback();
+              setViewer(null);
+              return;
+            }
             setVideoPlayback(null);
             const original = presentationSnapshot.current;
             if (inlineVideo) {
@@ -2634,6 +2974,8 @@ export default function App() {
             presentationSnapshot.current = null;
           }}
           switchItem={(item) => {
+            cardVideoRef.current = null;
+            setCardVideo(null);
             presentationSnapshot.current ??= snapshotRef.current();
             setVideoPlayback({
               item,
@@ -2739,24 +3081,24 @@ export default function App() {
       {overlay === "layout" && (
         <Modal title="显示方式" close={closeOverlay} className="layout-picker">
           <div className="layout-options">
-            {LAYOUTS.filter((layout) =>
-              supportedLayouts(currentType).includes(layout.id),
-            ).map((layout) => (
-              <button
-                key={layout.id}
-                className={`layout-option ${memory.layout === layout.id ? "selected" : ""}`}
-                aria-label={`切换到${layout.label}`}
-                onClick={() => changeLayout(layout.id)}
-              >
-                <span className={`layout-preview preview-${layout.id}`}>
-                  {Array.from({ length: 7 }, (_, index) => (
-                    <i key={index} />
-                  ))}
-                </span>
-                <span>{layout.label}</span>
-                {memory.layout === layout.id && <Check size={14} />}
-              </button>
-            ))}
+            {LAYOUTS.filter((layout) => layoutsForView.includes(layout.id)).map(
+              (layout) => (
+                <button
+                  key={layout.id}
+                  className={`layout-option ${memory.layout === layout.id ? "selected" : ""}`}
+                  aria-label={`切换到${layout.label}`}
+                  onClick={() => changeLayout(layout.id)}
+                >
+                  <span className={`layout-preview preview-${layout.id}`}>
+                    {Array.from({ length: 7 }, (_, index) => (
+                      <i key={index} />
+                    ))}
+                  </span>
+                  <span>{layout.label}</span>
+                  {memory.layout === layout.id && <Check size={14} />}
+                </button>
+              ),
+            )}
           </div>
         </Modal>
       )}
@@ -2841,13 +3183,7 @@ export default function App() {
                 <button
                   key={folder.path}
                   title={folder.path}
-                  onClick={() =>
-                    navigate({
-                      view: "folders",
-                      libraryId: scope.libraryId,
-                      folder: folder.path,
-                    })
-                  }
+                  onClick={() => void openFolderChoice(folder.path)}
                 >
                   <FolderOpen size={16} />
                   <span>{folder.path}</span>

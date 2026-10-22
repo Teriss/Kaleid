@@ -1,4 +1,4 @@
-import { normalizeLayout, defaultLayout } from "./policy";
+import { ALL_LAYOUTS, normalizeLayout, defaultLayout } from "./policy";
 export { defaultLayout } from "./policy";
 import type { BrowseMemory } from "../../../shared/types";
 import { isActiveMusicProvider } from "../../../shared/music";
@@ -63,14 +63,7 @@ export function readMemory(scope: BrowseScope): BrowseMemory {
       /* Keep cached layout. */
     }
     const preferred = normalizeLayout(
-      [
-        "grid",
-        "bravais",
-        "spatial",
-        "gallery",
-        "verticalGallery",
-        "carousel",
-      ].includes(preference ?? "")
+      ALL_LAYOUTS.includes(preference as BrowseMemory["layout"])
         ? (preference as BrowseMemory["layout"])
         : scope.type && scope.view !== "favorites" && scope.view !== "recent"
           ? defaultLayout(scope.type)
@@ -116,14 +109,7 @@ export function readMemory(scope: BrowseScope): BrowseMemory {
           (!scope.type || scope.view === "favorites" || scope.view === "recent"
             ? saved.layout
             : undefined);
-        return [
-          "grid",
-          "bravais",
-          "spatial",
-          "gallery",
-          "verticalGallery",
-          "carousel",
-        ].includes(value ?? "")
+        return ALL_LAYOUTS.includes(value as BrowseMemory["layout"])
           ? (value as BrowseMemory["layout"])
           : defaultLayout(scope.type);
       })(),
@@ -135,6 +121,13 @@ export function readMemory(scope: BrowseScope): BrowseMemory {
   };
   if (result.wallMode !== "finite" && result.wallMode !== "infinite")
     result.wallMode = "infinite";
+  if (result.showcaseMode !== "finite" && result.showcaseMode !== "infinite")
+    result.showcaseMode = "infinite";
+  if (
+    result.archiveShelfMode !== "finite" &&
+    result.archiveShelfMode !== "infinite"
+  )
+    result.archiveShelfMode = "infinite";
   if (result.wallCameras && typeof result.wallCameras === "object") {
     for (const mode of ["finite", "infinite"] as const) {
       const camera = result.wallCameras[mode];

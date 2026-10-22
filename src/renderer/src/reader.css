@@ -276,6 +276,7 @@
   position: absolute;
   inset: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   cursor: grab;
   user-select: none;
@@ -332,15 +333,24 @@
   letter-spacing: 0.2em;
   text-align: center;
 }
+.reader .text-scroll.reader-paged {
+  inset: 88px var(--reader-padding, 6%) 110px;
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: none;
+  scrollbar-width: none;
+}
 .reader-paged .book-text {
-  width: var(--reader-page-width, calc(100vw - 12%));
+  width: 100%;
   height: 100%;
   min-height: 0;
   max-width: none;
-  padding: 88px 0 110px;
-  margin: 0 0 0 var(--reader-padding, 6%);
-  column-width: var(--reader-page-width, calc(100vw - 12%));
-  column-gap: clamp(32px, 5vw, 64px);
+  padding: 0;
+  margin: 0;
+  column-width: auto;
+  column-count: 1;
+  column-gap: 0;
   column-fill: auto;
   box-sizing: border-box;
 }
