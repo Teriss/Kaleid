@@ -67,4 +67,13 @@ Comic archive reading bundles the unmodified Windows x64 `7z.exe` and `7z.dll` f
 - Upstream release and corresponding source: https://github.com/ip7z/7zip/releases/tag/26.04
 - Copyright (C) 1999–2026 Igor Pavlov. Most code is GNU LGPL; other portions use BSD terms, and RAR decompression portions carry the unRAR restriction. The complete upstream `License.txt` is shipped beside the binaries in `resources/comic-runtime/`.
 - This component is distributed separately from application code and is only invoked as a console process for local archive reading. No changes have been made to its binaries. Users may replace both binaries with compatible versions in that resource directory.
-- Reader behaviour was researched using Venera, Mihon, OpenComic, Komga and Kavita. No source files or assets from those applications are incorporated in this implementation.
+- Reader behaviour was researched using Venera, Mihon, OpenComic, Komga and Kavita. The local archive implementation incorporates no source files or assets from those applications. The separate online compatibility layer incorporates Venera init.js as described below.
+
+## Venera online comic compatibility library
+
+- Repository: https://github.com/CyrilPeng/Venera-Next
+- Fixed revision: `4ac4a4e68644dc51ecee5144dd9398d071692e25`, upstream version `1.18.0+234`.
+- `vendor/venera/init.js` is the unmodified `assets/init.js` from that revision, distributed under GPL-3.0. Its checksum and license checksum are recorded in `vendor/venera/UPSTREAM.json`; the GPL-3.0 license text is preserved in `vendor/venera/LICENSE`.
+- Kaleid implements its own QuickJS host bridges, per-source Electron Session networking and reader/download integration. This integration is not an official Venera-Next release. The matching source and build inputs are included in `Kaleid-Source.zip`; integration changes and boundaries are documented in `vendor/venera/ADAPTATIONS.md`.
+- Site scripts are installed separately at the user's request. The preset index is https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/index.json. Their licenses and notices remain governed by their upstream authors; the installer does not bundle these scripts. `scripts/comic-sources-baseline.json` records the tested script identities and hashes.
+- QuickJS/quickjs-emscripten, Cheerio, iconv-lite and Sharp retain their upstream dependency licenses in the distributed node_modules. The checked QuickJS WASM variant is pinned to quickjs-emscripten 0.32.0.

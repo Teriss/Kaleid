@@ -5,6 +5,7 @@ import {
   ChevronRight,
   FolderOpen,
   Heart,
+  Infinity as InfinityIcon,
   ListMusic,
   Pause,
   Play,
@@ -156,23 +157,6 @@ export default function MediaShowcase({
         <header className="showcase-heading">
           <span>{eyebrow}</span>
           <i />
-          <div
-            className="showcase-mode"
-            role="group"
-            aria-label={`${title}范围`}
-          >
-            {(["finite", "infinite"] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                disabled={!interactive}
-                aria-pressed={mode === value}
-                onClick={() => flow.changeMode(value)}
-              >
-                {value === "finite" ? "有限" : "无限"}
-              </button>
-            ))}
-          </div>
         </header>
         <div
           className="showcase-stage"
@@ -395,6 +379,16 @@ export default function MediaShowcase({
             onClick={() => flow.step(-1)}
           >
             <ChevronLeft size={19} />
+          </IconButton>
+          <IconButton
+            label={looping ? `切换为有限${title}` : `切换为无限${title}`}
+            active={looping}
+            disabled={!interactive}
+            onClick={() =>
+              flow.changeMode(looping ? "finite" : "infinite")
+            }
+          >
+            <InfinityIcon size={19} />
           </IconButton>
           <output
             aria-label={`${title}位置`}

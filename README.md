@@ -56,7 +56,7 @@ TXT 分页以单个可见页面为列宽，翻页与定位均对齐整页；滚�
 
 ## 边界与许可
 
-视频由内置 mpv 解码，支持 MKV、MP4、MOV、AVI、RMVB、TS 等常见格式，以及字幕／音轨切换、续播、选集、可选连播、MP4／GIF 片段导出及实时超分。超分默认关闭，提供跨显卡的 FSRCNNX 和 NVIDIA RTX 接口；实际兼容性取决于编码、显卡与驱动，详见[视频播放说明](docs/video-playback.md)。漫画支持图片目录、CBZ/ZIP、CBR/RAR 和 7z/CB7，包含长图续读、双页、缩放、书签、作品整理与连续翻章，详见[漫画阅读说明](docs/comic-reader.md)。不支持 DRM EPUB 或 PDF，漫画暂不支持加密／分卷包和在线来源。安装包未签名，macOS／Linux 未验收。固定音乐依赖仍有审计项，详见移植说明。
+视频由内置 mpv 解码，支持 MKV、MP4、MOV、AVI、RMVB、TS 等常见格式，以及字幕／音轨切换、续播、选集、可选连播、MP4／GIF 片段导出及实时超分。超分默认关闭，提供跨显卡的 FSRCNNX 和 NVIDIA RTX 接口；实际兼容性取决于编码、显卡与驱动，详见[视频播放说明](docs/video-playback.md)。漫画支持图片目录、CBZ/ZIP、CBR/RAR 和 7z/CB7，包含长图续读、双页、缩放、书签、作品整理与连续翻章，详见[漫画阅读说明](docs/comic-reader.md)。在线漫画采用 Venera 兼容源，支持搜索、分类、登录、独立站内收藏、本地书架和离线下载；预设仓库中的源按需安装，详见[在线漫画说明与实测边界](docs/online-comics.md)。不支持 DRM EPUB 或 PDF，漫画暂不支持加密／分卷包。安装包未签名，macOS／Linux 未验收。固定音乐依赖仍有审计项，详见移植说明。
 
 本项目包含 Folia 的 AGPL-3.0 源码，并按该许可提供对应源码。来源及其他依赖声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、[LICENSE](LICENSE) 和 [适配说明](vendor/folia/ADAPTATIONS.md)。
 

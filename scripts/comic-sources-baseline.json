@@ -1,0 +1,236 @@
+{
+  "repository": "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/index.json",
+  "sources": [
+    {
+      "name": "包子漫画",
+      "file": "baozi.js",
+      "indexVersion": "1.1.6",
+      "version": "1.1.6",
+      "sha256": "6ccb52e7734e54c6dfcfcb9729adb46409f1e5c9d83bbda54313b066013e4255"
+    },
+    {
+      "name": "CCC追漫台",
+      "file": "ccc.js",
+      "indexVersion": "1.0.1",
+      "version": "1.0.1",
+      "sha256": "d7db634cd6a66782fb69787d8f0209a39f47e814a1abba7c9ebdb5e4fca3fde9"
+    },
+    {
+      "name": "カドコミ",
+      "file": "comic_walker.js",
+      "indexVersion": "1.0.1",
+      "version": "1.0.1",
+      "sha256": "d039289f0aacda36990f090f93779bf54116e4d0e20c626c7ac29c73ec1e3513"
+    },
+    {
+      "name": "comick",
+      "file": "comick.js",
+      "indexVersion": "1.2.0",
+      "version": "1.2.0",
+      "sha256": "8e775b2381419d6cc8f912abb11158ee8ab5fb216b68441c6ea18e7bab135562"
+    },
+    {
+      "name": "拷贝漫画(多账号)",
+      "file": "copy_manga_multi_accounts.js",
+      "indexVersion": "1.4.1",
+      "version": "1.4.1",
+      "sha256": "1d8d8f855fed67ab34b6b349001731795abeae8c41ef008a2557fc8aadaf4859"
+    },
+    {
+      "name": "拷贝漫画",
+      "file": "copy_manga.js",
+      "indexVersion": "1.4.3",
+      "version": "1.4.3",
+      "sha256": "5012ce0782dc0410a1dbef7be84e17652875b3b82bdd46c0099097f076364ac5"
+    },
+    {
+      "name": "ehentai",
+      "file": "ehentai.js",
+      "indexVersion": "1.1.8",
+      "version": "1.2.0",
+      "sha256": "ef15f80d8090cb9ec1fcb18b502017a47694484e81d51c85e6b06ea162c58e4a"
+    },
+    {
+      "name": "GoDa漫画",
+      "file": "goda.js",
+      "indexVersion": "1.2.1",
+      "version": "1.2.1",
+      "sha256": "dc94b8d5074e342633b2f1c4ca74e9d7cfa3a6952890ab9a56f5c675a1a16fc5"
+    },
+    {
+      "name": "嗨皮漫画",
+      "file": "happy.js",
+      "indexVersion": "1.0.0",
+      "version": "1.0.0",
+      "sha256": "656f038a7b134135bca51e1eaca1c3e1ba761d2daa8d89e26d085b1bd8950180"
+    },
+    {
+      "name": "H-Comic",
+      "file": "hcomic.js",
+      "indexVersion": "1.0.0",
+      "version": "1.0.0",
+      "sha256": "0490859b636ca796a8a16b044724fed556bcfcfcdefae02e6b1e81fd6d8393d2"
+    },
+    {
+      "name": "hitomi.la",
+      "file": "hitomi.js",
+      "indexVersion": "1.1.2",
+      "version": "1.1.2",
+      "sha256": "af174079e017718268c1e55b4c955228aab80e97813fe5da15798050840c5d92"
+    },
+    {
+      "name": "热辣漫画",
+      "file": "hot_manga.js",
+      "indexVersion": "1.0.0",
+      "version": "1.0.0",
+      "sha256": "d5f440d1a2e5d41e53189eb8d3e7ba19864c43b1d6592e20eb65ef326a410fd4"
+    },
+    {
+      "name": "爱看漫",
+      "file": "ikmmh.js",
+      "indexVersion": "1.0.6",
+      "version": "1.0.6",
+      "sha256": "a5382a807db16123c5dec210552ab3abde1f842fb4ac2027813773d62c53dd7a"
+    },
+    {
+      "name": "jcomic.net",
+      "file": "jcomic.js",
+      "indexVersion": "1.0.0",
+      "version": "1.0.0",
+      "sha256": "afd7dc75ac1216eec39350ca7a7228d836183b9ec61751f3064dcc53a97422b1"
+    },
+    {
+      "name": "禁漫天堂",
+      "file": "jm.js",
+      "indexVersion": "1.4.0",
+      "version": "1.4.0",
+      "sha256": "a91bc8cc8b1a69eda20cdf2a04deea3fe0522baf2de84caa0c851211cb5f78ad"
+    },
+    {
+      "name": "Kavita",
+      "file": "kavita.js",
+      "indexVersion": "1.0.0",
+      "version": "1.0.0",
+      "sha256": "65173ae4eb4a57f33f867a67f9030078b49b7386b8a02ab5829e1966f4d47763"
+    },
+    {
+      "name": "Komga",
+      "file": "komga.js",
+      "indexVersion": "1.0.0",
+      "version": "1.0.0",
+      "sha256": "2aa5b4e7d4b32bf282f86168b22af091d7436f4e3ad603defb7b6df738a36908"
+    },
+    {
+      "name": "Komiic",
+      "file": "komiic.js",
+      "indexVersion": "1.0.3",
+      "version": "1.0.3",
+      "sha256": "a467325b6be833afc676099e66563a9af849641ef9e548d1f2304cd2d883d1e8"
+    },
+    {
+      "name": "Lanraragi",
+      "file": "lanraragi.js",
+      "indexVersion": "1.1.0",
+      "version": "1.2.0",
+      "sha256": "b2bc20d13979a40bb5973ac56c6fcdaccc096bd95adcafc8e2317c9eda44e130"
+    },
+    {
+      "name": "MangaDex",
+      "file": "manga_dex.js",
+      "indexVersion": "1.2.0",
+      "version": "1.2.0",
+      "sha256": "c8beb84262da8fa3922ff0392fc2f79f03ee36ae08933d10571172ef6c8ce21d"
+    },
+    {
+      "name": "漫画柜",
+      "file": "manhuagui.js",
+      "indexVersion": "1.2.1",
+      "version": "1.2.1",
+      "sha256": "a5bf6c633e0ce728361dded097424b829134d618128f72b571e42525e8950128"
+    },
+    {
+      "name": "漫画人",
+      "file": "manhuaren.js",
+      "indexVersion": "1.0.0",
+      "version": "1.0.0",
+      "sha256": "6ec9b7ca3f843698625fed1291b25708638a506be486f6f113af71dcd71b3bf8"
+    },
+    {
+      "name": "漫蛙吧",
+      "file": "manwaba.js",
+      "indexVersion": "1.0.2",
+      "version": "1.0.3",
+      "sha256": "6d85a9a18d2f44fb8b71ef598e6a74fb9de4b0ddd0260b3a6cb57fc05753f481"
+    },
+    {
+      "name": "漫画1234",
+      "file": "mh1234.js",
+      "indexVersion": "1.0.0",
+      "version": "1.0.0",
+      "sha256": "17d910952f7de6d47b10cca2302193e84b7ae1873219f91dfa927d0cc4e8897e"
+    },
+    {
+      "name": "18漫画",
+      "file": "mh18.js",
+      "indexVersion": "1.0.0",
+      "version": "1.0.0",
+      "sha256": "88ba802dbc33988702b9cc3b9e8d2b669acc46d3f76d2040fd91832504a637ee"
+    },
+    {
+      "name": "漫小肆",
+      "file": "mxs.js",
+      "indexVersion": "1.0.0",
+      "version": "1.0.0",
+      "sha256": "da2c222eda825b77eb3b67ac09ec33b70bc2512cd5fc867fbe9b958df55037f8"
+    },
+    {
+      "name": "MYCOMIC",
+      "file": "mycomic.js",
+      "indexVersion": "1.1.0",
+      "version": "1.1.0",
+      "sha256": "85432d15a15e71a03192a27e73ee61b09cd68878561c9f5543ecb5dcb2933c67"
+    },
+    {
+      "name": "nhentai",
+      "file": "nhentai.js",
+      "indexVersion": "1.1.0",
+      "version": "1.1.0",
+      "sha256": "0f68757f89d493926cbf4c039c256d34365d0639aaa6996acbcde7c162257982"
+    },
+    {
+      "name": "Picacg",
+      "file": "picacg.js",
+      "indexVersion": "1.0.6",
+      "version": "1.0.6",
+      "sha256": "a404719b7f3f338911dd0a8a77a73fc50c6aa22048cf6458413f7b5a5a9d152b"
+    },
+    {
+      "name": "少年ジャンプ＋",
+      "file": "shonen_jump_plus.js",
+      "indexVersion": "1.1.1",
+      "version": "1.1.1",
+      "sha256": "a8a18249a4f30d907b82eec276d9bda0631c975118ae75dfcb252a6a9cdbe264"
+    },
+    {
+      "name": "紳士漫畫",
+      "file": "wnacg.js",
+      "indexVersion": "1.0.6",
+      "version": "1.0.6",
+      "sha256": "545a6d818d012c1e5799d6aaf7ecd09798969acb840166ee7c56de6d02201df0"
+    },
+    {
+      "name": "优酷漫画",
+      "file": "ykmh.js",
+      "indexVersion": "1.0.0",
+      "version": "1.0.0",
+      "sha256": "c03ea3696420c3e71b0a638c9d8a3a3666d20ce0d0095e6b13970a27186fea4b"
+    },
+    {
+      "name": "再漫画",
+      "file": "zaimanhua.js",
+      "indexVersion": "1.0.2",
+      "version": "1.0.2",
+      "sha256": "96b89df7bcdaa2f3c1a02d15ce19575c5fdffceb768083dff552c8afc5969f1b"
+    }
+  ]
+}

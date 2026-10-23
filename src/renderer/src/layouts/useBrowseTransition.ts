@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type {
-  NavigationEntry,
+  NavigationSnapshot,
   BrowseLocation,
 } from "../../../shared/navigation";
 import type { MediaLayout } from "../../../shared/types";
@@ -78,7 +78,7 @@ export function wallNavigationDirection(
 export default function useBrowseTransition(reducedMotion: boolean) {
   const [pending, setPending] = useState(false);
   const active = useRef<{
-    previous: NavigationEntry;
+    previous: NavigationSnapshot;
     target: BrowseLocation;
     layout: MediaLayout;
     layer: HTMLElement | null;
@@ -119,7 +119,7 @@ export default function useBrowseTransition(reducedMotion: boolean) {
     if (reducedMotion) finish();
   }, [reducedMotion]);
   function start(
-    previous: NavigationEntry,
+    previous: NavigationSnapshot,
     target: BrowseLocation,
     layout: MediaLayout = previous.memory.layout,
   ) {

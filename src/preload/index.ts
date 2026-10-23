@@ -125,6 +125,76 @@ const api: Record<string, any> = Object.fromEntries(
     (...args: unknown[]) => ipcRenderer.invoke("media:call", method, args),
   ]),
 );
+api.onlineComics = Object.fromEntries(
+  [
+    "categories",
+    "ranking",
+    "settingAction",
+    "sources",
+    "repositories",
+    "repository",
+    "openAddress",
+    "removeRepository",
+    "install",
+    "importFile",
+    "enable",
+    "uninstall",
+    "checkUpdates",
+    "update",
+    "settings",
+    "search",
+    "explore",
+    "category",
+    "details",
+    "login",
+    "logout",
+    "favorite",
+    "library",
+    "hubList",
+    "hubSet",
+    "following",
+    "checkFollowing",
+    "readerItem",
+    "pages",
+    "context",
+    "saveProgress",
+    "preferences",
+    "bookmark",
+    "deleteBookmark",
+    "release",
+    "downloads",
+    "enqueue",
+    "downloadAction",
+    "downloadDirectory",
+    "respondUI",
+  ].map((method) => [
+    method,
+    (...args: unknown[]) => ipcRenderer.invoke("comic:call", method, args),
+  ]),
+);
+for (const [method, channel] of [
+  ["onChange", "comic:change"],
+  ["onUI", "comic:ui"],
+]) {
+  api.onlineComics[method] = (callback: (data?: unknown) => void) => {
+    const listener = (_event: unknown, data: unknown) => callback(data);
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  };
+}
+api.comicHub = {
+  list: (list: import("../shared/onlineComics").ComicHubList) =>
+    api.onlineComics.hubList(list),
+  set: (
+    list: import("../shared/onlineComics").ComicHubList,
+    ref: import("../shared/onlineComics").ComicHubRef,
+    value: boolean,
+  ) => api.onlineComics.hubSet(list, ref, value),
+  following: () => api.onlineComics.following(),
+  checkFollowing: (ref?: import("../shared/onlineComics").OnlineComicRef) =>
+    api.onlineComics.checkFollowing(ref),
+  onChange: (callback: () => void) => api.onlineComics.onChange(callback),
+};
 api.appTheme = () => ipcRenderer.invoke("app:theme");
 api.onTheme = (callback: (theme: "dark" | "light") => void) => {
   const listener = (_event: unknown, theme: "dark" | "light") =>

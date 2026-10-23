@@ -279,6 +279,7 @@ export default function VideoPlayer({
         void command({ type: "fullscreen", value: false });
       else if (!floating) leave();
     };
+    const appBack = () => escape();
     const fullscreen = () =>
       void command({
         type: "fullscreen",
@@ -309,9 +310,9 @@ export default function VideoPlayer({
       }
       if (action === "escape") escape();
       if (action === "fullscreen") fullscreen();
-      if (action === "back" || action === "forward")
+      if (action === "back")
         window.dispatchEvent(
-          new CustomEvent("video:navigate", { detail: action }),
+          new CustomEvent("video:navigate", { detail: "back" }),
         );
     });
     const key = (event: KeyboardEvent) => {
@@ -387,10 +388,12 @@ export default function VideoPlayer({
       }
     };
     if (!floating) window.addEventListener("keydown", key, true);
+    window.addEventListener("video:back", appBack);
     const controlsWindow = surface?.ownerDocument.defaultView;
     controlsWindow?.addEventListener("keydown", key, true);
     return () => {
       unsubscribe();
+      window.removeEventListener("video:back", appBack);
       window.removeEventListener("keydown", key, true);
       controlsWindow?.removeEventListener("keydown", key, true);
     };

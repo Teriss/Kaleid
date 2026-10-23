@@ -7,13 +7,15 @@ export default function AutoHideNavigation({
   edge,
   className = "",
   locked = false,
+  alwaysAutoHide = false,
 }: {
   children: ReactNode;
   edge: "top" | "bottom" | "left" | "right";
   className?: string;
   locked?: boolean;
+  alwaysAutoHide?: boolean;
 }) {
-  const enabled = useApp((s) => s.settings.navigationAutoHide);
+  const enabled = useApp((s) => s.settings.navigationAutoHide) || alwaysAutoHide;
   const [visible, setVisible] = useState(true);
   const root = useRef<HTMLDivElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);

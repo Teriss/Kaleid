@@ -2,52 +2,15 @@
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: 144px 32px 24px;
+  padding: 96px 32px 24px;
   color: #ededed;
+}
+.browser-shell[data-navigation="top"] .archive-shelf {
+  padding-top: 144px;
 }
 .archive-shelf-content {
   max-width: 960px;
   margin: 0 auto;
-}
-.archive-heading {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 0 8px;
-  color: #888;
-  font:
-    11px/1.4 Consolas,
-    monospace;
-  letter-spacing: 2px;
-}
-.archive-heading i {
-  height: 1px;
-  background: #ffffff14;
-  flex: 1;
-}
-.archive-heading b {
-  width: 3px;
-  height: 3px;
-  background: #aaa;
-}
-.archive-mode {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 7px;
-  background: #ffffff06;
-  font-size: 11px;
-  line-height: 1.4;
-  letter-spacing: 0;
-}
-.archive-mode button {
-  padding: 5px 11px;
-  border-radius: 5px;
-  color: #888;
-}
-.archive-mode button[aria-pressed="true"] {
-  color: #eee;
-  background: #ffffff12;
 }
 .archive-bank {
   position: relative;

@@ -18,6 +18,8 @@ export default function StandardGrid({
   contextMenu,
   removeRecent,
   interactive,
+  onReachEnd,
+  minimumCellWidth = 230,
 }: LayoutProps) {
   const { ref, width, height } = useViewport();
   const [scroll, setScroll] = useState(memory.scrollTop ?? 0);
@@ -30,7 +32,7 @@ export default function StandardGrid({
   }, [interactive]);
   const restored = useRef(false),
     consumed = useRef<number | undefined>(undefined);
-  const columns = Math.max(1, Math.floor((width - 80) / 230));
+  const columns = Math.max(1, Math.floor((width - 80) / minimumCellWidth));
   const cellWidth = Math.max(100, (width - 80 - (columns - 1) * 22) / columns);
   const kind = source.query.type;
   const rowHeight =
@@ -93,6 +95,15 @@ export default function StandardGrid({
       ),
     );
   }, [source, from, to, columns]);
+  useEffect(() => {
+    const element = ref.current;
+    if (
+      interactive &&
+      element &&
+      element.scrollHeight <= element.clientHeight + 24
+    )
+      onReachEnd?.();
+  }, [source, source.total, height, onReachEnd, interactive]);
   return (
     <div
       ref={ref}
@@ -116,6 +127,11 @@ export default function StandardGrid({
         frozen.current = e.currentTarget.scrollTop;
         if (restored.current)
           remember({ scrollTop: e.currentTarget.scrollTop });
+        if (
+          e.currentTarget.scrollTop + e.currentTarget.clientHeight >=
+          e.currentTarget.scrollHeight - rowHeight * 2
+        )
+          onReachEnd?.();
       }}
     >
       <div

@@ -26,6 +26,8 @@ const memories = new Map<string, BrowseMemory>();
 const dirty = new Set<string>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 export function scopeKey(scope: BrowseScope) {
+  if (scope.view === "comic")
+    return `comic:${JSON.stringify([scope.providerId || "", scope.section || "home", scope.remoteKind || "", scope.remoteId || "", scope.comicChapterId ?? null, scope.search || "", scope.searchMode || "", scope.comicSearchId || ""])}`;
   if (scope.localOnly) return `${scope.view}:${scope.type}:local`;
   if (scope.view === "music")
     return `music:${scope.musicSource}:${scope.providerId ?? scope.serverId ?? ""}:${scope.section ?? "home"}:${scope.remoteKind ?? ""}:${scope.remoteId ?? ""}`;
@@ -221,7 +223,6 @@ export function readLastScope(): BrowseScope | null {
         "libraries",
         "music",
         "favorites",
-        "recent",
         "folders",
       ].includes(scope.view)
       ? availableScope(scope)

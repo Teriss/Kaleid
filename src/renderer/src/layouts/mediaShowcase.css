@@ -39,23 +39,6 @@
   height: 1px;
   background: var(--showcase-line);
 }
-.showcase-mode {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--showcase-line);
-  border-radius: 7px;
-  letter-spacing: 0;
-}
-.showcase-mode button {
-  padding: 5px 12px;
-  color: var(--showcase-muted);
-  border-radius: 4px;
-}
-.showcase-mode button[aria-pressed="true"] {
-  color: var(--showcase-ink);
-  background: var(--showcase-line);
-}
 .showcase-stage {
   position: relative;
   overflow: hidden;

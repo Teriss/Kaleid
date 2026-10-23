@@ -148,7 +148,6 @@ export interface VideoInput {
     | "edge-enter"
     | "edge-leave"
     | "back"
-    | "forward"
     | "close"
     | "restore"
     | "surface-update";

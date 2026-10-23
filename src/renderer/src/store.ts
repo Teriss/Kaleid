@@ -321,7 +321,9 @@ usePlayback.subscribe((state, previous) => {
     persistMusicSession();
 });
 export const resource = (item: MediaItem, variant = "file") =>
-  isRemote(item)
+  item.remoteData?.comicRef && (variant === "cover" || variant === "thumbnail")
+    ? item.remoteCover || item.cover || ""
+    : isRemote(item)
     ? variant === "cover" || variant === "thumbnail"
       ? (item.remoteCover ?? "")
       : (item.remoteAudio ?? "")

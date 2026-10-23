@@ -248,6 +248,8 @@ export const DEFAULT_SETTINGS: Settings = {
   lyricsPresentation: "split",
 };
 export interface AppAPI {
+  onlineComics: import("./onlineComics").OnlineComicsAPI;
+  comicHub: import("./onlineComics").ComicHubAPI;
   appTheme(): Promise<Settings["theme"]>;
   onTheme(callback: (theme: Settings["theme"]) => void): () => void;
   chooseFolders(): Promise<string[]>;

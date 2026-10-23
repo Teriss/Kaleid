@@ -52,6 +52,8 @@ export interface LayoutProps {
   select?(item: MediaItem, index: number, event?: ReactMouseEvent): void;
   contextMenu?(item: MediaItem, index: number, event: ReactMouseEvent): void;
   removeRecent?(item: MediaItem): void | Promise<void>;
+  onReachEnd?(): void;
+  minimumCellWidth?: number;
 }
 export function resolveFocusIndex(
   source: PagedMediaSource,

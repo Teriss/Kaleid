@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Heart,
+  Infinity as InfinityIcon,
   FolderOpen,
 } from "lucide-react";
 import { Cover, IconButton } from "../components";
@@ -32,16 +33,21 @@ import {
 } from "./archiveShelfModel";
 import "./archiveShelf.css";
 
-export default function ArchiveShelf(props: LayoutProps) {
+export default function ArchiveShelf({
+  allowInfinite = true,
+  ...props
+}: LayoutProps & { allowInfinite?: boolean }) {
   const { source, memory, interactive, reducedMotion } = props;
   const [systemReduced, setSystemReduced] = useState(
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   const reduced = reducedMotion || systemReduced;
   const [mode, setMode] = useState(
-    memory.archiveShelfMode === "finite" ? "finite" : "infinite",
+    allowInfinite && memory.archiveShelfMode !== "finite"
+      ? "infinite"
+      : "finite",
   );
-  const loop = mode === "infinite";
+  const loop = allowInfinite && mode === "infinite";
   const loopRef = useRef(loop);
   loopRef.current = loop;
   const { ref, width, height } = useViewport();
@@ -114,6 +120,8 @@ export default function ArchiveShelf(props: LayoutProps) {
       laneRef.current = rounded;
       setLane(rounded);
     }
+    if (bookIndex(position.current, source.total) >= source.total - 3)
+      latest.current.onReachEnd?.();
     paintRef.current();
   }
   function rememberPosition() {
@@ -183,7 +191,8 @@ export default function ArchiveShelf(props: LayoutProps) {
     centre((targetLane.current ?? Math.round(position.current)) + delta);
   }
   function changeMode(next: "finite" | "infinite") {
-    if (!interactive || next === mode) return;
+    if (!interactive || (!allowInfinite && next === "infinite") || next === mode)
+      return;
     cancel();
     finishEntrance();
     drag.current = null;
@@ -366,29 +375,6 @@ export default function ArchiveShelf(props: LayoutProps) {
       aria-label="立体书架"
     >
       <div className="archive-shelf-content">
-        <header className="archive-heading">
-          <span aria-hidden="true">01 / READING ARCHIVE</span>
-          <i aria-hidden="true" />
-          <div className="archive-mode" role="group" aria-label="书架范围">
-            <button
-              type="button"
-              aria-pressed={!loop}
-              disabled={!interactive}
-              onClick={() => changeMode("finite")}
-            >
-              有限
-            </button>
-            <button
-              type="button"
-              aria-pressed={loop}
-              disabled={!interactive}
-              onClick={() => changeMode("infinite")}
-            >
-              无限
-            </button>
-          </div>
-          <b aria-hidden="true" />
-        </header>
         <div
           className={`archive-bank ${moving ? "is-dragging" : ""}`}
           style={
@@ -628,6 +614,16 @@ export default function ArchiveShelf(props: LayoutProps) {
           >
             <ChevronLeft size={19} />
           </IconButton>
+          {allowInfinite && (
+            <IconButton
+              label={loop ? "切换为有限书架" : "切换为无限书架"}
+              active={loop}
+              disabled={!interactive}
+              onClick={() => changeMode(loop ? "finite" : "infinite")}
+            >
+              <InfinityIcon size={19} />
+            </IconButton>
+          )}
           <output aria-live="polite" aria-atomic="true" aria-label="书架位置">
             {String(index + 1).padStart(2, "0")} /{" "}
             {String(source.total).padStart(2, "0")}

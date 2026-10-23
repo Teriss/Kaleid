@@ -683,9 +683,7 @@ export function installVideo(
           });
         }
       }
-      if (
-        ["fullscreen", "escape", "activity", "back", "forward"].includes(action)
-      )
+      if (["fullscreen", "escape", "activity", "back"].includes(action))
         getWindow()?.webContents.send("video:input", {
           sessionId: p.state.sessionId,
           action,
@@ -876,9 +874,7 @@ export function installVideo(
           "f script-message kaleid-input fullscreen",
           "ESC script-message kaleid-input escape",
           "MBTN_BACK script-message kaleid-input back",
-          "MBTN_FORWARD script-message kaleid-input forward",
           "GO_BACK script-message kaleid-input back",
-          "GO_FORWARD script-message kaleid-input forward",
           "MBTN_LEFT script-message kaleid-input toggle-pause",
           "MBTN_LEFT_DBL script-message kaleid-input fullscreen",
           "MOUSE_MOVE script-message kaleid-input activity",

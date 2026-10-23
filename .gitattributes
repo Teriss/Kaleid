@@ -1,2 +1,4 @@
 # Preserve the pinned upstream shader bytes on Windows checkouts.
 scripts/video-shaders/*.glsl -text
+# Preserve the vendored Venera compatibility library checksum.
+vendor/venera/init.js -text

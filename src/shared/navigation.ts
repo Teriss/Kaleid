@@ -6,6 +6,7 @@ export interface BrowseLocation {
     | "type"
     | "libraries"
     | "music"
+    | "comic"
     | "favorites"
     | "recent"
     | "folders";
@@ -19,13 +20,22 @@ export interface BrowseLocation {
   providerId?: string;
   section?: string;
   remoteId?: string;
-  remoteKind?: "playlist" | "album" | "artist";
+  remoteKind?: "playlist" | "album" | "artist" | "comic" | "chapter";
+  comicChapterId?: string | null;
+  searchMode?: "aggregate" | "single";
+  /** Distinguishes independent comic search result pages in the parent stack. */
+  comicSearchId?: string;
+  comicCategory?: string;
+  comicCategoryParam?: unknown;
   serverId?: string;
 }
 
 export type NavigationSurface =
   "viewer" | "music" | "queue" | "match" | "overlay" | "create" | "manage";
-export interface NavigationEntry {
+export type NavigationMode = "root" | "push" | "replace";
+
+/** A restorable page snapshot used by the semantic parent stack. */
+export interface NavigationSnapshot {
   surfaceStack?: NavigationSurface[];
   scope: BrowseLocation;
   memory: BrowseMemory;
@@ -108,116 +118,45 @@ export function parentLibraryLocation(
   };
 }
 
-/** A session history of UI destinations, never commands that mutate media or playback. */
-export class NavigationHistory {
-  private entries: NavigationEntry[] = [];
-  private cursor = -1;
-  get current() {
-    return this.entries[this.cursor];
-  }
+/** Stores only the page that opened the current child; it has no forward path. */
+export class ParentNavigationStack {
+  private parents: NavigationSnapshot[] = [];
   get canBack() {
-    return this.cursor > 0;
-  }
-  get canForward() {
-    return this.cursor + 1 < this.entries.length;
+    return this.parents.length > 0;
   }
   get length() {
-    return this.entries.length;
+    return this.parents.length;
   }
-  static destination(entry: NavigationEntry) {
-    const scope = Object.fromEntries(
-      Object.entries(entry.scope)
-        .filter(
-          ([key, value]) =>
-            value !== undefined && (key !== "search" || Boolean(value)),
-        )
-        .sort(([a], [b]) => a.localeCompare(b)),
-    );
-    return JSON.stringify({
-      scope,
-      viewer: entry.viewer ? { id: entry.viewer.id } : undefined,
-      musicDetailId: entry.musicExpanded ? entry.musicDetailId : undefined,
-      search: entry.search || undefined,
-    });
+  snapshot() {
+    return structuredClone(this.parents);
   }
-  private saved(entry: NavigationEntry): NavigationEntry {
+  restore(parents: readonly NavigationSnapshot[]) {
+    this.parents = parents.map((parent) => this.saved(parent));
+  }
+  private saved(entry: NavigationSnapshot): NavigationSnapshot {
+    const saved = { ...entry };
+    delete saved.manageId;
     return structuredClone({
-      ...entry,
+      ...saved,
       overlay: null,
       settingsSection: "appearance",
       queueOpen: false,
       matchOpen: false,
       createType: null,
-      manageId: undefined,
-      surfaceStack: entry.viewer
-        ? ["viewer"]
-        : entry.musicExpanded
-          ? ["music"]
-          : [],
+      surfaceStack: (entry.surfaceStack ?? []).filter(
+        (surface) => surface === "viewer" || surface === "music",
+      ),
     });
   }
-  record(entry: NavigationEntry) {
-    if (
-      this.current &&
-      NavigationHistory.destination(this.current) ===
-        NavigationHistory.destination(entry)
-    ) {
-      this.replace(entry);
-      return false;
-    }
-    this.entries.splice(this.cursor + 1);
-    this.entries.push(this.saved(entry));
-    this.cursor = this.entries.length - 1;
-    if (this.entries.length > 200) {
-      this.entries.shift();
-      this.cursor--;
-    }
-    return true;
+  push(parent: NavigationSnapshot) {
+    this.parents.push(this.saved(parent));
+    if (this.parents.length > 100) this.parents.shift();
   }
-  replace(entry: NavigationEntry) {
-    if (this.cursor >= 0) this.entries[this.cursor] = this.saved(entry);
+  pop() {
+    const parent = this.parents.pop();
+    return parent ? structuredClone(parent) : null;
   }
-  updateMemory(memory: BrowseMemory) {
-    if (this.current) this.current.memory = structuredClone(memory);
-  }
-  back(parentFallback?: NavigationEntry) {
-    if (this.canBack) return structuredClone(this.entries[--this.cursor]);
-    if (
-      this.cursor !== 0 ||
-      !parentFallback ||
-      NavigationHistory.destination(this.entries[0]) ===
-        NavigationHistory.destination(parentFallback)
-    )
-      return null;
-    // Keep the current and forward entries in place so Forward returns to the
-    // child folder; discard the farthest destination if the journal is full.
-    if (this.entries.length >= 200) this.entries.pop();
-    this.entries.splice(0, 0, structuredClone(parentFallback));
-    this.cursor = 1;
-    return structuredClone(this.entries[--this.cursor]);
-  }
-  forward() {
-    return this.canForward
-      ? structuredClone(this.entries[++this.cursor])
-      : null;
-  }
-  closeSurface(contains: (entry: NavigationEntry) => boolean) {
-    for (let index = this.cursor - 1; index >= 0; index--) {
-      if (!contains(this.entries[index])) {
-        this.cursor = index;
-        return structuredClone(this.entries[index]);
-      }
-    }
-    return null;
-  }
-}
-
-/** A type switch selects a journal; it is never an entry in either journal. */
-export class MediaNavigationHistory {
-  private journals = new Map<string, NavigationHistory>();
-  forType(type: string) {
-    let journal = this.journals.get(type);
-    if (!journal) this.journals.set(type, (journal = new NavigationHistory()));
-    return journal;
+  reset() {
+    this.parents = [];
   }
 }

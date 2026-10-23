@@ -33,6 +33,24 @@ import { report, useApp } from "./store";
 import ComicLibraryPanel from "./ComicLibraryPanel";
 import { ComicImageCache, type ComicImageResource } from "./comicImageCache";
 import "./comic.css";
+import { comicReaderAdapter } from "./comicReaderAdapter";
+
+function formatReaderError(error: unknown) {
+  const raw =
+    error && typeof error === "object" && "message" in error
+      ? String((error as { message: unknown }).message)
+      : String(error);
+  const message = raw
+    .replace(/Error invoking remote method 'comic:call':\s*/g, "")
+    .replace(/^(?:Error:\s*)+/, "")
+    .trim();
+  const stage = message.match(/^(.*?(?:失败|错误)[：:]\s*)/)?.[1] || "";
+  if (/Invalid status code:\s*210|图片请求失败\s*\(210\)/.test(message))
+    return `${stage}漫画源返回 HTTP 210（请求受限）。请按源站提示等待后重试；再次请求可能延长限制时间。`;
+  if (message.includes("Invalid status code: 403"))
+    return `${stage}漫画源拒绝了章节请求（403），可能需要登录或该源暂时无法访问。`;
+  return message || "章节加载失败，请重试。";
+}
 
 function ComicImage({
   page,
@@ -121,11 +139,13 @@ export default function ComicViewer({
   switchItem(item: MediaItem): void;
 }) {
   const settings = useApp((s) => s.settings);
+  const adapter = comicReaderAdapter(item);
   const [pages, setPages] = useState<ComicPage[]>([]);
   const [context, setContext] = useState<ComicContext>();
   const [prefs, setPrefs] = useState(() => comicPreferences(settings));
   const [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
+    [contextWarning, setContextWarning] = useState(""),
     [reload, setReload] = useState(0);
   const [page, setPage] = useState(0),
     [zoom, setZoom] = useState(1),
@@ -184,7 +204,7 @@ export default function ComicViewer({
     lastSave.current = performance.now();
     const value = { ...position.current };
     saveChain.current = saveChain.current
-      .then(() => window.media.saveProgress(item.id, value))
+      .then(() => adapter.saveProgress(item, value))
       .catch(report);
     return saveChain.current;
   }
@@ -207,21 +227,20 @@ export default function ComicViewer({
     ready.current = false;
     setLoading(true);
     setError("");
+    setContextWarning("");
+    setPages([]);
+    setContext(undefined);
     const unloading = () => {
       void flush();
     };
     window.addEventListener("beforeunload", unloading);
-    void Promise.all([
-      window.media.comicPages(item.id, session),
-      window.media.comicContext(item.id),
-    ])
-      .then(([result, ctx]) => {
+    void adapter.pages(item, session)
+      .then((result) => {
         if (!live) return;
+        if (!result.length) throw new Error("漫画源没有返回此章节的图片");
         const index = restoredComicPage(result, position.current);
         setPages(result);
         setPage(index);
-        setContext(ctx);
-        setPrefs(comicPreferences(settings, ctx.preferences));
         position.current = {
           ...position.current,
           page: index,
@@ -234,15 +253,27 @@ export default function ComicViewer({
       })
       .catch((e) => {
         if (live) {
-          setError(String(e));
+          setError(formatReaderError(e));
           setLoading(false);
         }
+      });
+    void adapter.context(item)
+      .then((ctx) => {
+        if (!live) return;
+        setContext(ctx);
+        setPrefs(comicPreferences(settings, ctx.preferences));
+      })
+      .catch((e) => {
+        if (live)
+          setContextWarning(
+            `章节目录加载失败：${formatReaderError(e)}。当前章节仍可阅读。`,
+          );
       });
     return () => {
       live = false;
       window.removeEventListener("beforeunload", unloading);
       void flush().finally(() =>
-        window.media.releaseComic(item.id, session).catch(() => {}),
+        adapter.release(item, session).catch(() => {}),
       );
       clearTimeout(hideTimer.current);
       cancelAnimationFrame(scrollFrame.current);
@@ -315,7 +346,7 @@ export default function ComicViewer({
     setZoom(1);
     setPan({ x: 0, y: 0 });
     prefsSave.current = prefsSave.current
-      .then(() => window.media.saveComicPreferences(item.id, next))
+      .then(() => adapter.preferences(item, next))
       .catch(report);
     if (changes.mode || changes.rtl !== undefined)
       void useApp
@@ -351,7 +382,7 @@ export default function ComicViewer({
     switching.current = true;
     try {
       await flush();
-      const fresh = await window.media.item(target.id);
+      const fresh = await adapter.item(target.id);
       switchItem({
         ...fresh,
         progress:
@@ -492,8 +523,22 @@ export default function ComicViewer({
         void toggleFullscreen();
       }
     };
+    const appBack = () => {
+      if (panel) setPanel(null);
+      else if (zoom !== 1) {
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+      } else {
+        void flush();
+        close();
+      }
+    };
     window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
+    window.addEventListener("comic:back", appBack);
+    return () => {
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("comic:back", appBack);
+    };
   });
   async function toggleFullscreen() {
     try {
@@ -514,7 +559,7 @@ export default function ComicViewer({
       createdAt: Date.now(),
     };
     try {
-      await window.media.saveComicBookmark(bookmark);
+      await adapter.bookmark(item, bookmark);
       setContext((old) =>
         old ? { ...old, bookmarks: [...old.bookmarks, bookmark] } : old,
       );
@@ -629,11 +674,22 @@ export default function ComicViewer({
           }}
         >
           <ArrowLeft size={18} />
-          返回媒体库
+          返回漫画详情
         </button>
         <div className="comic-title">
           <strong>{context?.work?.title ?? item.title}</strong>
-          <small>{context?.work ? item.title : "本地漫画"}</small>
+          <small>
+            {adapter.local
+              ? context?.work
+                ? item.title
+                : "本地漫画"
+              : `${context?.work ? `${item.title} · ` : ""}在线漫画`}
+          </small>
+          {contextWarning && (
+            <span className="comic-reader-warning" role="status">
+              {contextWarning}
+            </span>
+          )}
         </div>
         <div className="comic-actions">
           {toolbar}
@@ -1000,9 +1056,11 @@ export default function ComicViewer({
           )}
           {panel === "chapters" && (
             <div className="comic-chapter-list">
-              <button className="button" onClick={() => setOrganize(true)}>
-                {context?.work ? "整理这部作品" : "设为作品／整理章节"}
-              </button>
+              {adapter.local && (
+                <button className="button" onClick={() => setOrganize(true)}>
+                  {context?.work ? "整理这部作品" : "设为作品／整理章节"}
+                </button>
+              )}
               {context?.chapters.map((c, index) => (
                 <button
                   className={c.id === item.id ? "active" : ""}
@@ -1010,7 +1068,7 @@ export default function ComicViewer({
                   onClick={async () => {
                     if (c.id === item.id) return;
                     await flush();
-                    switchItem(await window.media.item(c.id));
+                    switchItem(await adapter.item(c.id));
                   }}
                 >
                   <span>
@@ -1030,13 +1088,17 @@ export default function ComicViewer({
                   </small>
                 </button>
               ))}
-              <button
-                className="text-button"
-                onClick={() => void window.media.reveal(item.id).catch(report)}
-              >
-                <FolderOpen size={16} />
-                在文件夹中显示
-              </button>
+              {adapter.local && (
+                <button
+                  className="text-button"
+                  onClick={() =>
+                    void window.media.reveal(item.id).catch(report)
+                  }
+                >
+                  <FolderOpen size={16} />
+                  在文件夹中显示
+                </button>
+              )}
             </div>
           )}
           {panel === "bookmarks" && (
@@ -1064,8 +1126,8 @@ export default function ComicViewer({
                     <IconButton
                       label={`删除第 ${mark.page + 1} 页书签`}
                       onClick={() => {
-                        void window.media
-                          .deleteComicBookmark(mark.id)
+                        void adapter
+                          .deleteBookmark(mark.id)
                           .then(() =>
                             setContext((old) =>
                               old
@@ -1092,7 +1154,7 @@ export default function ComicViewer({
           )}
         </aside>
       )}
-      {organize && (
+      {organize && adapter.local && (
         <ComicLibraryPanel
           initialItem={item}
           close={() => {

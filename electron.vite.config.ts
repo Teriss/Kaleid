@@ -15,6 +15,8 @@ export default defineConfig({
         input: {
           index: resolve("src/main/index.ts"),
           worker: resolve("src/main/worker.ts"),
+          comicSourceWorker: resolve("src/main/onlineComics/worker.ts"),
+          comicSourceInstance: resolve("src/main/onlineComics/instance.ts"),
         },
       },
     },

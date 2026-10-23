@@ -3,6 +3,7 @@ import HorizontalGallery from "./layouts/HorizontalGallery";
 import VideoExportTasks from "./VideoExportTasks";
 import VideoPlayer from "./VideoPlayer";
 import ComicLibraryPanel from "./ComicLibraryPanel";
+import OnlineComics from "./OnlineComics";
 import {
   useCallback,
   useEffect,
@@ -14,12 +15,11 @@ import {
 } from "react";
 import {
   ArrowUpRight,
+  BookmarkPlus,
   Check,
   Copy,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Clock3,
   Folder,
   FolderOpen,
   ExternalLink,
@@ -42,10 +42,10 @@ import {
   Images,
 } from "lucide-react";
 import {
-  NavigationHistory,
-  MediaNavigationHistory,
+  ParentNavigationStack,
   parentLibraryLocation,
-  type NavigationEntry,
+  type NavigationSnapshot,
+  type NavigationMode,
   type NavigationSurface,
 } from "../../shared/navigation";
 import type {
@@ -161,9 +161,7 @@ export default function App() {
     () => readLastScope() ?? { view: "type", type: "image" },
   );
   const scopeRef = useRef(scope);
-  const navigateRef = useRef<
-    (next: BrowseScope, rememberScope?: boolean) => void
-  >(() => {});
+  const backRef = useRef<() => void>(() => {});
   const [memory, setMemory] = useState<BrowseMemory>(() => readMemory(scope));
   const memoryRef = useRef(memory);
   const [booted, setBooted] = useState(false);
@@ -175,23 +173,21 @@ export default function App() {
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [settingsSection, setSettingsSection] = useState("appearance");
   const [musicPreview, setMusicPreview] = useState<MediaItem | null>(null);
-  const journals = useRef(new MediaNavigationHistory());
-  const history = useRef(new NavigationHistory());
-  const applyingHistory = useRef(false);
+  const parents = useRef(new ParentNavigationStack());
+  const parentStackRollback = useRef<NavigationSnapshot[] | null>(null);
+  const restoringNavigation = useRef(false);
   const surfaces = useRef<NavigationSurface[]>([]);
   const navigationSerial = useRef(0);
   const typeNavigationSerial = useRef(0);
   const mediaOpenSerial = useRef(0);
-  const [, updateHistoryButtons] = useState(0);
   const closeSurfaceRef = useRef<() => void>(() => {});
-  const historyMoveRef = useRef<(direction: number) => void>(() => {});
   const [createType, setCreateType] = useState<MediaType | null>(null);
   const [manage, setManage] = useState<Library | null>(null);
   const [search, setSearch] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const searchInput = useRef<HTMLInputElement>(null);
   const [viewer, setViewer] = useState<ViewerSession | null>(null);
-  const presentationSnapshot = useRef<NavigationEntry | null>(null);
+  const presentationSnapshot = useRef<NavigationSnapshot | null>(null);
   const [videoPlayback, setVideoPlayback] = useState<{
     item: MediaItem;
     sort: "name" | "added" | "recent";
@@ -232,8 +228,6 @@ export default function App() {
   const [renameItem, setRenameItem] = useState<MediaItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [trashOpen, setTrashOpen] = useState(false);
-  const [clearHistoryOpen, setClearHistoryOpen] = useState(false);
-  const [historyBusy, setHistoryBusy] = useState(false);
   const [trashPreview, setTrashPreview] = useState<
     { title: string; isDirectory: boolean }[]
   >([]);
@@ -258,7 +252,9 @@ export default function App() {
   );
   const previousType =
     (previousNormal?.type as MediaType | undefined) ?? previousLibrary?.type;
-  const currentType = ["type", "libraries", "music"].includes(scope.view)
+  const currentType = ["type", "libraries", "music", "comic"].includes(
+    scope.view,
+  )
     ? (scope.type as MediaType)
     : (activeLibrary?.type ??
       (scope.view === "favorites" || scope.view === "recent"
@@ -284,7 +280,6 @@ export default function App() {
       setMemory(memoryRef.current);
     }
   }, [currentType, scope, memory.layout]);
-  history.current = journals.current.forType(currentType ?? "image");
   if (currentType === "music")
     setPlaybackBrowseOrigin({ ...scope, search: searchTerm });
   const key = scopeKey(scope);
@@ -323,13 +318,13 @@ export default function App() {
               scope.localOnly
                 ? window.media.query(q)
                 : specialPage(scope.view as "favorites" | "recent", q)
-          : scope.view === "libraries"
+          : scope.view === "libraries" || scope.view === "comic"
             ? async () => ({ items: [], total: 0 })
             : undefined,
     [key],
   );
   const media = useMediaSource(query, revision, memoryRef.current, fetchMusic);
-  const wallView = memory.layout === "bravais";
+  const wallView = scope.view !== "comic" && memory.layout === "bravais";
   const musicWall = currentType === "music" && wallView;
   const wallFilter = useMusicWallFilter(
     media.source,
@@ -349,8 +344,7 @@ export default function App() {
     const mouseUp = (event: MouseEvent) => {
       if (event.button !== 3 && event.button !== 4) return;
       event.preventDefault();
-      if (!typing(event) || document.querySelector(".video-player"))
-        historyMoveRef.current(event.button === 3 ? -1 : 1);
+      if (event.button === 3) backRef.current();
     };
     const keyboard = (event: KeyboardEvent) => {
       if (
@@ -374,13 +368,14 @@ export default function App() {
         return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      historyMoveRef.current(event.key === "ArrowLeft" ? -1 : 1);
+      if (event.key === "ArrowLeft") backRef.current();
     };
     window.addEventListener("mousedown", mouseDown, true);
     window.addEventListener("mouseup", mouseUp, true);
     window.addEventListener("keydown", keyboard, true);
-    const videoNavigate = (event: Event) =>
-      historyMoveRef.current((event as CustomEvent).detail === "back" ? -1 : 1);
+    const videoNavigate = (event: Event) => {
+      if ((event as CustomEvent).detail === "back") backRef.current();
+    };
     window.addEventListener("video:navigate", videoNavigate);
     return () => {
       window.removeEventListener("mousedown", mouseDown, true);
@@ -428,11 +423,6 @@ export default function App() {
       if (scopeKey(scopeRef.current) !== key) return;
       memoryRef.current = { ...memoryRef.current, ...patch };
       saveMemory(scope, patch);
-      if (
-        history.current.current &&
-        scopeKey(history.current.current.scope) === key
-      )
-        history.current.updateMemory(memoryRef.current);
     },
     [key],
   );
@@ -455,13 +445,15 @@ export default function App() {
         else if (
           last?.view === "music" ||
           last?.view === "libraries" ||
-          last?.view === "favorites" ||
-          last?.view === "recent"
+          last?.view === "favorites"
         )
           navigate(last, false);
         else
           await activateType(
-            (last?.type as MediaType | undefined) ?? libs[0]?.type ?? "image",
+            (last?.type as MediaType | undefined) ??
+              (readLastNormalScope()?.type as MediaType | undefined) ??
+              libs[0]?.type ??
+              "image",
           );
         if (!live) return;
         setBooted(true);
@@ -616,7 +608,10 @@ export default function App() {
     next: BrowseScope,
     rememberScope = true,
     restoring = false,
+    mode: NavigationMode = "root",
   ) {
+    if (next.view === "recent")
+      next = { view: "type", type: next.type ?? currentType ?? "image" };
     if (cardVideoRef.current && !cardVideoRef.current.expanded)
       stopCardPlayback();
     next = availableScope(next);
@@ -628,7 +623,7 @@ export default function App() {
     ++typeNavigationSerial.current;
     if (!restoring) {
       ++navigationSerial.current;
-      applyingHistory.current = false;
+      restoringNavigation.current = false;
     }
     const resolved: BrowseScope = {
       ...next,
@@ -638,32 +633,25 @@ export default function App() {
           ?.type ??
         currentType,
     };
-    if (booted)
+    const isComicDetail = (location: BrowseScope) =>
+      location.view === "comic" &&
+      Boolean(location.remoteId) &&
+      location.remoteKind !== "chapter";
+    if (booted && (isComicDetail(scopeRef.current) || isComicDetail(resolved)))
+      browseTransition.cancel();
+    else if (booted)
       browseTransition.start(
         snapshotRef.current(),
         resolved,
         readMemory(resolved).layout,
       );
-    if (
-      booted &&
-      !restoring &&
-      scopeKey(resolved) !== scopeKey(scopeRef.current)
-    ) {
-      journals.current.forType(resolved.type ?? currentType ?? "image").record({
-        ...snapshotRef.current(),
-        scope: resolved,
-        memory: readMemory(resolved),
-        search: resolved.search ?? "",
-        viewer: undefined,
-        musicDetailId: undefined,
-        musicExpanded: false,
-        queueOpen: false,
-        matchOpen: false,
-        overlay: null,
-        createType: null,
-        manageId: undefined,
-      });
-      updateHistoryButtons((n) => n + 1);
+    if (booted && !restoring) {
+      const scopeChanged = scopeKey(resolved) !== scopeKey(scopeRef.current);
+      if (scopeChanged && !parentStackRollback.current)
+        parentStackRollback.current = parents.current.snapshot();
+      if (mode === "root") parents.current.reset();
+      else if (mode === "push" && scopeChanged)
+        parents.current.push(snapshotRef.current());
     }
     setNavigationRetry(null);
     flushMemory();
@@ -692,8 +680,6 @@ export default function App() {
     setFocusedEntry(null);
     setContextMenu(null);
   }
-
-  navigateRef.current = navigate;
   useEffect(() => {
     if (!browseTransition.pending) return;
     let frame = 0,
@@ -709,6 +695,10 @@ export default function App() {
         recovering = true;
         const previous = browseTransition.previous(),
           target = browseTransition.target();
+        if (parentStackRollback.current) {
+          parents.current.restore(parentStackRollback.current);
+          parentStackRollback.current = null;
+        }
         if (previous)
           void restoreEntry(previous)
             .then(() => {
@@ -722,7 +712,10 @@ export default function App() {
         report(new Error(media.error));
         return;
       }
-      if (media.ready) void browseTransition.reveal();
+      if (media.ready)
+        void browseTransition.reveal().then(() => {
+          parentStackRollback.current = null;
+        });
       frame = requestAnimationFrame(poll);
     };
     frame = requestAnimationFrame(poll);
@@ -753,13 +746,46 @@ export default function App() {
           },
     );
   }
-  function toggleSpecial(view: "favorites" | "recent") {
+  function toggleSpecial(view: "favorites") {
     if (scope.view === view) returnToPrevious();
     else navigate({ view });
   }
+  function popParentPage() {
+    if (!parentStackRollback.current)
+      parentStackRollback.current = parents.current.snapshot();
+    const parent = parents.current.pop();
+    if (parent) {
+      void restoreEntry(parent).catch(report);
+      return true;
+    }
+    const parentScope = parentLibraryLocation(
+      scopeRef.current,
+      libraries.find((lib) => lib.id === scopeRef.current.libraryId)?.roots,
+    );
+    if (!parentScope) {
+      parentStackRollback.current = null;
+      return false;
+    }
+    const current = snapshotRef.current();
+    void restoreEntry({
+      ...current,
+      surfaceStack: [],
+      scope: parentScope,
+      memory: readMemory(parentScope),
+      search: "",
+      overlay: null,
+      viewer: undefined,
+      musicDetailId: undefined,
+      musicExpanded: false,
+      queueOpen: false,
+      matchOpen: false,
+      createType: null,
+      manageId: undefined,
+    }).catch(report);
+    return true;
+  }
   function goParent() {
-    const parent = parentLibraryLocation(scope, activeLibrary?.roots);
-    if (parent) navigate(parent);
+    popParentPage();
   }
   function changeLayout(layout: MediaLayout) {
     if (cardVideoRef.current && !cardVideoRef.current.expanded)
@@ -777,13 +803,6 @@ export default function App() {
     ++mediaOpenSerial.current;
     remember({ sort, focusId: undefined, focusIndex: 0, scrollTop: 0 });
     setMemory({ ...memoryRef.current, sort });
-  }
-  async function removeRecent(item: MediaItem) {
-    const result = await window.media.removeRecent(item.id);
-    setFocusedEntry((current) =>
-      current?.item.id === item.id ? null : current,
-    );
-    if (result.errors.length) report(new Error(result.errors.join("；")));
   }
   async function open(
     item: MediaItem,
@@ -845,7 +864,7 @@ export default function App() {
             live,
           );
         else if (onlySingle) return false;
-        else navigate(destination);
+        else navigate(destination, true, false, "push");
       } catch (error) {
         if (live()) report(error);
       }
@@ -900,7 +919,13 @@ export default function App() {
           },
           live,
         );
-      } else navigate({ view: "folders", libraryId: scope.libraryId, folder });
+      } else
+        navigate(
+          { view: "folders", libraryId: scope.libraryId, folder },
+          true,
+          false,
+          "push",
+        );
     } catch (error) {
       if (live()) report(error);
     }
@@ -1114,26 +1139,19 @@ export default function App() {
     useApp.getState().touch();
   }, []);
   function closeSurface(fallback: () => void) {
-    if (
-      history.current.current &&
-      scopeKey(history.current.current.scope) === key
-    )
-      history.current.updateMemory(memoryRef.current);
-    const current = snapshotRef.current();
-    const top = current.surfaceStack?.at(-1);
-    if (top !== "viewer" && top !== "music") {
-      fallback();
-      return;
-    }
-    const contains = (entry: NavigationEntry) =>
-      top === "viewer" ? Boolean(entry.viewer) : entry.musicExpanded;
-    const target = history.current.closeSurface(contains);
-    if (target) void restoreEntry(target).catch(report);
-    else fallback();
+    fallback();
+    const active = snapshotRef.current().surfaceStack ?? [];
+    surfaces.current = surfaces.current.filter((surface) =>
+      active.includes(surface),
+    );
   }
   closeSurfaceRef.current = () => {
     if (usePlayback.getState().queueVisible) {
       usePlayback.setState({ queueVisible: false });
+      return;
+    }
+    if (usePlayback.getState().matchOpen) {
+      usePlayback.setState({ matchOpen: false });
       return;
     }
     closeSurface(() => {
@@ -1152,6 +1170,15 @@ export default function App() {
   }
   async function activateType(type: MediaType) {
     const serial = ++typeNavigationSerial.current;
+    if (type === "comic") {
+      navigate({
+        view: "comic",
+        type: "comic",
+        section: "home",
+        providerId: localStorage.getItem("comic:active-source") || undefined,
+      });
+      return;
+    }
     const members = useApp
       .getState()
       .libraries.filter((lib) => lib.type === type);
@@ -1173,7 +1200,7 @@ export default function App() {
       navigate({ view: "library", libraryId: members[0].id, type });
     else navigate({ view: "libraries", type });
   }
-  function snapshot(): NavigationEntry {
+  function snapshot(): NavigationSnapshot {
     window.dispatchEvent(new Event("wall:flush"));
     const active: NavigationSurface[] = [];
     if (viewer || presentationSnapshot.current?.viewer) active.push("viewer");
@@ -1209,19 +1236,17 @@ export default function App() {
       manageId: manage?.id,
     };
   }
-  const snapshotRef = useRef<() => NavigationEntry>(() => snapshot());
+  const snapshotRef = useRef<() => NavigationSnapshot>(() => snapshot());
   snapshotRef.current = snapshot;
   useLayoutEffect(() => {
     if (
       !booted ||
-      applyingHistory.current ||
+      restoringNavigation.current ||
       (browseTransition.pending && !media.ready)
     )
       return;
     saveLastScope({ ...scope, search: searchTerm });
     saveLastNormalScope({ ...scope, search: searchTerm });
-    if (history.current.record(snapshotRef.current()))
-      updateHistoryButtons((n) => n + 1);
   }, [
     booted,
     browseTransition.pending,
@@ -1240,9 +1265,9 @@ export default function App() {
     createType,
     manage?.id,
   ]);
-  async function restoreEntry(entry: NavigationEntry) {
+  async function restoreEntry(entry: NavigationSnapshot) {
     const serial = ++navigationSerial.current;
-    applyingHistory.current = true;
+    restoringNavigation.current = true;
     try {
       let next = entry.scope;
       if (next.libraryId) {
@@ -1334,15 +1359,28 @@ export default function App() {
     } finally {
       if (serial === navigationSerial.current)
         requestAnimationFrame(() => {
-          applyingHistory.current = false;
-          history.current.replace(snapshotRef.current());
-          updateHistoryButtons((n) => n + 1);
+          restoringNavigation.current = false;
         });
     }
   }
-  historyMoveRef.current = (direction) => {
+  function goBack() {
+    const dialogs = document.querySelectorAll<HTMLDialogElement>(
+      "dialog[open]",
+    );
+    const topDialog = dialogs.item(dialogs.length - 1);
+    if (topDialog) {
+      topDialog.dispatchEvent(new Event("cancel", { cancelable: true }));
+      return;
+    }
     if (overlay) {
       setOverlay(null);
+      return;
+    }
+    const wallSearchClose = document.querySelector<HTMLButtonElement>(
+      ".music-wall-menu.is-search button[aria-label^='关闭']",
+    );
+    if (wallSearchClose) {
+      wallSearchClose.click();
       return;
     }
     if (createType || manage) {
@@ -1351,11 +1389,8 @@ export default function App() {
       return;
     }
     if (matchOpen || queueVisible) {
-      usePlayback.setState({ matchOpen: false, queueVisible: false });
-      return;
-    }
-    if (direction < 0 && viewer?.item.type === "video") {
-      closeViewer();
+      if (matchOpen) usePlayback.setState({ matchOpen: false });
+      else usePlayback.setState({ queueVisible: false });
       return;
     }
     const platformMenu = document.querySelector<HTMLDetailsElement>(
@@ -1363,10 +1398,6 @@ export default function App() {
     );
     if (platformMenu) {
       platformMenu.open = false;
-      return;
-    }
-    if (clearHistoryOpen) {
-      setClearHistoryOpen(false);
       return;
     }
     if (contextMenu) {
@@ -1378,39 +1409,34 @@ export default function App() {
       setRenameItem(null);
       return;
     }
-    if (
-      history.current.current &&
-      scopeKey(history.current.current.scope) === key
-    )
-      history.current.updateMemory(memoryRef.current);
-    let parentFallback: NavigationEntry | undefined;
-    if (direction < 0 && !history.current.canBack) {
-      const parent = parentLibraryLocation(scope, activeLibrary?.roots);
-      if (parent) {
-        const current = snapshotRef.current();
-        parentFallback = {
-          ...current,
-          surfaceStack: [],
-          scope: parent,
-          memory: readMemory(parent),
-          search: "",
-          overlay: null,
-          viewer: undefined,
-          musicDetailId: undefined,
-          musicExpanded: false,
-          queueOpen: false,
-          matchOpen: false,
-          createType: null,
-          manageId: undefined,
-        };
-      }
+    if (scopeRef.current.view === "comic" && scopeRef.current.remoteKind === "chapter") {
+      window.dispatchEvent(new Event("comic:back"));
+      return;
     }
-    const entry =
-      direction < 0
-        ? history.current.back(parentFallback)
-        : history.current.forward();
-    if (entry) void restoreEntry(entry).catch(report);
-  };
+    if (activeVideo) {
+      window.dispatchEvent(new Event("video:back"));
+      return;
+    }
+    if (viewer?.item.type === "video") {
+      setVideoPlayback(null);
+      closeViewer();
+      return;
+    }
+    if (viewer) {
+      closeViewer();
+      return;
+    }
+    if (musicPreview) {
+      closeSurface(() => setMusicPreview(null));
+      return;
+    }
+    if (playerExpanded) {
+      closeSurface(() => usePlayback.setState({ expanded: false }));
+      return;
+    }
+    popParentPage();
+  }
+  backRef.current = goBack;
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
       if (
@@ -1427,7 +1453,7 @@ export default function App() {
           clearFocus();
           return;
         }
-        historyMoveRef.current(-1);
+        goBack();
       }, 0);
     };
     window.addEventListener("keydown", escape);
@@ -1469,24 +1495,6 @@ export default function App() {
             : currentType
               ? typeInfo(currentType).name
               : "全部";
-  const currentRoot =
-    scope.folder &&
-    activeLibrary?.roots.find((root) => {
-      const source = root.replace(/[\\/]+$/, "").toLowerCase();
-      const folder = scope.folder!.replace(/[\\/]+$/, "").toLowerCase();
-      return (
-        folder === source ||
-        folder.startsWith(`${source}\\`) ||
-        folder.startsWith(`${source}/`)
-      );
-    });
-  const folderSegments =
-    currentRoot && scope.folder
-      ? scope.folder
-          .slice(currentRoot.length)
-          .split(/[\\/]+/)
-          .filter(Boolean)
-      : [];
   const blocked = Boolean(
     overlay ||
     createType ||
@@ -1495,7 +1503,6 @@ export default function App() {
     musicPreview ||
     playerExpanded ||
     contextMenu ||
-    clearHistoryOpen ||
     trashOpen ||
     renameItem,
   );
@@ -1648,6 +1655,7 @@ export default function App() {
   }, [contextMenu]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (scope.view === "comic") return;
       const target = event.target as HTMLElement;
       const typing =
         ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName) ||
@@ -1820,25 +1828,6 @@ export default function App() {
   );
   const actions = (
     <>
-      <span className="navigation-history-controls">
-        <IconButton
-          label="后退"
-          disabled={
-            !history.current.canBack &&
-            !parentLibraryLocation(scope, activeLibrary?.roots)
-          }
-          onClick={() => historyMoveRef.current(-1)}
-        >
-          <ChevronLeft size={17} />
-        </IconButton>
-        <IconButton
-          label="前进"
-          disabled={!history.current.canForward}
-          onClick={() => historyMoveRef.current(1)}
-        >
-          <ChevronRight size={17} />
-        </IconButton>
-      </span>
       <IconButton
         label="媒体库"
         active={scope.view === "library"}
@@ -1849,20 +1838,23 @@ export default function App() {
       <IconButton
         label="收藏"
         active={scope.view === "favorites"}
-        onClick={() => toggleSpecial("favorites")}
+        onClick={() =>
+          scope.view === "comic"
+            ? navigate({
+                view: "comic",
+                type: "comic",
+                providerId: scope.providerId,
+                section: "favorites",
+              })
+            : toggleSpecial("favorites")
+        }
       >
         <Heart size={17} />
       </IconButton>
       <IconButton
-        label="最近打开"
-        active={scope.view === "recent"}
-        onClick={() => toggleSpecial("recent")}
-      >
-        <Clock3 size={17} />
-      </IconButton>
-      <IconButton
         label="文件夹"
         active={scope.view === "folders"}
+        disabled={scope.view === "comic"}
         onClick={() => setOverlay("folders")}
       >
         <FolderOpen size={17} />
@@ -1870,21 +1862,28 @@ export default function App() {
       <IconButton
         label="搜索"
         active={Boolean(searchTerm)}
-        onClick={() => (wallView ? openWallSearch() : setOverlay("search"))}
+        onClick={() =>
+          scope.view === "comic"
+            ? navigate({
+                view: "comic",
+                type: "comic",
+                providerId: scope.providerId,
+                section: "search",
+                searchMode: "aggregate",
+                remoteId: undefined,
+                remoteKind: undefined,
+                comicChapterId: undefined,
+              })
+            : wallView
+              ? openWallSearch()
+              : setOverlay("search")
+        }
       >
         <Search size={17} />
       </IconButton>
       <IconButton label="显示方式" onClick={() => setOverlay("layout")}>
         <Grid2X2 size={17} />
       </IconButton>
-      {currentType === "comic" && (
-        <IconButton
-          label="漫画作品与章节"
-          onClick={() => setComicOrganizer(null)}
-        >
-          <PanelsTopLeft size={17} />
-        </IconButton>
-      )}
       <IconButton label="设置" onClick={() => setOverlay("settings")}>
         <Settings size={17} />
       </IconButton>
@@ -1906,135 +1905,41 @@ export default function App() {
             type: currentType,
             search: value,
           },
+      true,
+      false,
+      remoteMusic ? "push" : "replace",
     );
   }
-  const basicContentNavigation = (
-    <div className="content-navigation-body">
-      {libraries.length > 0 && !remoteMusic && scope.view !== "recent" && (
-        <div
-          className={`scope-pill ${settings.navigationPosition === "left" ? "left-scope" : sideNavigation ? "wall-scope" : ""}`}
-        >
-          <button
-            aria-label="切换媒体库"
-            onClick={() => setOverlay("libraries")}
-          >
-            {title}
-            <ChevronDown size={11} />
-          </button>
-          {scope.view === "library" && scope.folder && currentRoot && (
-            <div className="folder-breadcrumbs" aria-label="文件夹路径">
-              <button aria-label="返回上级文件夹" onClick={goParent}>
-                <ChevronLeft size={13} />
-              </button>
-              <button
-                onClick={() =>
-                  navigate({
+  const basicContentNavigation =
+    currentType === "music" &&
+    (musicWall ||
+      (scope.view !== "favorites" && scope.view !== "recent")) ? (
+      <div className="content-navigation-body">
+        <MusicSources
+          wall={musicWall && remoteMusic}
+          filter={wallFilter}
+          submitSearch={submitWallSearch}
+          settings={() => setOverlay("settings")}
+          scope={scope}
+          navigate={navigate}
+          local={() => {
+            const members = libraries.filter((lib) => lib.type === "music");
+            navigate(
+              members.length === 1
+                ? {
                     view: "library",
-                    libraryId: scope.libraryId,
-                    folder:
-                      activeLibrary?.roots.length === 1
-                        ? undefined
-                        : currentRoot,
-                  })
-                }
-              >
-                {currentRoot.split(/[\\/]/).filter(Boolean).at(-1)}
-              </button>
-              {folderSegments.map((segment, index) => {
-                const separator = currentRoot.includes("\\") ? "\\" : "/";
-                const base = /[\\/]$/.test(currentRoot)
-                  ? currentRoot
-                  : `${currentRoot}${separator}`;
-                const prefix = folderSegments
-                  .slice(0, index + 1)
-                  .join(separator);
-                const current = `${base}${prefix}`;
-                return (
-                  <span className="breadcrumb-part" key={current}>
-                    <small>›</small>
-                    <button
-                      onClick={() =>
-                        navigate({
-                          view: "library",
-                          libraryId: scope.libraryId,
-                          folder: current,
-                        })
-                      }
-                    >
-                      {segment}
-                    </button>
-                  </span>
-                );
-              })}
-            </div>
-          )}
-          {memory.layout === "bravais" && currentType !== "image" && (
-            <button
-              className="seam-search"
-              aria-label="搜索当前内容"
-              onClick={() => setOverlay("search")}
-            >
-              <Search size={14} />
-              搜索
-            </button>
-          )}
-          {searchTerm && (
-            <button
-              aria-label="清除搜索"
-              onClick={() => {
-                setSearch("");
-                setSearchTerm("");
-              }}
-            >
-              <Search size={11} />
-              {searchTerm}
-              <X size={11} />
-            </button>
-          )}
-          {(scope.view === "library" || scope.view === "type") && (
-            <select
-              aria-label="排序方式"
-              value={memory.sort}
-              onChange={(event) =>
-                changeSort(event.target.value as BrowseMemory["sort"])
-              }
-            >
-              <option value="added">最近添加</option>
-              <option value="name">名称</option>
-              <option value="recent">最近打开</option>
-            </select>
-          )}
-        </div>
-      )}
-      {currentType === "music" &&
-        (musicWall ||
-          (scope.view !== "favorites" && scope.view !== "recent")) && (
-          <MusicSources
-            wall={musicWall && remoteMusic}
-            filter={wallFilter}
-            submitSearch={submitWallSearch}
-            settings={() => setOverlay("settings")}
-            scope={scope}
-            navigate={navigate}
-            local={() => {
-              const members = libraries.filter((lib) => lib.type === "music");
-              navigate(
-                members.length === 1
-                  ? {
-                      view: "library",
-                      type: "music",
-                      libraryId: members[0].id,
-                    }
-                  : { view: "libraries", type: "music" },
-              );
-            }}
-            accountOpen={overlay === "music-account"}
-            account={() => setOverlay("music-account")}
-            closeAccount={closeOverlay}
-          />
-        )}
-    </div>
-  );
+                    type: "music",
+                    libraryId: members[0].id,
+                  }
+                : { view: "libraries", type: "music" },
+            );
+          }}
+          accountOpen={overlay === "music-account"}
+          account={() => setOverlay("music-account")}
+          closeAccount={closeOverlay}
+        />
+      </div>
+    ) : null;
   const contentNavigation =
     wallView && scope.view !== "libraries" && (!musicWall || !remoteMusic) ? (
       <div className="content-navigation-body">
@@ -2099,13 +2004,6 @@ export default function App() {
             >
               {musicWall ? "我喜欢的音乐" : "收藏"}
             </button>
-            <button
-              onClick={() =>
-                navigate({ view: "recent", type: currentType, localOnly: true })
-              }
-            >
-              最近
-            </button>
           </nav>
           <div className="music-wall-bottom">
             <select
@@ -2130,7 +2028,9 @@ export default function App() {
             {searchTerm && (
               <button
                 aria-label="清除搜索"
-                onClick={() => navigate({ ...scope, search: undefined })}
+                onClick={() =>
+                  navigate({ ...scope, search: undefined }, true, false, "replace")
+                }
               >
                 {searchTerm} ×
               </button>
@@ -2160,7 +2060,7 @@ export default function App() {
     open: (item: MediaItem, index: number) => {
       if (memory.layout === "recordCrate" && item.kind === "collection") {
         remember({ focusId: item.id, focusIndex: index });
-        navigate(collectionLocation(item));
+        navigate(collectionLocation(item), true, false, "push");
         return;
       }
       if (
@@ -2237,7 +2137,6 @@ export default function App() {
           : index,
         event,
       ),
-    removeRecent: scope.view === "recent" ? removeRecent : undefined,
     interactive: !blocked,
     reducedMotion: settings.reducedMotion,
   };
@@ -2272,6 +2171,10 @@ export default function App() {
     empty: wallEmpty,
     filter: { query: wallFilter.query, clear: () => wallFilter.update("") },
   };
+  const canReturnToParent =
+    scope.view !== "comic" &&
+    (parents.current.canBack ||
+      Boolean(parentLibraryLocation(scope, activeLibrary?.roots)));
   const persistentWall = (
     <div
       className="layout-surface"
@@ -2290,7 +2193,27 @@ export default function App() {
     >
       <div className="window-drag" aria-hidden="true" />
       <div className="browser-content" inert={blocked}>
-        {booted && wallView && scope.view !== "libraries" && !bootError ? (
+        {booted && scope.view === "comic" ? (
+          <OnlineComics
+            scope={scope}
+            navigate={(next, mode = "root") =>
+              navigate(next, true, false, mode)
+            }
+            onBack={popParentPage}
+            memory={memory}
+            remember={remember}
+            local={() =>
+              navigate(
+                { view: "libraries", type: "comic" },
+                true,
+                false,
+                "push",
+              )
+            }
+            openLocal={(item) => void open(item, 0)}
+            openLayout={() => setOverlay("layout")}
+          />
+        ) : booted && wallView && scope.view !== "libraries" && !bootError ? (
           persistentWall
         ) : !booted ||
           (!media.ready &&
@@ -2335,7 +2258,7 @@ export default function App() {
                     view: "library",
                     libraryId: lib.id,
                     type: lib.type,
-                  })
+                  }, true, false, "push")
                 }
                 create={() =>
                   setCreateType((scope.type as MediaType) ?? "image")
@@ -2354,7 +2277,7 @@ export default function App() {
                           view: "library",
                           libraryId: lib.id,
                           type: lib.type,
-                        })
+                        }, true, false, "push")
                       }
                     >
                       <FolderOpen size={25} />
@@ -2460,6 +2383,7 @@ export default function App() {
         <AutoHideNavigation
           edge={settings.navigationPosition}
           locked={Boolean(overlay)}
+          alwaysAutoHide={scope.view === "comic"}
           className="main-chrome"
         >
           {sideNavigation ? (
@@ -2494,28 +2418,30 @@ export default function App() {
             </header>
           )}
         </AutoHideNavigation>
-        {scope.view === "recent" && (
-          <div className="recent-toolbar">
-            <span>最近打开</span>
+        {canReturnToParent && (
+          <nav className="browse-back-nav" aria-label="返回导航">
             <button
-              className="text-button"
-              aria-label="清空历史记录"
-              onClick={() => setClearHistoryOpen(true)}
+              type="button"
+              className="text-button browse-back-button"
+              aria-label="返回上一级"
+              onClick={goBack}
             >
-              <Trash2 size={14} />
-              清空历史记录
+              <ChevronLeft size={17} />
+              <span>返回上一级</span>
             </button>
-          </div>
+          </nav>
         )}
-        {(!wallView || scope.view === "libraries") && (
-          <AutoHideNavigation
-            edge="top"
-            className="content-chrome"
-            locked={Boolean(overlay)}
-          >
-            {contentNavigation}
-          </AutoHideNavigation>
-        )}
+        {contentNavigation &&
+          scope.view !== "comic" &&
+          (!wallView || scope.view === "libraries") && (
+            <AutoHideNavigation
+              edge="top"
+              className="content-chrome"
+              locked={Boolean(overlay)}
+            >
+              {contentNavigation}
+            </AutoHideNavigation>
+          )}
         {activeScans.length > 0 && (
           <div className="scan-capsule">
             <LoaderCircle size={12} className="spin" />
@@ -2546,7 +2472,9 @@ export default function App() {
         {navigationRetry && (
           <button
             className="page-retry"
-            onClick={() => navigate(navigationRetry)}
+            onClick={() =>
+              navigate(navigationRetry, true, false, "replace")
+            }
           >
             页面未能载入，重试
           </button>
@@ -2584,17 +2512,20 @@ export default function App() {
             }}
           >
             <div className="context-heading">{contextMenu.item.title}</div>
-            {scope.view === "recent" && (
+            {contextMenu.item.type === "comic" && !contextMenu.item.kind && (
               <button
                 role="menuitem"
                 onClick={() => {
                   const item = contextMenu.item;
                   setContextMenu(null);
-                  void removeRecent(item).catch(report);
+                  void window.media.comicHub
+                    .set("readLater", { kind: "local", mediaId: item.id }, true)
+                    .then(() => useApp.getState().notify("已加入稍后阅读"))
+                    .catch(report);
                 }}
               >
-                <X size={15} />
-                <span>从历史记录移除</span>
+                <BookmarkPlus size={15} />
+                <span>加入稍后阅读</span>
               </button>
             )}
             {contextMenu.item.type === "music" && !contextMenu.item.kind && (
@@ -2842,56 +2773,12 @@ export default function App() {
         libraries={libraries}
       />
       <Player
-        browseMusic={navigate}
+        browseMusic={(next) => navigate(next, true, false, "push")}
         closeUI={closeSurface}
         closeDetail={() =>
           closeSurface(() => usePlayback.setState({ expanded: false }))
         }
       />
-      {clearHistoryOpen && (
-        <Modal
-          title="清空历史记录？"
-          className="confirm-modal"
-          close={() => {
-            setClearHistoryOpen(false);
-          }}
-        >
-          <p className="confirm-content">
-            清空全部最近打开记录，保留文件、收藏、书签和阅读进度。
-          </p>
-          <footer>
-            <button
-              className="button secondary"
-              disabled={historyBusy}
-              onClick={() => setClearHistoryOpen(false)}
-            >
-              取消
-            </button>
-            <button
-              className="button danger-button"
-              disabled={historyBusy}
-              onClick={async () => {
-                setHistoryBusy(true);
-                try {
-                  const result = await window.media.clearRecent();
-                  setClearHistoryOpen(false);
-                  useApp
-                    .getState()
-                    .notify(`已清空 ${result.cleared} 条历史记录`);
-                  if (result.errors.length)
-                    report(new Error(result.errors.join("；")));
-                } catch (error) {
-                  report(error);
-                } finally {
-                  setHistoryBusy(false);
-                }
-              }}
-            >
-              确认清空
-            </button>
-          </footer>
-        </Modal>
-      )}
       {musicPreview && (
         <div className="music-stage music-detail-preview">
           <header>
@@ -3100,6 +2987,36 @@ export default function App() {
               ),
             )}
           </div>
+          {(scope.view === "library" || scope.view === "type") && (
+            <div className="layout-browse-options">
+              <label htmlFor="browse-sort">排序方式</label>
+              <select
+                id="browse-sort"
+                value={memory.sort}
+                onChange={(event) =>
+                  changeSort(event.target.value as BrowseMemory["sort"])
+                }
+              >
+                <option value="added">最近添加</option>
+                <option value="name">名称</option>
+                <option value="recent">最近打开</option>
+              </select>
+            </div>
+          )}
+          {currentType === "comic" && scope.view === "library" && (
+            <button
+              type="button"
+              className="layout-comic-organizer"
+              onClick={() => {
+                setOverlay(null);
+                setComicOrganizer(null);
+              }}
+            >
+              <PanelsTopLeft size={17} />
+              <span>漫画作品与章节</span>
+              <ChevronRight size={15} />
+            </button>
+          )}
         </Modal>
       )}
       {overlay === "search" && (

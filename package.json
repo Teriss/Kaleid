@@ -24,7 +24,9 @@
     "predist": "npm run icons",
     "predist:dir": "npm run icons",
     "format": "prettier --write src scripts *.ts *.json README.md",
-    "source:bundle": "node scripts/package-source.mjs"
+    "source:bundle": "node scripts/package-source.mjs",
+    "audit:comic:sources": "node --experimental-transform-types scripts/audit-comic-sources.mjs",
+    "audit:comic:sources:app": "node scripts/audit-comic-sources-app.mjs"
   },
   "build": {
     "electronDist": "node_modules/electron/dist",
@@ -43,6 +45,10 @@
       "vendor/folia/shared/**/*",
       "vendor/folia/ADAPTATIONS.md",
       "vendor/wenku8/**/*",
+      "vendor/venera/init.js",
+      "vendor/venera/LICENSE",
+      "vendor/venera/UPSTREAM.json",
+      "vendor/venera/ADAPTATIONS.md",
       "LICENSE",
       "THIRD_PARTY_NOTICES.md"
     ],
@@ -121,6 +127,7 @@
     "bodian-music-api": "0.1.2",
     "budoux": "0.9.3",
     "chardet": "^2.2.0",
+    "cheerio": "1.2.0",
     "dexie": "4.4.6",
     "dompurify": "^3.4.17",
     "epubjs": "^0.3.93",
@@ -138,6 +145,7 @@
     "opencc-js": "1.4.2",
     "pinyin-pro": "3.29.3",
     "pixi.js": "8.21.0",
+    "quickjs-emscripten": "0.32.0",
     "react": "^19.3.1",
     "react-colorful": "5.8.1",
     "react-dom": "^19.3.1",

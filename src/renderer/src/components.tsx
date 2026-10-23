@@ -99,18 +99,20 @@ export function Modal({
   children,
   close,
   className = "",
+  dismissible = true,
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   close(): void;
   className?: string;
+  dismissible?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const closing = useRef(false);
   const reducedMotion = useApp((state) => state.settings.reducedMotion);
   const closeAnimated = () => {
-    if (closing.current) return;
+    if (closing.current || !dismissible) return;
     closing.current = true;
     if (reducedMotion || !ref.current) {
       close();
@@ -163,9 +165,11 @@ export function Modal({
           <h2>{title}</h2>
           {subtitle && <p>{subtitle}</p>}
         </div>
-        <IconButton label="关闭" onClick={closeAnimated}>
-          <X size={20} />
-        </IconButton>
+        {dismissible && (
+          <IconButton label="关闭" onClick={closeAnimated}>
+            <X size={20} />
+          </IconButton>
+        )}
       </header>
       {children}
     </dialog>

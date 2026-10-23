@@ -18,6 +18,7 @@ import { Readable } from "node:stream";
 import { byteRange, isWithin, normalized } from "./core";
 import { EXTENSIONS } from "./core";
 import { installMusic } from "./music";
+import { installOnlineComics } from "./onlineComics";
 import { installVideo } from "./video";
 import { installVideoOverlay } from "./videoOverlay";
 import type { MediaQuery, Settings } from "../shared/types";
@@ -239,6 +240,7 @@ void app
       call,
       () => appTheme,
     );
+    const onlineComics = installOnlineComics(() => window, here);
     const videoOverlay = installVideoOverlay(() => window);
     const videoService = installVideo(() => window, call, videoOverlay);
     service = utilityProcess.fork(path.join(here, "worker.js"), [], {
@@ -295,6 +297,8 @@ void app
       }
     });
     protocol.handle("media", async (request) => {
+      if (new URL(request.url).host === "comic")
+        return onlineComics.resource(request);
       const cors = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, HEAD",
@@ -534,6 +538,7 @@ void app
         };
       }
       if (!forwarded.has(method)) throw new Error("不支持的操作");
+      if (method === "clearCache") await onlineComics.clearCache();
       if (method === "addRoots") args[1] = await validatedRoots(args[1]);
       if (method === "saveSettings") {
         args[0] = {

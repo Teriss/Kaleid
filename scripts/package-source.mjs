@@ -13,11 +13,16 @@ async function collect(target) {
     );
 }
 for (const name of [
+  ".gitattributes",
   "src",
   "native/video-host/Program.cs",
   "native/video-host/VideoHost.csproj",
   "scripts/prepare-video.mjs",
   "scripts/prepare-comic.mjs",
+  "scripts/audit-comic-sources.mjs",
+  "scripts/audit-comic-sources-app.mjs",
+  "scripts/merge-comic-source-report.mjs",
+  "scripts/comic-sources-baseline.json",
   "scripts/comic-runtime.json",
   "scripts/video-runtime.json",
   "scripts/video-licenses",
@@ -37,6 +42,7 @@ for (const name of [
   "docs/wall-engine.md",
   "docs/video-playback.md",
   "docs/comic-reader.md",
+  "docs/online-comics.md",
   "docs/navigation-and-music-wall.md",
   "package.json",
   "package-lock.json",

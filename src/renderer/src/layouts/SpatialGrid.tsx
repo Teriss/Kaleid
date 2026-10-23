@@ -34,6 +34,7 @@ export default function SpatialGrid({
   reducedMotion,
   interactive,
   forceCarousel = false,
+  onReachEnd,
 }: LayoutProps & { forceCarousel?: boolean }) {
   const { ref, width, height } = useViewport();
   const scene = forceCarousel
@@ -85,12 +86,15 @@ export default function SpatialGrid({
   const [camera, setCamera] = useState(
     memory.spatialCamera ?? { x: initial.baseX, y: initial.baseY },
   );
+  const reachEndRef = useRef(onReachEnd);
+  reachEndRef.current = onReachEnd;
   const flow = useCoverFlow(
     source.total,
     memory.carouselPosition ?? index,
     reducedMotion,
     (value) => {
       setIndex(value);
+      if (value >= source.total - 3) reachEndRef.current?.();
       remember({
         carouselPosition: value,
         focusIndex: value,

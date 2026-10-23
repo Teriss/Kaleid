@@ -161,10 +161,9 @@ export function useVideoOverlay(
       up();
       if (event.button !== 3 && event.button !== 4) return;
       event.preventDefault();
+      if (event.button !== 3) return;
       window.dispatchEvent(
-        new CustomEvent("video:navigate", {
-          detail: event.button === 3 ? "back" : "forward",
-        }),
+        new CustomEvent("video:navigate", { detail: "back" }),
       );
     };
     const keyboard = (event: KeyboardEvent) => {
@@ -178,10 +177,9 @@ export function useVideoOverlay(
         return;
       event.preventDefault();
       event.stopImmediatePropagation();
+      if (event.key === "ArrowRight") return;
       window.dispatchEvent(
-        new CustomEvent("video:navigate", {
-          detail: event.key === "ArrowLeft" ? "back" : "forward",
-        }),
+        new CustomEvent("video:navigate", { detail: "back" }),
       );
     };
     const unload = () => {

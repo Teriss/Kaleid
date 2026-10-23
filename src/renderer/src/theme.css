@@ -292,18 +292,9 @@ body {
 .archive-shelf {
   color: var(--app-text);
 }
-.archive-heading,
-.archive-mode button,
 .archive-pagination output,
 .archive-open small {
   color: var(--app-muted);
-}
-.archive-heading i {
-  background: var(--app-line);
-}
-.archive-mode button[aria-pressed="true"] {
-  color: var(--app-text);
-  background: var(--app-line);
 }
 .archive-open:hover strong {
   color: var(--app-text);
