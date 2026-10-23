@@ -10,8 +10,10 @@ import { act, useApp } from "./store";
 
 export default function ReaderPreferences({
   compact = false,
+  hideMode = false,
 }: {
   compact?: boolean;
+  hideMode?: boolean;
 }) {
   const { settings, setSettings } = useApp();
   const update = (patch: Partial<typeof settings>) =>
@@ -143,21 +145,23 @@ export default function ReaderPreferences({
           />
           <output>{settings.readerPadding}%</output>
         </label>
-        <label className="reader-pref-row">
-          <span>阅读方式</span>
-          <select
-            aria-label="小说翻页模式"
-            value={settings.readerMode}
-            onChange={(event) =>
-              update({
-                readerMode: event.target.value as typeof settings.readerMode,
-              })
-            }
-          >
-            <option value="scroll">连续滚动</option>
-            <option value="paged">分页翻页</option>
-          </select>
-        </label>
+        {!hideMode && (
+          <label className="reader-pref-row">
+            <span>阅读方式</span>
+            <select
+              aria-label="小说翻页模式"
+              value={settings.readerMode}
+              onChange={(event) =>
+                update({
+                  readerMode: event.target.value as typeof settings.readerMode,
+                })
+              }
+            >
+              <option value="scroll">连续滚动</option>
+              <option value="paged">分页翻页</option>
+            </select>
+          </label>
+        )}
       </section>
 
       <button type="button" className="reader-pref-reset" onClick={reset}>

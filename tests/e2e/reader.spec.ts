@@ -211,7 +211,27 @@ test.afterAll(async () => {
   await devServer?.close();
 });
 
+async function showReaderMenu() {
+  if (await page.locator(".reader-bottom-panel").count()) return;
+  if (await page.locator(".reader-selecting").count())
+    await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "阅读菜单", exact: true }),
+  ).toBeVisible();
+}
+async function readerAction(name: string) {
+  if (name === "退出文字选择") {
+    await page.keyboard.press("Escape");
+    await showReaderMenu();
+    return;
+  }
+  await showReaderMenu();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
 async function openBook(title: string) {
+  if (await page.locator(".reader").count()) await readerAction("返回媒体库");
   const libraryPicker = page.locator(".library-picker");
   const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const target = page
@@ -246,6 +266,11 @@ async function openBook(title: string) {
     }
   }
   await expect(page.locator(".reader")).toBeVisible();
+  await expect(
+    page.locator(".reader-topbar, .reader-footer, .reader-bottom-panel"),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("阅读进度文本", { exact: true })).toBeVisible();
+  await showReaderMenu();
 }
 
 test("TXT presets, drag paging, text selection, bookmarks and text-offset restore", async () => {
@@ -265,7 +290,7 @@ test("TXT presets, drag paging, text selection, bookmarks and text-offset restor
   });
   expect(horizontalPadding[0]).toBe(horizontalPadding[1]);
 
-  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
+  await readerAction("阅读外观");
   await expect(page.getByLabel("左右留白")).toBeVisible();
   await page.getByRole("radio", { name: "暖棕", exact: true }).click();
   await expect(page.locator(".reader")).toHaveCSS(
@@ -273,6 +298,7 @@ test("TXT presets, drag paging, text selection, bookmarks and text-offset restor
     "rgb(233, 221, 200)",
   );
   await page.getByLabel("小说翻页模式").selectOption("paged");
+  await page.getByRole("button",{name:"关闭阅读菜单",exact:true}).click();
   const textBox = (await page.locator(".text-scroll").boundingBox())!;
   const before = await page
     .locator(".text-scroll")
@@ -304,7 +330,7 @@ test("TXT presets, drag paging, text selection, bookmarks and text-offset restor
     )
     .toBeGreaterThan(beforeKeyboardPage);
 
-  await page.getByRole("button", { name: "选择文字", exact: true }).click();
+  await readerAction("选择文字");
   const paragraph = page.locator(".book-text p").nth(10);
   await expect(paragraph).toBeVisible();
   await paragraph.scrollIntoViewIfNeeded();
@@ -321,9 +347,10 @@ test("TXT presets, drag paging, text selection, bookmarks and text-offset restor
       .locator(".text-scroll")
       .evaluate((element) => element.scrollLeft),
   ).toBe(pageBeforeSelection);
-  await page.getByRole("button", { name: "退出文字选择", exact: true }).click();
-  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
+  await readerAction("退出文字选择");
+  await readerAction("阅读外观");
   await page.getByLabel("小说翻页模式").selectOption("scroll");
+  await page.getByRole("button",{name:"关闭阅读菜单",exact:true}).click();
   const scrollBefore = await page
     .locator(".text-scroll")
     .evaluate((element) => element.scrollTop);
@@ -354,12 +381,14 @@ test("TXT presets, drag paging, text selection, bookmarks and text-offset restor
     )
     .toBeGreaterThan(0);
 
-  await page.getByRole("button", { name: "添加书签", exact: true }).click();
-  await page.getByRole("button", { name: "目录与书签", exact: true }).click();
+  await readerAction("添加书签");
+  await readerAction("目录与书签");
   await page.getByRole("tab", { name: /书签/ }).click();
   await expect(page.locator(".reader-toc")).toContainText("书签 01");
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
+  await expect(page.locator(".reader-bottom-panel")).toHaveCount(0);
+  await readerAction("返回媒体库");
   await expect(page.locator(".reader")).toHaveCount(0);
   await openBook("拖拽阅读");
   await expect
@@ -389,18 +418,25 @@ test("EPUB themes, mode changes, progress generation and iframe selection gestur
   expect(
     await page.locator(".epub-host iframe").first().getAttribute("sandbox"),
   ).not.toContain("allow-scripts");
-  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
+  await readerAction("阅读外观");
   await page.getByRole("radio", { name: "墨蓝", exact: true }).click();
   await expect
     .poll(() =>
       page.locator(".reader").evaluate((reader) => {
-        const iframe = reader.querySelector<HTMLIFrameElement>(".epub-host iframe");
+        const iframe =
+          reader.querySelector<HTMLIFrameElement>(".epub-host iframe");
         const paragraph = iframe?.contentDocument?.querySelector("p");
         const title = reader.querySelector(".reader-book-title");
-        return !!(paragraph && title && iframe?.contentWindow &&
-          iframe.contentWindow.getComputedStyle(paragraph).color === getComputedStyle(title).color);
+        return !!(
+          paragraph &&
+          title &&
+          iframe?.contentWindow &&
+          iframe.contentWindow.getComputedStyle(paragraph).color ===
+            getComputedStyle(title).color
+        );
       }),
-    ).toBe(true);
+    )
+    .toBe(true);
   await page.getByLabel("小说翻页模式").selectOption("paged");
   await expect(page.locator(".reader")).toHaveClass(/reader-mode-paged/);
   await expect(page.locator(".epub-host iframe:visible").first()).toBeVisible();
@@ -409,7 +445,7 @@ test("EPUB themes, mode changes, progress generation and iframe selection gestur
   await expect(page.locator(".reader")).toHaveClass(/reader-mode-scroll/);
   await expect(page.locator(".epub-host iframe:visible").first()).toBeVisible();
   await expect(frame.locator("body")).toContainText("段落 80");
-  await page.getByRole("button", { name: "选择文字", exact: true }).click();
+  await readerAction("选择文字");
   const paragraph = frame.locator("p").nth(5);
   await paragraph.selectText();
   await expect(page.locator(".reader")).toHaveClass(/reader-selecting/);
@@ -420,18 +456,20 @@ test("EPUB themes, mode changes, progress generation and iframe selection gestur
         (node) => node.ownerDocument.getSelection()?.toString().length ?? 0,
       ),
   ).toBeGreaterThan(0);
-  await page.getByRole("button", { name: "退出文字选择", exact: true }).click();
+  await readerAction("退出文字选择");
   await expect
-    .poll(() => page.getByLabel("阅读进度").isDisabled())
+    .poll(() =>
+      page.getByRole("button", { name: "跳转", exact: true }).isDisabled(),
+    )
     .toBe(false, { timeout: 30000 });
-  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
+  await readerAction("阅读外观");
   await frame.locator("body").evaluate((body) => {
     body.tabIndex = 0;
     body.focus();
   });
   await page.keyboard.press("Escape");
   await expect(page.locator(".reader-appearance")).toHaveCount(0);
-  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
+  await readerAction("阅读外观");
   await expect(
     page.locator(".reader-appearance .reader-theme-card"),
   ).toHaveCount(6);
@@ -448,9 +486,9 @@ test("EPUB continuous wheel scrolling advances through the long spine", async ()
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
   await openBook("星河之间");
-  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
+  await readerAction("阅读外观");
   await page.getByLabel("小说翻页模式").selectOption("scroll");
-  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
+  await readerAction("阅读外观");
 
   const currentHref = async () =>
     page.evaluate(async () => {
@@ -498,9 +536,9 @@ test("the supplied long EPUB scrolls across chapters without blocking the UI", a
         ),
     )
     .toBe(0);
-  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
+  await readerAction("阅读外观");
   await page.getByLabel("小说翻页模式").selectOption("scroll");
-  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
+  await readerAction("阅读外观");
 
   await page.evaluate(() => {
     const longTasks: number[] = [];
@@ -558,14 +596,11 @@ async function waitForIndex() {
 
 async function seekTo(value: number) {
   await waitForIndex();
-  await page.getByLabel("阅读进度").evaluate((element, value) => {
-    Object.getOwnPropertyDescriptor(
-      HTMLInputElement.prototype,
-      "value",
-    )!.set!.call(element, String(value));
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-    element.dispatchEvent(new Event("change", { bubbles: true }));
-  }, value);
+  await showReaderMenu();
+  await page
+    .getByLabel("阅读进度百分比", { exact: true })
+    .fill(String(value / 10));
+  await page.getByRole("button", { name: "跳转", exact: true }).click();
   await page.waitForTimeout(350);
 }
 
@@ -575,9 +610,7 @@ async function reopenRealSection(href: string) {
   expect(index, href).toBeGreaterThanOrEqual(0);
   const base = location.start.cfi.match(/^(epubcfi\(\/\d+)\/\d+/)![1];
   const cfi = `${base}/${(index + 1) * 2}!/4/1:0)`;
-  await page
-    .getByRole("button", { name: "返回媒体库", exact: true })
-    .dispatchEvent("click");
+  await readerAction("返回媒体库");
   await expect(page.locator(".reader")).toHaveCount(0);
   await page.evaluate(
     async ({ title, cfi }) => {
@@ -745,9 +778,8 @@ test("rapid bidirectional wheel bursts preserve CFI order across recycling and s
   await expect
     .poll(async () => compareCFI((await snapshot()).start.cfi, end))
     .toBeLessThan(0);
-  await page
-    .getByRole("button", { name: "下一页", exact: true })
-    .dispatchEvent("click");
+  await page.getByRole("button", { name: "关闭阅读菜单", exact: true }).click();
+  await page.keyboard.press("PageDown");
   await expect.poll(async () => (await snapshot())?.atEnd).toBe(true);
   await fs.writeFile(
     `artifacts/reader-${environment}-cfi-trace.json`,
@@ -761,22 +793,19 @@ test("paged navigation reaches both book boundaries and survives resize, mode sw
   await page.setViewportSize({ width: 800, height: 600 });
   if (!(await page.locator(".reader").count()))
     await openBook(performanceBookTitle);
-  await page
-    .getByRole("button", { name: "阅读外观", exact: true })
-    .dispatchEvent("click");
+  await readerAction("阅读外观");
   await page.getByLabel("小说翻页模式").selectOption("paged");
   await expect(page.locator(".epub-host iframe:visible").first()).toBeVisible();
   await waitForIndex();
-  await page
-    .getByRole("button", { name: "阅读外观", exact: true })
-    .dispatchEvent("click");
+  await readerAction("阅读外观");
   await seekTo(940);
   let previous = (await snapshot()).start.cfi;
   let steps = 0;
   while (!(await snapshot()).atEnd && steps++ < 65) {
     await page
-      .getByRole("button", { name: "下一页", exact: true })
-      .dispatchEvent("click");
+      .getByRole("button", { name: "关闭阅读菜单", exact: true })
+      .click();
+    await page.keyboard.press("PageDown");
     await expect
       .poll(async () => compareCFI((await snapshot()).start.cfi, previous))
       .toBeGreaterThan(0)
@@ -813,9 +842,7 @@ test("paged navigation reaches both book boundaries and survives resize, mode sw
   await page.setViewportSize({ width: 1440, height: 940 });
   await page.waitForTimeout(500);
   await expect(page.locator(".reader-error")).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "返回媒体库", exact: true })
-    .dispatchEvent("click");
+  await readerAction("返回媒体库");
   await openBook(performanceBookTitle);
   await expect
     .poll(async () => (await snapshot())?.start.index)
@@ -830,8 +857,9 @@ test("paged navigation reaches both book boundaries and survives resize, mode sw
     await seekTo(940);
     const anchor = (await snapshot()).start.cfi;
     await page
-      .getByRole("button", { name: "下一页", exact: true })
-      .dispatchEvent("click");
+      .getByRole("button", { name: "关闭阅读菜单", exact: true })
+      .click();
+    await page.keyboard.press("PageDown");
     await expect
       .poll(async () => compareCFI((await snapshot()).start.cfi, anchor))
       .toBeGreaterThan(0);
@@ -857,15 +885,10 @@ test("paged navigation reaches both book boundaries and survives resize, mode sw
 });
 
 test("rapid reopening cannot publish old locations or leave live listeners", async () => {
-  if (await page.locator(".reader").count())
-    await page
-      .getByRole("button", { name: "返回媒体库", exact: true })
-      .dispatchEvent("click");
+  if (await page.locator(".reader").count()) await readerAction("返回媒体库");
   for (let index = 0; index < 6; index++) {
     await openBook("星河之间");
-    await page
-      .getByRole("button", { name: "返回媒体库", exact: true })
-      .dispatchEvent("click");
+    await readerAction("返回媒体库");
   }
   await openBook("星河之间");
   await expect.poll(async () => (await snapshot())?.start.cfi).toBeTruthy();
@@ -877,16 +900,11 @@ test("rapid reopening cannot publish old locations or leave live listeners", asy
 });
 
 test("a missing chapter recovers once and leaves a working retry instead of a stuck navigation lock", async () => {
-  if (await page.locator(".reader").count())
-    await page
-      .getByRole("button", { name: "返回媒体库", exact: true })
-      .dispatchEvent("click");
+  if (await page.locator(".reader").count()) await readerAction("返回媒体库");
   await openBook("损坏章节");
   await expect.poll(async () => (await snapshot())?.start.cfi).toBeTruthy();
   const original = (await snapshot()).start.cfi;
-  await page
-    .getByRole("button", { name: "目录与书签", exact: true })
-    .dispatchEvent("click");
+  await readerAction("目录与书签");
   await page
     .locator(".reader-toc")
     .getByRole("button", { name: "第二章 缺失测试", exact: true })
@@ -895,9 +913,7 @@ test("a missing chapter recovers once and leaves a working retry instead of a st
   await page.waitForTimeout(500);
   await expect.poll(async () => (await snapshot())?.start.cfi).toBe(original);
   await expect(page.locator(".reader-error")).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "目录与书签", exact: true })
-    .dispatchEvent("click");
+  await readerAction("目录与书签");
   await page
     .locator(".reader-toc")
     .getByRole("button", { name: "第二章 缺失测试", exact: true })
@@ -908,268 +924,70 @@ test("a missing chapter recovers once and leaves a working retry instead of a st
   await page.getByRole("button", { name: "重试打开", exact: true }).click();
   await expect(page.locator(".reader-error")).toHaveCount(0);
   await expect.poll(async () => (await snapshot())?.start.cfi).toBeTruthy();
-  await page
-    .getByRole("button", { name: "下一页", exact: true })
-    .dispatchEvent("click");
+  await page.getByRole("button", { name: "关闭阅读菜单", exact: true }).click();
+  await page.keyboard.press("PageDown");
   await expect
     .poll(async () => compareCFI((await snapshot()).start.cfi, original))
     .toBeGreaterThan(0);
   expect(runtimeErrors).toEqual([]);
 });
 
-for (const kind of ["txt", "epub"] as const) {
+for (const kind of ["txt", "epub"] as const)
   for (const mode of ["scroll", "paged"] as const) {
-    test(`${kind} ${mode}: live slider drag and sustained wheel feedback`, async () => {
-      test.skip(
-        kind === "epub" && !performanceBookTitle,
-        "Set READER_PERF_EPUB",
-      );
-      if (await page.locator(".reader").count())
-        await page
-          .getByRole("button", { name: "返回媒体库", exact: true })
-          .dispatchEvent("click");
-      const title = kind === "txt" ? "拖拽阅读" : performanceBookTitle;
-      await openBook(title);
-      await page.setViewportSize({ width: 1100, height: 760 });
-      await page
-        .getByRole("button", { name: "阅读外观", exact: true })
-        .dispatchEvent("click");
+    test(`${kind} ${mode}: numeric seeking and immersive wheel progress`, async () => {
+      await openBook(kind === "txt" ? "拖拽阅读" : "星河之间");
       await page.getByLabel("小说翻页模式").selectOption(mode);
-      await page
-        .getByRole("button", { name: "阅读外观", exact: true })
-        .dispatchEvent("click");
       if (kind === "epub") await waitForIndex();
-      const slider = page.getByLabel("阅读进度", { exact: true });
-      await expect(slider).toBeEnabled();
-      const bounds = (await slider.boundingBox())!;
-      const thumb = await slider.inputValue();
-      await page.mouse.move(
-        bounds.x + 8 + ((bounds.width - 16) * Number(thumb)) / 1000,
-        bounds.y + bounds.height / 2,
-      );
-      await page.mouse.down();
-      const dragValues: number[] = [];
-      for (const fraction of [0.2, 0.35, 0.5, 0.65]) {
-        await page.mouse.move(
-          bounds.x + 8 + (bounds.width - 16) * fraction,
-          bounds.y + bounds.height / 2,
-          { steps: 6 },
-        );
-        // Assert before releasing the pointer, including after asynchronous CFI callbacks.
-        const value = Number(await slider.inputValue());
-        expect(Math.abs(value - fraction * 1000)).toBeLessThan(22);
-        await expect(page.locator(".reader-progress-value")).toHaveText(
-          `${(value / 10).toFixed(1)}%`,
-        );
-        await page.waitForTimeout(140);
-        expect(Number(await slider.inputValue())).toBe(value);
-        dragValues.push(value);
-      }
-      // Pointer capture must also commit when released outside the slider.
-      await page.mouse.move(bounds.x + bounds.width * 0.3, bounds.y - 45);
-      const finalTarget = Number(await slider.inputValue());
-      await page.mouse.up();
-      await expect
-        .poll(async () =>
-          Math.abs(Number(await slider.inputValue()) - finalTarget),
-        )
-        .toBeLessThan(30);
+      await page.getByLabel("阅读进度百分比", { exact: true }).fill("20");
+      await page.getByRole("button", { name: "跳转", exact: true }).click();
       if (kind === "epub")
         await expect
-          .poll(async () =>
-            Math.abs((await snapshot()).whole * 1000 - finalTarget),
+          .poll(async () => Math.abs((await snapshot()).whole - 0.2))
+          .toBeLessThan(0.04);
+      else
+        await expect
+          .poll(() =>
+            page
+              .locator(".text-scroll")
+              .evaluate((el) => el.scrollTop + el.scrollLeft),
           )
-          .toBeLessThan(30);
-
-      // Start away from the edges so the same uninterrupted burst can turn many pages.
-      await slider.evaluate((element) => {
-        Object.getOwnPropertyDescriptor(
-          HTMLInputElement.prototype,
-          "value",
-        )!.set!.call(element, "200");
-        element.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-      await page.waitForTimeout(400);
-      const host = page.locator(kind === "txt" ? ".text-scroll" : ".epub-host");
-      const viewport = (await host.boundingBox())!;
-      await page.mouse.move(
-        viewport.x + viewport.width * 0.5,
-        viewport.y + viewport.height * 0.5,
-      );
-      const values: number[] = [];
-      const cfiTrace: string[] = [];
-      const started = Date.now();
-      while (Date.now() - started < 2000) {
-        await page.mouse.wheel(0, mode === "paged" ? 80 : 110);
-        values.push(Number(await slider.inputValue()));
-        if (kind === "epub") cfiTrace.push((await snapshot()).start.cfi);
-        await page.waitForTimeout(16);
-      }
-      const elapsed = Date.now() - started;
-      expect(
-        new Set(values).size,
-        "progress must update before the wheel burst ends",
-      ).toBeGreaterThan(4);
-      expect(values.at(-1)!).toBeGreaterThan(values[0]);
-      if (kind === "epub") {
-        for (let index = 1; index < cfiTrace.length; index++)
-          expect(
-            compareCFI(cfiTrace[index], cfiTrace[index - 1]),
-            "published CFI must not jump backwards",
-          ).toBeGreaterThanOrEqual(0);
-      }
-      if (mode === "paged") {
-        expect(new Set(values).size).toBeLessThanOrEqual(
-          Math.ceil(elapsed / 100) + 2,
-        );
-        await page.waitForTimeout(300);
-        const stopped = Number(await slider.inputValue());
-        const stoppedCFI =
-          kind === "epub" ? (await snapshot()).start.cfi : undefined;
-        await page.waitForTimeout(350);
-        expect(
-          Number(await slider.inputValue()),
-          "no queued paging after wheel input stops",
-        ).toBe(stopped);
-        await page.mouse.wheel(0, -80);
-        if (kind === "epub")
-          await expect
-            .poll(async () =>
-              compareCFI((await snapshot()).start.cfi, stoppedCFI!),
-            )
-            .toBeLessThan(0);
-        else
-          await expect
-            .poll(async () => Number(await slider.inputValue()))
-            .toBeLessThan(stopped);
-        await page
-          .getByRole("button", { name: "选择文字", exact: true })
-          .dispatchEvent("click");
-        const selectingAt = Number(await slider.inputValue());
-        await page.mouse.wheel(0, 80);
-        await page.waitForTimeout(150);
-        expect(Number(await slider.inputValue())).toBe(selectingAt);
-        await page
-          .getByRole("button", { name: "退出文字选择", exact: true })
-          .dispatchEvent("click");
-      }
-      await page.waitForTimeout(350);
-      await page.screenshot({
-        path: `artifacts/reader-${environment}-${kind}-${mode}-live-progress.png`,
-      });
-      const saved =
-        kind === "epub"
-          ? (await snapshot()).start.cfi
-          : Number(await slider.inputValue());
+          .toBeGreaterThan(0);
       await page
-        .getByRole("button", { name: "返回媒体库", exact: true })
-        .dispatchEvent("click");
-      if (kind === "epub") {
-        const storedCFI = await page.evaluate(async (title) => {
-          const result = await window.media.query({
-            type: "novel",
-            search: title,
-          });
-          return (await window.media.item(result.items[0].id))?.progress?.cfi;
-        }, title);
-        expect(
-          storedCFI,
-          "persist the last confirmed position, not a slider preview",
-        ).toBe(saved);
+        .getByRole("button", { name: "关闭阅读菜单", exact: true })
+        .click();
+      const progress = page.getByLabel("阅读进度文本", { exact: true });
+      const before = await progress.textContent();
+      const host = page.locator(kind === "txt" ? ".text-scroll" : ".epub-host");
+      const box = (await host.boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.4);
+      for (let i = 0; i < 12; i++) {
+        await page.mouse.wheel(0, mode === "paged" ? 100 : 220);
+        await page.waitForTimeout(120);
       }
-      await openBook(title);
-      if (kind === "epub") {
-        await waitForIndex();
-        await expect
-          .poll(async () => {
-            const location = await snapshot();
-            // A collapsed CFI can land on the preceding line; the saved text must
-            // remain inside the restored viewport, rather than matching a line edge.
-            return (
-              compareCFI(location.start.cfi, String(saved)) <= 0 &&
-              compareCFI(location.end.cfi, String(saved)) >= 0
-            );
-          })
-          .toBe(true);
-      } else {
-        await expect
-          .poll(async () =>
-            Math.abs(Number(await slider.inputValue()) - Number(saved)),
-          )
-          .toBeLessThan(30);
-      }
-      await fs.writeFile(
-        `artifacts/reader-${environment}-${kind}-${mode}-live-progress.json`,
-        JSON.stringify(
-          { dragValues, finalTarget, elapsed, values, cfiTrace, saved },
-          null,
-          2,
-        ),
-      );
+      await expect(progress).not.toHaveText(before!);
+      await expect(page.locator(".reader-bottom-panel")).toHaveCount(0);
+      await expect(page.locator(".reader input[type=range]")).toHaveCount(0);
+      await readerAction("返回媒体库");
+      await openBook(kind === "txt" ? "拖拽阅读" : "星河之间");
+      await expect(page.locator(".reader-error")).toHaveCount(0);
       expect(runtimeErrors).toEqual([]);
     });
   }
-}
 
-test("slow EPUB positioning never replaces the latest held preview with an older CFI", async () => {
-  if (await page.locator(".reader").count())
-    await page
-      .getByRole("button", { name: "返回媒体库", exact: true })
-      .dispatchEvent("click");
+test("slow EPUB positioning does not overwrite a newer numeric seek draft", async () => {
   await openBook("星河之间");
   await waitForIndex();
-  const slider = page.getByLabel("阅读进度", { exact: true });
-  const bounds = (await slider.boundingBox())!;
-  // Delay layout completion, including EpubReaderSession's post-display frame.
-  // This makes earlier engine completions arrive while a newer preview is held.
-  await page.evaluate(() => {
-    const nativeFrame = window.requestAnimationFrame;
-    (window as any).restoreReaderTestFrame = () => {
-      window.requestAnimationFrame = nativeFrame;
-    };
-    window.requestAnimationFrame = (callback) =>
-      nativeFrame((time) => {
-        setTimeout(() => callback(time), 180);
-      });
-  });
-  try {
-    const x = (fraction: number) =>
-      bounds.x + 8 + (bounds.width - 16) * fraction;
-    const y = bounds.y + bounds.height / 2;
-    await page.mouse.move(x(Number(await slider.inputValue()) / 1000), y);
-    await page.mouse.down();
-    await page.mouse.move(x(0.25), y, { steps: 3 });
-    await page.mouse.move(x(0.7), y, { steps: 3 });
-    const latest = Number(await slider.inputValue());
-    expect(Math.abs(latest - 700)).toBeLessThan(22);
-    for (let index = 0; index < 6; index++) {
-      await page.waitForTimeout(90);
-      expect(Number(await slider.inputValue())).toBe(latest);
-      await expect(page.locator(".reader-progress-value")).toHaveText(
-        `${(latest / 10).toFixed(1)}%`,
-      );
-    }
-    await page.mouse.up();
-    await expect
-      .poll(async () => Math.abs((await snapshot()).whole * 1000 - latest))
-      .toBeLessThan(30);
-    await page.screenshot({
-      path: `artifacts/reader-${environment}-slow-position-preview.png`,
-    });
-  } finally {
-    await page.mouse.up();
-    await page.evaluate(() => {
-      (window as any).restoreReaderTestFrame();
-      delete (window as any).restoreReaderTestFrame;
-    });
-  }
-  // Native keyboard adjustment uses the same immediate preview and final commit.
-  await slider.focus();
-  const before = Number(await slider.inputValue());
-  await page.keyboard.down("ArrowRight");
-  expect(Number(await slider.inputValue())).toBe(before + 1);
-  await page.keyboard.up("ArrowRight");
-  await slider.blur();
+  await page.getByLabel("阅读进度百分比", { exact: true }).fill("20");
+  await page.getByRole("button", { name: "跳转", exact: true }).click();
+  await page.getByLabel("阅读进度百分比", { exact: true }).fill("65");
+  await page.waitForTimeout(400);
+  await expect(page.getByLabel("阅读进度百分比", { exact: true })).toHaveValue(
+    "65",
+  );
+  await page.getByRole("button", { name: "跳转", exact: true }).click();
+  await expect
+    .poll(async () => Math.abs((await snapshot()).whole - 0.65))
+    .toBeLessThan(0.04);
   await expect(page.locator(".reader-error")).toHaveCount(0);
   expect(runtimeErrors).toEqual([]);
 });

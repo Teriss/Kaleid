@@ -40,7 +40,7 @@ export default function Viewer({
   const [tools, setTools] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
-    if (item.type === "video" || item.type === "comic") return;
+    if (item.type === "video" || item.type === "comic" || item.type === "novel") return;
     const key = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !document.querySelector("dialog[open]"))
         close();

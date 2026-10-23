@@ -14,6 +14,7 @@ import { EpubResources } from "./epubResources";
 import { ReaderProgressUpdates } from "../../shared/readerProgress";
 
 class ReaderPagedManager extends DefaultManager {
+  declare q: { stop(): void };
   declare container: HTMLElement;
   declare settings: { axis: string; direction: string };
   declare layout: { delta: number };
@@ -45,6 +46,15 @@ class ReaderPagedManager extends DefaultManager {
   next() {
     return this.turn(1);
   }
+  destroy() {
+    // A rapid chapter change can close the session before render() creates its
+    // scroller. epub.js otherwise tries to remove listeners from undefined.
+    if (!this.container) {
+      this.q?.stop();
+      return;
+    }
+    super.destroy();
+  }
   prev() {
     return this.turn(-1);
   }
@@ -52,7 +62,10 @@ class ReaderPagedManager extends DefaultManager {
 
 /** Keep native append/trim compensation, but serialize coverage checks. */
 class ReaderContinuousManager extends ContinuousManager {
-  declare q: { enqueue(task: () => Promise<unknown>): Promise<void> };
+  declare q: {
+    enqueue(task: () => Promise<unknown>): Promise<void>;
+    stop(): void;
+  };
   declare views: { length: number };
   declare container: HTMLElement;
   declare scrollTop: number;
@@ -114,6 +127,10 @@ class ReaderContinuousManager extends ContinuousManager {
     clearTimeout(this.afterScrolled);
     clearTimeout(this.trimTimeout);
     clearTimeout(this.scrollTimeout);
+    if (!this.container) {
+      this.q?.stop();
+      return;
+    }
     super.destroy();
   }
 }
@@ -158,6 +175,27 @@ export class EpubReaderSession {
   private scrollY = 0;
   private scrollFrame = 0;
   private scrolling = false;
+  private boundaryPending = false;
+  private boundaryWheelHold = false;
+  private lastBoundaryWheel = 0;
+  private scrollBoundaryAllowed = true;
+  private boundaryGestureDirection = 0;
+  private boundaryGestureDistance = 0;
+  private boundaryGestureAt = 0;
+  private entryBoundary?: "start" | "end";
+  holdBoundaryWheel() {
+    this.boundaryWheelHold = true;
+    this.lastBoundaryWheel = performance.now();
+    this.scrollBoundaryAllowed = false;
+  }
+  private acceptWheelBoundary() {
+    const now = performance.now();
+    const allowed =
+      !this.boundaryWheelHold || now - this.lastBoundaryWheel >= 500;
+    if (allowed) this.boundaryWheelHold = false;
+    this.lastBoundaryWheel = now;
+    return allowed;
+  }
   private progressUpdates = new ReaderProgressUpdates<EpubLocationSnapshot>(
     (location) => {
       if (this.closed || this.failed || !this.ready || this.restoring) return;
@@ -186,9 +224,12 @@ export class EpubReaderSession {
       location(value: EpubLocationSnapshot): void;
       indexReady(): void;
       navigation?(direction: number): void;
+      boundary?(direction: number): void;
       failure(error: unknown): void;
     },
   ) {
+    this.host.dataset.readerMode = mode;
+    this.host.dataset.readerIndexed = "false";
     this.navigation = new ReaderNavigation((error) => this.fail(error));
   }
 
@@ -408,7 +449,56 @@ export class EpubReaderSession {
     if (immediate) this.progressUpdates.flush();
   }
 
-  page(direction: number, source: "wheel" | "other" = "other") {
+  releaseBoundary() {
+    this.boundaryPending = false;
+  }
+  private crossBoundary(direction: number) {
+    if (this.boundaryPending || !this.callbacks.boundary) return;
+    this.boundaryPending = true;
+    this.flushProgress();
+    this.callbacks.boundary(Math.sign(direction));
+  }
+  displayBoundary(direction: number) {
+    if (!this.book) return Promise.resolve(false);
+    this.entryBoundary = direction > 0 ? "end" : "start";
+    return this.display(
+      direction > 0
+        ? this.book.spine.last().href
+        : this.book.spine.first().href,
+      direction > 0,
+      direction < 0,
+    );
+  }
+
+  private shouldCrossScrollBoundary(delta: number) {
+    const direction = Math.sign(delta);
+    const now = performance.now();
+    if (
+      this.boundaryGestureDirection !== direction ||
+      now - this.boundaryGestureAt > 800
+    ) {
+      this.boundaryGestureDirection = direction;
+      this.boundaryGestureDistance = 0;
+    }
+    this.boundaryGestureAt = now;
+    this.boundaryGestureDistance += Math.abs(delta);
+    return (
+      this.boundaryGestureDistance >=
+      Math.max(320, Math.min(480, this.host.clientHeight * 0.48))
+    );
+  }
+
+  private clearBoundaryGesture() {
+    this.boundaryGestureDirection = 0;
+    this.boundaryGestureDistance = 0;
+    this.boundaryGestureAt = 0;
+  }
+
+  page(
+    direction: number,
+    source: "wheel" | "other" = "other",
+    boundaryAllowed = true,
+  ) {
     if (
       !direction ||
       !this.ready ||
@@ -429,12 +519,21 @@ export class EpubReaderSession {
       )
         return;
       if (this.closed || revision !== this.revision) return;
+      const boundary = this.readLocation();
+      if (
+        this.callbacks.boundary &&
+        (direction > 0 ? boundary?.atEnd : boundary?.atStart)
+      ) {
+        if (boundaryAllowed) this.crossBoundary(direction);
+        return;
+      }
       const manager = this.rendition.manager;
       const before = manager.container.scrollLeft;
       await this.operation(() =>
         direction > 0 ? this.rendition.next() : this.rendition.prev(),
       );
       if (this.closed || revision !== this.revision) return;
+      this.entryBoundary = undefined;
       this.host.dataset.readerNavigation = JSON.stringify({
         direction,
         before,
@@ -449,19 +548,16 @@ export class EpubReaderSession {
   }
 
   wheelPage(direction: number) {
+    const allowed = this.acceptWheelBoundary();
     if (this.wheel.accept(performance.now(), direction))
-      this.page(direction, "wheel");
+      this.page(direction, "wheel", allowed);
   }
 
-  scroll(x: number, y: number) {
-    if (
-      !this.ready ||
-      this.restoring ||
-      this.closed ||
-      this.failed ||
-      this.mode !== "scroll"
-    )
+  scroll(x: number, y: number, source: "wheel" | "drag" | "other" = "other") {
+    if (!this.ready || this.closed || this.failed || this.mode !== "scroll")
       return;
+    this.scrollBoundaryAllowed =
+      source !== "wheel" || this.acceptWheelBoundary();
     if (y && Math.sign(y) !== this.scrollDirection) {
       this.scrollDirection = Math.sign(y);
       this.scrollIntent++;
@@ -485,10 +581,30 @@ export class EpubReaderSession {
 
   private async flushScroll() {
     if (this.closed || this.failed || !this.ready) return;
-    if (this.navigation.busy) {
+    if (this.navigation.busy || this.restoring) {
       this.queueScroll();
       return;
     }
+    // A fresh gesture at the existing chapter edge does not need to extend the
+    // continuous manager's coverage (which has no adjacent spine item here).
+    const boundary = this.readLocation();
+    const boundaryDelta = this.scrollY;
+    if (
+      this.callbacks.boundary &&
+      Math.abs(boundaryDelta) > 2 &&
+      (boundaryDelta > 0 ? boundary?.atEnd : boundary?.atStart)
+    ) {
+      this.scrollX = this.scrollY = 0;
+      if (
+        this.scrollBoundaryAllowed &&
+        this.shouldCrossScrollBoundary(boundaryDelta)
+      ) {
+        this.clearBoundaryGesture();
+        this.crossBoundary(boundaryDelta);
+      }
+      return;
+    }
+    this.clearBoundaryGesture();
     const revision = this.revision;
     this.scrolling = true;
     try {
@@ -503,6 +619,8 @@ export class EpubReaderSession {
       scroller.scrollLeft += this.scrollX;
       this.scrollX = 0;
       scroller.scrollTop += delta;
+      if (Math.abs(scroller.scrollTop - before) > 0)
+        this.entryBoundary = undefined;
       const remaining = delta - (scroller.scrollTop - before);
       await this.operation(() => manager.ensureCoverage());
       if (this.closed || revision !== this.revision) return;
@@ -522,7 +640,7 @@ export class EpubReaderSession {
     }
   }
 
-  display(target: string, end = false) {
+  display(target: string, end = false, start = false) {
     if (this.closed || this.failed || !this.ready)
       return Promise.resolve(false);
     this.progressUpdates.cancel();
@@ -536,10 +654,17 @@ export class EpubReaderSession {
       if (this.closed || revision !== this.revision) return;
       await this.operation(() => this.rendition.display(target));
       if (this.closed || revision !== this.revision) return;
-      if (end && this.mode === "scroll") {
-        await this.operation(() => this.rendition.manager.ensureCoverage());
+      if (end || start) {
+        if (this.mode === "scroll")
+          await this.operation(() => this.rendition.manager.ensureCoverage());
         const scroller = this.rendition.manager.container as HTMLElement;
-        scroller.scrollTop = scroller.scrollHeight;
+        if (this.mode === "scroll")
+          scroller.scrollTop = start ? 0 : scroller.scrollHeight;
+        else if (end)
+          scroller.scrollLeft =
+            this.rendition.manager.settings.direction === "rtl"
+              ? -(scroller.scrollWidth - scroller.clientWidth)
+              : scroller.scrollWidth - scroller.clientWidth;
       }
       await frame();
       if (revision === this.revision) this.restoring = false;
@@ -549,6 +674,9 @@ export class EpubReaderSession {
 
   seek(fraction: number) {
     if (!this.indexed || !this.book) return Promise.resolve(false);
+    // An explicit seek starts a new reading intent rather than continuing the
+    // wheel inertia that crossed into this chapter.
+    this.boundaryWheelHold = false;
     if (fraction <= 0) {
       return this.display(this.book.spine.first().href);
     }
@@ -561,7 +689,9 @@ export class EpubReaderSession {
   updateAppearance(css: string, reflow: boolean) {
     this.appearance = css;
     if (!this.rendition || !this.ready || this.closed) return;
-    const cfi = this.readLocation()?.start.cfi ?? this.snapshot?.start.cfi;
+    const cfi = this.entryBoundary
+      ? undefined
+      : this.readLocation()?.start.cfi ?? this.snapshot?.start.cfi;
     const apply = () => {
       for (const contents of this.rendition.getContents()) {
         const style = contents.document.getElementById(
@@ -599,12 +729,15 @@ export class EpubReaderSession {
     const height = Math.max(1, Math.floor(rect.height));
     const size = this.rendition.manager._stageSize;
     if (size?.width === width && size?.height === height) return;
-    const cfi = this.readLocation()?.start.cfi ?? this.snapshot?.start.cfi;
+    const cfi = this.entryBoundary
+      ? undefined
+      : this.readLocation()?.start.cfi ?? this.snapshot?.start.cfi;
     this.revision++;
     this.progressUpdates.cancel();
     this.restoring = true;
     const revision = this.revision;
-    this.scrollX = this.scrollY = 0;
+    // Keep a gesture received just before the ResizeObserver callback. Losing
+    // it here would swallow the first deliberate wheel at a chapter boundary.
     this.navigation.submit(async () => {
       while (this.scrolling && !this.closed) await frame();
       if (this.closed) return;
@@ -612,8 +745,15 @@ export class EpubReaderSession {
         this.rendition.resize(width, height, cfi);
         return this.rendition.q.enqueue(() => undefined);
       });
+      if (this.entryBoundary && this.mode === "scroll") {
+        await this.operation(() => this.rendition.manager.ensureCoverage());
+        const scroller = this.rendition.manager.container as HTMLElement;
+        scroller.scrollTop =
+          this.entryBoundary === "start" ? 0 : scroller.scrollHeight;
+      }
       if (revision === this.revision) this.restoring = false;
       this.publish(true);
+      if (this.scrollY || this.scrollX) this.queueScroll();
     }, true);
   }
 

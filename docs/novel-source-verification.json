@@ -1,0 +1,51 @@
+{
+  "checkedAt": "2026-10-23T12:44:33.897Z",
+  "environment": "isolated Electron persistent sessions, guest",
+  "sources": [
+    {
+      "sourceId": "lightnovelshelf",
+      "stages": [
+        {
+          "stage": "discover",
+          "status": "passed",
+          "count": 6
+        },
+        {
+          "stage": "search",
+          "status": "blocked",
+          "error": "Error: Error invoking remote method 'novel:call': Error: [auth-required] 此功能需要有效的轻书架账号与访问权限，请使用邮箱密码登录"
+        },
+        {
+          "stage": "details/catalog/chapter",
+          "status": "blocked",
+          "error": "Error: Error invoking remote method 'novel:call': Error: : Status code '429'"
+        },
+        {
+          "stage": "account/paid-export",
+          "status": "not_tested",
+          "reason": "No account supplied; no billable requests made"
+        }
+      ]
+    },
+    {
+      "sourceId": "bilinovel",
+      "stages": [
+        {
+          "stage": "discover",
+          "status": "blocked",
+          "error": "Error: Error invoking remote method 'novel:call': Error: [verification] 站点需要浏览器验证，请打开源的网页登录窗口后重试"
+        },
+        {
+          "stage": "search",
+          "status": "blocked",
+          "error": "Error: Error invoking remote method 'novel:call': Error: [verification] 站点需要浏览器验证，请打开源的网页登录窗口后重试"
+        },
+        {
+          "stage": "account/paid-export",
+          "status": "not_tested",
+          "reason": "No account supplied; no billable requests made"
+        }
+      ]
+    }
+  ]
+}

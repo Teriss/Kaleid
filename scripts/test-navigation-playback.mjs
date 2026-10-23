@@ -116,59 +116,50 @@ try {
     .locator('.folder-breadcrumbs[aria-label="文件夹路径"]')
     .waitFor({ timeout: 30000 });
 
-  const back = page.getByRole("button", { name: "后退", exact: true });
-  const forward = page.getByRole("button", { name: "前进", exact: true });
   const crumbs = async () =>
     (await page.locator(".folder-breadcrumbs button").allTextContents())
       .map((value) => value.trim())
       .filter(Boolean);
   assert.deepEqual(await crumbs(), ["中文媒体库", "季节", "第一季"]);
-  assert.equal(await back.isEnabled(), true, "Back is enabled after restart");
+  assert.equal(
+    await page.getByRole("button", { name: "前进", exact: true }).count(),
+    0,
+    "the forward action is removed",
+  );
+  const back = page.getByRole("button", {
+    name: "返回上级文件夹",
+    exact: true,
+  });
 
-  await back.click();
+  await page.dispatchEvent("body", "mouseup", { button: 3 });
   await page.waitForFunction(
     () =>
       [...document.querySelectorAll(".folder-breadcrumbs button")].at(-1)
         ?.textContent === "季节",
   );
-  assert.equal(await forward.isEnabled(), true, "Forward returns to the child");
-  await forward.click();
-  await page.waitForFunction(
-    () =>
-      [...document.querySelectorAll(".folder-breadcrumbs button")].at(-1)
-        ?.textContent === "第一季",
-  );
-
-  await back.click();
-  await page.waitForFunction(
-    () =>
-      [...document.querySelectorAll(".folder-breadcrumbs button")].at(-1)
-        ?.textContent === "季节",
-  );
-  await back.click();
+  await page.keyboard.press("Escape");
   await page.waitForFunction(
     () => !document.querySelector(".folder-breadcrumbs"),
   );
+  const atLibraryRoot = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("last-browse") || "null"),
+  );
+  await page.keyboard.press("Alt+ArrowLeft");
+  await page.keyboard.press("Alt+ArrowRight");
+  await page.dispatchEvent("body", "mouseup", { button: 4 });
+  await page.waitForTimeout(80);
+  assert.deepEqual(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("last-browse") || "null")),
+    atLibraryRoot,
+    "root back and all forward inputs leave the route unchanged",
+  );
+  assert.equal(await back.count(), 0, "the library root has no parent arrow");
   assert.equal(
-    await back.isEnabled(),
-    false,
-    "library home has no parent fallback",
+    await page.getByRole("button", { name: "后退", exact: true }).count(),
+    0,
+    "the chronological toolbar action is removed",
   );
-  assert.equal(
-    await forward.isEnabled(),
-    true,
-    "Forward history remains available",
-  );
-
-  await forward.click();
-  await page.waitForFunction(
-    () =>
-      [...document.querySelectorAll(".folder-breadcrumbs button")].at(-1)
-        ?.textContent === "季节",
-  );
-  console.log(
-    "PASS restored nested folder back, forward and repeated parent fallback",
-  );
+  console.log("PASS mouse, Escape and Alt-left hierarchical back; forward inputs are inert");
 } finally {
   if (application) await application.close().catch(() => {});
   await fs.rm(temporary, { recursive: true, force: true });

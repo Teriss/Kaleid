@@ -26,6 +26,8 @@ const memories = new Map<string, BrowseMemory>();
 const dirty = new Set<string>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 export function scopeKey(scope: BrowseScope) {
+  if (scope.view === "novel")
+    return `novel:${JSON.stringify([scope.providerId || "", scope.section || "home", scope.remoteId || "", scope.novelChapterId || "", scope.search || "", scope.searchMode || "", scope.novelPage || 1, ...(scope.novelSearchSources ? [scope.novelSearchSources] : []), ...(scope.novelSearchId ? [scope.novelSearchId] : [])])}`;
   if (scope.view === "comic")
     return `comic:${JSON.stringify([scope.providerId || "", scope.section || "home", scope.remoteKind || "", scope.remoteId || "", scope.comicChapterId ?? null, scope.search || "", scope.searchMode || "", scope.comicSearchId || ""])}`;
   if (scope.localOnly) return `${scope.view}:${scope.type}:local`;
@@ -222,6 +224,7 @@ export function readLastScope(): BrowseScope | null {
         "type",
         "libraries",
         "music",
+        "novel",
         "favorites",
         "folders",
       ].includes(scope.view)
@@ -245,7 +248,9 @@ export function readLastNormalScope(): BrowseScope | null {
     );
     if (
       !scope ||
-      !["library", "type", "libraries", "music", "folders"].includes(scope.view)
+      !["library", "type", "libraries", "music", "novel", "folders"].includes(
+        scope.view,
+      )
     )
       return null;
     if (scope.view === "library" && typeof scope.libraryId !== "string")
@@ -262,7 +267,9 @@ export function readLastNormalScope(): BrowseScope | null {
 }
 export function saveLastNormalScope(scope: BrowseScope) {
   if (
-    !["library", "type", "libraries", "music", "folders"].includes(scope.view)
+    !["library", "type", "libraries", "music", "novel", "folders"].includes(
+      scope.view,
+    )
   )
     return;
   try {

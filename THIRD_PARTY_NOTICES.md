@@ -1,5 +1,11 @@
 # Third-party notices
 
+## Online novel transport
+
+The light novel integration uses Microsoft's SignalR JavaScript client and MessagePack protocol package, pinned to version `10.0.11`. These packages retain their MIT license and copyright notices under `node_modules/@microsoft/`.
+
+The LightNovelShelf adapter implements the public interface described by the [official Web client](https://github.com/LightNovelShelf/Web). No upstream novel text, illustrations, fonts, credentials or branding assets are bundled with Kaleid. Content is fetched only when using the selected source and remains subject to that source's access permissions.
+
 ## Wenku8 Flutter archive shelf
 
 The archive shelf geometry, continuous extraction wave and inertial snapping are adapted from Wenku8 Flutter by mikufoxxx, MewX and contributors.

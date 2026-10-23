@@ -9,8 +9,6 @@ import {
 import {
   ArrowLeft,
   BookMarked,
-  ChevronLeft,
-  ChevronRight,
   FolderOpen,
   List,
   MoreHorizontal,
@@ -23,10 +21,45 @@ import { archivePath } from "./epubResources";
 import type { MediaItem, Progress, Settings } from "../../shared/types";
 import { READER_FONTS, readerColors } from "../../shared/readerColors";
 import { attachReaderGestures } from "../../shared/readerGestures";
-import { ReaderSeekController } from "../../shared/readerProgress";
 import { IconButton } from "./components";
 import ReaderPreferences from "./ReaderPreferences";
 import { act, report, resource, useApp } from "./store";
+import type {
+  NovelBookmark,
+  OnlineNovelDetails,
+} from "../../shared/onlineNovels";
+
+export interface OnlineNovelReader {
+  details: OnlineNovelDetails;
+  bookmarks: NovelBookmark[];
+  chapterId: string;
+  navigateChapter(
+    id: string,
+    progress?: Progress,
+    entry?: "start" | "end",
+  ): Promise<void> | void;
+}
+type ReaderBookmark = Progress & {
+  onlineId?: string;
+  onlineChapterId?: string;
+  label?: string;
+};
+const readerBookmarks = (marks: NovelBookmark[]): ReaderBookmark[] =>
+  marks.map((mark) => ({
+    ...mark.progress,
+    onlineId: mark.id,
+    onlineChapterId: mark.chapterId,
+    label: mark.title,
+  }));
+function saveReadingProgress(item: MediaItem, progress: Progress) {
+  return item.onlineNovelRef
+    ? window.media.onlineNovels.saveProgress(
+        item.onlineNovelRef,
+        progress,
+        item.resourceVersion,
+      )
+    : window.media.saveProgress(item.id, progress);
+}
 
 function textOffsetAtViewport(container: HTMLElement, paged: boolean) {
   const doc = container.ownerDocument;
@@ -122,10 +155,14 @@ function restoreTextOffset(
   return true;
 }
 
-function epubAppearance(settings: Settings, selecting: boolean) {
+function epubAppearance(
+  settings: Settings,
+  selecting: boolean,
+  requiredFont = false,
+) {
   const palette = readerColors(settings.readerTheme);
   return `
-    html, body { background: transparent !important; overflow-anchor: none !important; }
+    html, body { background: ${palette.background} !important; overflow-anchor: none !important; }
     body, body * {
       color: ${palette.foreground} !important;
       -webkit-text-fill-color: ${palette.foreground} !important;
@@ -134,7 +171,7 @@ function epubAppearance(settings: Settings, selecting: boolean) {
     }
     html { touch-action: none; }
     body {
-      font-family: ${READER_FONTS[settings.readerFont].family} !important;
+      ${requiredFont ? "" : `font-family: ${READER_FONTS[settings.readerFont].family} !important;`}
       font-size: ${settings.fontSize}px !important;
       line-height: ${settings.lineHeight} !important;
       ${settings.readerMode === "scroll" ? "padding: 0 !important; margin: 0 !important;" : ""}
@@ -148,14 +185,29 @@ function epubAppearance(settings: Settings, selecting: boolean) {
 export default function NovelViewer({
   item,
   close,
+  online,
 }: {
   item: MediaItem;
   close(): void;
+  online?: OnlineNovelReader;
 }) {
   const settings = useApp((state) => state.settings);
   const setSettings = useApp((state) => state.setSettings);
   const palette = readerColors(settings.readerTheme);
-  const [showChrome, setShowChrome] = useState(true);
+  const [showChrome, setShowChrome] = useState(false);
+  const panel = useRef<HTMLElement>(null);
+  const onlineRef = useRef(online);
+  onlineRef.current = online;
+  const changingChapter = useRef(false);
+  const [chapterPending, setChapterPending] = useState(false);
+  const [chapterFailure, setChapterFailure] = useState<{
+    direction: number;
+    message: string;
+  }>();
+  const chapterFailureRef = useRef(chapterFailure);
+  chapterFailureRef.current = chapterFailure;
+  const [endNotice, setEndNotice] = useState("");
+  const [seekDraft, setSeekDraft] = useState("");
   const [showOptions, setShowOptions] = useState(false);
   const [showToc, setShowToc] = useState(false);
   const [showMore, setShowMore] = useState(false);
@@ -164,14 +216,13 @@ export default function NovelViewer({
   const [encoding, setEncoding] = useState("");
   const [text, setText] = useState("");
   const [error, setError] = useState("");
-  const [bookmarks, setBookmarks] = useState<Progress[]>([]);
+  const [bookmarks, setBookmarks] = useState<ReaderBookmark[]>([]);
   const [toc, setToc] = useState<{ label: string; href: string }[]>([]);
   const [progressReady, setProgressReady] = useState(false);
   const [, setProgressTick] = useState(0);
   const [wholeBookReady, setWholeBookReady] = useState(false);
   const [wholeBookProgress, setWholeBookProgress] = useState(0);
   const [chapterProgress, setChapterProgress] = useState(0);
-  const [progressPreview, setProgressPreview] = useState<number>();
   const applySeek = useRef<(value: number) => Promise<boolean>>(
     async () => false,
   );
@@ -183,6 +234,7 @@ export default function NovelViewer({
   const sessionRef = useRef<EpubReaderSession | null>(null);
   const [epubRevision, setEpubRevision] = useState(0);
   const recovery = useRef({ id: item.id, attempts: 0 });
+  const entryApplied = useRef<string | undefined>(undefined);
   if (recovery.current.id !== item.id)
     recovery.current = { id: item.id, attempts: 0 };
   const currentProgress = useRef<Progress>(item.progress ?? {});
@@ -219,19 +271,6 @@ export default function NovelViewer({
     showChrome,
   };
   const bookmarkKey = `bookmarks:${item.id}`;
-  const seekController = useMemo(
-    () =>
-      new ReaderSeekController(
-        (value) => applySeek.current(value),
-        setProgressPreview,
-        report,
-      ),
-    [item.id, item.ext, settings.readerMode, epubRevision],
-  );
-  useEffect(() => {
-    setProgressPreview(undefined);
-    return () => seekController.dispose();
-  }, [seekController]);
 
   function animatePageIn(element: HTMLElement | null, direction: number) {
     if (!element || settingsRef.current.reducedMotion) return;
@@ -256,17 +295,26 @@ export default function NovelViewer({
   }
 
   useEffect(() => {
+    if (online) {
+      setBookmarks(readerBookmarks(online.bookmarks));
+      return;
+    }
     try {
       const saved = JSON.parse(localStorage.getItem(bookmarkKey) || "[]");
       setBookmarks(Array.isArray(saved) ? saved : []);
     } catch {
       setBookmarks([]);
     }
-  }, [bookmarkKey]);
+  }, [bookmarkKey, online?.bookmarks]);
 
   useEffect(() => {
     let live = true;
     setProgressReady(false);
+    if (item.onlineNovelRef) {
+      currentProgress.current = item.progress ?? {};
+      setProgressReady(true);
+      return;
+    }
     void window.media
       .item(item.id)
       .then((latest) => {
@@ -332,9 +380,7 @@ export default function NovelViewer({
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = null;
       lastSaved.current = now;
-      void window.media
-        .saveProgress(item.id, currentProgress.current)
-        .catch(report);
+      void saveReadingProgress(item, currentProgress.current).catch(report);
     };
     if (now - lastSaved.current >= 1800) {
       save();
@@ -343,9 +389,7 @@ export default function NovelViewer({
         () => {
           lastSaved.current = Date.now();
           saveTimer.current = null;
-          void window.media
-            .saveProgress(item.id, currentProgress.current)
-            .catch(report);
+          void saveReadingProgress(item, currentProgress.current).catch(report);
         },
         1800 - (now - lastSaved.current),
       );
@@ -403,8 +447,9 @@ export default function NovelViewer({
         window.getSelection()?.removeAllRanges();
         for (const contents of renditionRef.current?.getContents?.() ?? [])
           contents.document.getSelection()?.removeAllRanges();
-      } else if (!stateRef.current.showChrome) setShowChrome(true);
-      else close();
+      } else {
+        close();
+      }
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -432,7 +477,6 @@ export default function NovelViewer({
           : 0;
     if (!direction) return;
     event.preventDefault();
-    setShowChrome(true);
     movePage(direction);
   }
   keyHandlerRef.current = handleReaderKey;
@@ -503,6 +547,7 @@ export default function NovelViewer({
     let failureHandled = false;
     setError("");
     setWholeBookReady(false);
+    epubHost.current.dataset.readerPositioned = "false";
     const handleFailure = (error: unknown) => {
       if (!live || failureHandled || sessionRef.current !== session) return;
       failureHandled = true;
@@ -513,7 +558,11 @@ export default function NovelViewer({
     const session = new EpubReaderSession(
       epubHost.current,
       settingsRef.current.readerMode,
-      epubAppearance(settingsRef.current, stateRef.current.selecting),
+      epubAppearance(
+        settingsRef.current,
+        stateRef.current.selecting,
+        item.novelRequiredFont,
+      ),
       {
         content(doc, sectionHref) {
           renditionRef.current = session.rendition;
@@ -522,12 +571,18 @@ export default function NovelViewer({
             textSelection: () => stateRef.current.selecting,
             onPage: (direction) => session.page(direction),
             onWheelPage: (direction) => session.wheelPage(direction),
-            onScroll: (x, y) => session.scroll(x, y),
+            onScroll: (x, y, source) => session.scroll(x, y, source),
             onCenter: () => toggleReaderChrome(),
             scrollTarget: () => session.rendition?.manager?.container ?? null,
           });
           const key = (event: KeyboardEvent) =>
             keyHandlerRef.current(event, doc);
+          const backButton = (event: MouseEvent) => {
+            if (event.button !== 3 && event.button !== 4) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            close();
+          };
           const link = (event: MouseEvent) => {
             const anchor = (event.target as Element)?.closest?.("a[href]");
             if (!anchor || event.button !== 0) return;
@@ -544,10 +599,14 @@ export default function NovelViewer({
             }
           };
           doc.addEventListener("keydown", key);
+          doc.addEventListener("mouseup", backButton, true);
+          doc.addEventListener("auxclick", backButton, true);
           doc.addEventListener("click", link, true);
           return () => {
             gestures();
             doc.removeEventListener("keydown", key);
+            doc.removeEventListener("mouseup", backButton, true);
+            doc.removeEventListener("auxclick", backButton, true);
             doc.removeEventListener("click", link, true);
           };
         },
@@ -557,9 +616,39 @@ export default function NovelViewer({
             ...currentProgress.current,
             cfi: location.start.cfi,
             href: location.start.href,
+            scroll: location.whole,
+            completed: location.whole >= 0.999,
           });
+          setEndNotice((value) =>
+            value === "已经是第一章"
+              ? location.atStart
+                ? value
+                : ""
+              : location.atEnd
+                ? value
+                : "",
+          );
           setChapterProgress(location.chapter);
           setWholeBookProgress(location.whole);
+          if (item.onlineNovelRef && session.book) {
+            const cfi = location.start.cfi;
+            void session.book
+              .getRange(cfi)
+              .then((range: Range) => {
+                if (!live || currentProgress.current.cfi !== cfi) return;
+                const prefix =
+                  range.startContainer.ownerDocument!.createRange();
+                prefix.selectNodeContents(
+                  range.startContainer.ownerDocument!.body,
+                );
+                prefix.setEnd(range.startContainer, range.startOffset);
+                currentProgress.current = {
+                  ...currentProgress.current,
+                  textOffset: prefix.toString().length,
+                };
+              })
+              .catch(() => {});
+          }
         },
         indexReady() {
           if (live && sessionRef.current === session) setWholeBookReady(true);
@@ -568,6 +657,9 @@ export default function NovelViewer({
           if (live && sessionRef.current === session)
             animatePageIn(epubHost.current, direction);
         },
+        boundary: online
+          ? (direction) => void crossChapter(direction)
+          : undefined,
         failure: handleFailure,
       },
     );
@@ -577,7 +669,7 @@ export default function NovelViewer({
       textSelection: () => stateRef.current.selecting,
       onPage: (direction) => session.page(direction),
       onWheelPage: (direction) => session.wheelPage(direction),
-      onScroll: (x, y) => session.scroll(x, y),
+      onScroll: (x, y, source) => session.scroll(x, y, source),
       onCenter: toggleReaderChrome,
       scrollTarget: () => session.rendition?.manager?.container ?? null,
     });
@@ -585,14 +677,48 @@ export default function NovelViewer({
     void (async () => {
       const response = await fetch(resource(item), { signal: abort.signal });
       if (!response.ok)
-        throw new Error("EPUB 无法读取，文件可能损坏或已被移除");
+        throw new Error(
+          item.onlineNovelRef
+            ? await response.text()
+            : "EPUB 无法读取，文件可能损坏或已被移除",
+        );
       const data = await response.arrayBuffer();
       if (!live) return;
-      await session.start(
-        data,
-        currentProgress.current.cfi || item.progress?.cfi,
-      );
+      const initialCfi =
+        item.onlineNovelRef && recovery.current.attempts > 0
+          ? undefined
+          : currentProgress.current.cfi || item.progress?.cfi;
+      await session.start(data, initialCfi);
+      if (item.remoteData?.novelEntry && entryApplied.current !== item.id) {
+        await session.displayBoundary(
+          item.remoteData.novelEntry === "end" ? 1 : -1,
+        );
+        if (!live) return;
+        entryApplied.current = item.id;
+        session.holdBoundaryWheel();
+      }
+      if (item.onlineNovelRef && !initialCfi && item.progress?.textOffset) {
+        const contents = session.rendition?.getContents?.()[0];
+        const doc = contents?.document as Document | undefined;
+        if (doc) {
+          const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+          let remaining = item.progress.textOffset,
+            node = walker.nextNode();
+          while (node) {
+            if (remaining <= (node.textContent?.length || 0)) {
+              const range = doc.createRange();
+              range.setStart(node, remaining);
+              range.collapse(true);
+              await session.display(contents.cfiFromRange(range));
+              break;
+            }
+            remaining -= node.textContent?.length || 0;
+            node = walker.nextNode();
+          }
+        }
+      }
       if (!live) return;
+      epubHost.current!.dataset.readerPositioned = "true";
       renditionRef.current = session.rendition;
       const navigation = await session.book!.loaded.navigation;
       if (live)
@@ -638,7 +764,7 @@ export default function NovelViewer({
       readerFont: settings.readerFont,
     };
     sessionRef.current?.updateAppearance(
-      epubAppearance(settings, selecting),
+      epubAppearance(settings, selecting, item.novelRequiredFont),
       reflowed,
     );
   }, [
@@ -704,9 +830,21 @@ export default function NovelViewer({
   useEffect(() => {
     const key = (event: KeyboardEvent) =>
       keyHandlerRef.current(event, document);
+    const backButton = (event: MouseEvent) => {
+      if (event.button !== 3 && event.button !== 4) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      close();
+    };
     window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [item.ext]);
+    window.addEventListener("mouseup", backButton, true);
+    window.addEventListener("auxclick", backButton, true);
+    return () => {
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("mouseup", backButton, true);
+      window.removeEventListener("auxclick", backButton, true);
+    };
+  }, [item.ext, close]);
 
   useEffect(
     () => () => {
@@ -714,24 +852,84 @@ export default function NovelViewer({
         cancelAnimationFrame(scrollFrame.current);
       if (saveTimer.current) clearTimeout(saveTimer.current);
       if (progressReady)
-        void window.media
-          .saveProgress(item.id, currentProgress.current)
-          .catch(report);
+        void saveReadingProgress(item, currentProgress.current).catch(report);
     },
     [item.id, progressReady],
   );
 
-  function toggleReaderChrome() {
-    if (
-      stateRef.current.showOptions ||
-      stateRef.current.showToc ||
-      stateRef.current.showMore
-    ) {
-      setShowOptions(false);
-      setShowToc(false);
-      setShowMore(false);
+  useEffect(() => {
+    if (!showChrome) return;
+    setSeekDraft((actualProgressValue / 10).toFixed(1));
+    const node = panel.current;
+    node
+      ?.querySelector<HTMLButtonElement>("button")
+      ?.focus({ preventScroll: true });
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const controls = Array.from(
+        node?.querySelectorAll<HTMLElement>("button,input,select") || [],
+      ).filter((el) => !(el as HTMLButtonElement).disabled);
+      if (
+        document.activeElement ===
+        (event.shiftKey ? controls[0] : controls.at(-1))
+      ) {
+        event.preventDefault();
+        (event.shiftKey ? controls.at(-1) : controls[0])?.focus();
+      }
+    };
+    node?.addEventListener("keydown", key);
+    return () => {
+      node?.removeEventListener("keydown", key);
+      (container.current || epubHost.current?.querySelector("iframe"))?.focus({
+        preventScroll: true,
+      });
+    };
+  }, [showChrome]);
+  async function crossChapter(direction: number) {
+    const context = onlineRef.current;
+    if (!context || changingChapter.current || chapterFailureRef.current)
+      return;
+    const index = context.details.chapters.findIndex(
+      (chapter) => chapter.id === context.chapterId,
+    );
+    const target = context.details.chapters[index + Math.sign(direction)];
+    if (!target) {
+      setEndNotice(direction > 0 ? "— 本书完 —" : "已经是第一章");
+      sessionRef.current?.releaseBoundary();
       return;
     }
+    changingChapter.current = true;
+    setChapterPending(true);
+    setEndNotice("");
+    try {
+      sessionRef.current?.flushProgress();
+      await saveReadingProgress(item, {
+        ...currentProgress.current,
+        ...(direction > 0 ? { completed: true } : {}),
+      });
+      await context.navigateChapter(
+        target.id,
+        undefined,
+        direction > 0 ? "start" : "end",
+      );
+    } catch (error) {
+      const failure = {
+        direction,
+        message: error instanceof Error ? error.message : String(error),
+      };
+      chapterFailureRef.current = failure;
+      setChapterFailure(failure);
+      sessionRef.current?.releaseBoundary();
+    } finally {
+      changingChapter.current = false;
+      setChapterPending(false);
+    }
+  }
+
+  function toggleReaderChrome() {
+    setShowOptions(false);
+    setShowToc(false);
+    setShowMore(false);
     setShowChrome((visible) => !visible);
   }
 
@@ -745,13 +943,27 @@ export default function NovelViewer({
       }
       return next;
     });
-    setShowChrome(true);
+    setShowChrome(false);
     setShowOptions(false);
     setShowToc(false);
     setShowMore(false);
   }
 
   function bookmark() {
+    if (item.onlineNovelRef) {
+      void act(async () => {
+        setBookmarks(
+          readerBookmarks(
+            await window.media.onlineNovels.bookmark(
+              item.onlineNovelRef!,
+              currentProgress.current,
+            ),
+          ),
+        );
+        useApp.getState().notify("已添加阅读书签");
+      });
+      return;
+    }
     const next = [...bookmarks, { ...currentProgress.current }].slice(-50);
     setBookmarks(next);
     localStorage.setItem(bookmarkKey, JSON.stringify(next));
@@ -759,12 +971,35 @@ export default function NovelViewer({
   }
 
   function removeBookmark(index: number) {
+    if (item.onlineNovelRef && bookmarks[index]?.onlineId) {
+      void act(async () =>
+        setBookmarks(
+          readerBookmarks(
+            await window.media.onlineNovels.deleteBookmark(
+              item.onlineNovelRef!,
+              bookmarks[index].onlineId!,
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     const next = bookmarks.filter((_, position) => position !== index);
     setBookmarks(next);
     localStorage.setItem(bookmarkKey, JSON.stringify(next));
   }
 
-  function restoreBookmark(progress: Progress) {
+  function restoreBookmark(progress: ReaderBookmark) {
+    if (
+      online &&
+      progress.onlineChapterId &&
+      progress.onlineChapterId !== online.chapterId
+    ) {
+      void act(async () => {
+        await online.navigateChapter(progress.onlineChapterId!, progress);
+      });
+      return;
+    }
     if (progress.cfi) sessionRef.current?.display(progress.cfi);
     else if (container.current) {
       currentProgress.current = { ...progress };
@@ -841,11 +1076,11 @@ export default function NovelViewer({
       : wholeBookReady
         ? Math.round(wholeBookProgress * 1000)
         : Math.round(chapterProgress * 1000);
-  const progressValue = progressPreview ?? actualProgressValue;
+  const progressValue = actualProgressValue;
   const progressLabel =
     item.ext === "txt" || wholeBookReady
       ? `${Math.min(100, progressValue / 10).toFixed(1)}%`
-      : `本章 ${(chapterProgress * 100).toFixed(0)}%`;
+      : "计算进度…";
 
   return (
     <div
@@ -865,205 +1100,340 @@ export default function NovelViewer({
           "--reader-font": READER_FONTS[settings.readerFont].family,
         } as CSSProperties
       }
-      onMouseMove={(event) => {
-        if (event.clientY < 54) setShowChrome(true);
-      }}
-      onMouseUp={() => {
-        if (!window.getSelection()?.isCollapsed) setShowChrome(true);
-      }}
     >
-      <header className="reader-chrome reader-topbar">
-        <div className="reader-top-left">
-          <IconButton label="返回媒体库" onClick={close}>
-            <ArrowLeft size={18} />
-          </IconButton>
-          <IconButton
-            label="目录与书签"
-            active={showToc}
-            onClick={() => {
-              setShowToc(!showToc);
-              setShowOptions(false);
-              setShowMore(false);
-            }}
-          >
-            <List size={18} />
-          </IconButton>
-        </div>
-        <div className="reader-book-title" title={item.title}>
-          {item.title}
-        </div>
-        <div className="reader-top-actions">
-          <IconButton label="添加书签" onClick={bookmark}>
-            <BookMarked size={18} />
-          </IconButton>
-          <IconButton
-            label={selecting ? "退出文字选择" : "选择文字"}
-            active={selecting}
-            onClick={toggleTextSelection}
-          >
-            <Type size={18} />
-          </IconButton>
-          <IconButton
-            label="阅读外观"
-            active={showOptions}
-            onClick={() => {
-              setShowOptions(!showOptions);
-              setShowToc(false);
-              setShowMore(false);
-            }}
-          >
-            <Settings2 size={18} />
-          </IconButton>
-          <IconButton
-            label="更多"
-            active={showMore}
-            onClick={() => {
-              setShowMore(!showMore);
-              setShowOptions(false);
-              setShowToc(false);
-            }}
-          >
-            <MoreHorizontal size={18} />
-          </IconButton>
-        </div>
-      </header>
+      <button
+        className="reader-exit-button"
+        type="button"
+        aria-label="返回媒体库"
+        title="返回媒体库（Esc）"
+        onClick={close}
+      >
+        <ArrowLeft size={18} />
+      </button>
+      {showChrome && (
+        <section
+          ref={panel}
+          className="reader-bottom-panel"
+          role="dialog"
+          aria-label="阅读菜单"
+          aria-modal="true"
+        >
+          <header className="reader-panel-heading">
+            <div className="reader-book-title" title={item.title}>
+              {item.title}
+            </div>
+            <IconButton
+              label="关闭阅读菜单"
+              onClick={() => {
+                setShowChrome(false);
+                setShowOptions(false);
+                setShowToc(false);
+                setShowMore(false);
+              }}
+            >
+              <X size={18} />
+            </IconButton>
+          </header>
+          <div className="reader-panel-actions">
+            <IconButton
+              label="目录与书签"
+              active={showToc}
+              onClick={() => {
+                setShowToc(!showToc);
+                setShowOptions(false);
+                setShowMore(false);
+              }}
+            >
+              <List size={18} />
+            </IconButton>
 
-      {showMore && (
-        <div className="reader-more-popover">
-          {item.ext === "txt" && (
-            <label className="reader-more-row">
-              <span>文本编码</span>
+            <IconButton label="添加书签" onClick={bookmark}>
+              <BookMarked size={18} />
+            </IconButton>
+            <IconButton
+              label={selecting ? "退出文字选择" : "选择文字"}
+              active={selecting}
+              onClick={toggleTextSelection}
+            >
+              <Type size={18} />
+            </IconButton>
+            <IconButton
+              label="阅读外观"
+              active={showOptions}
+              onClick={() => {
+                setShowOptions(!showOptions);
+                setShowToc(false);
+                setShowMore(false);
+              }}
+            >
+              <Settings2 size={18} />
+            </IconButton>
+            <IconButton
+              label="更多"
+              active={showMore}
+              onClick={() => {
+                setShowMore(!showMore);
+                setShowOptions(false);
+                setShowToc(false);
+              }}
+            >
+              <MoreHorizontal size={18} />
+            </IconButton>
+          </div>
+          <div className="reader-panel-controls">
+            <label>
+              阅读方式
               <select
-                aria-label="文本编码"
-                value={encoding}
-                onChange={(event) => setEncoding(event.target.value)}
+                aria-label="小说翻页模式"
+                value={settings.readerMode}
+                onChange={(event) =>
+                  void act(() =>
+                    setSettings({
+                      ...settings,
+                      readerMode: event.target.value as Settings["readerMode"],
+                    }),
+                  )
+                }
               >
-                <option value="">自动识别</option>
-                <option value="utf-8">UTF-8</option>
-                <option value="gb18030">GB18030</option>
-                <option value="utf16-le">UTF-16 LE</option>
-                <option value="utf16-be">UTF-16 BE</option>
+                <option value="scroll">连续滚动</option>
+                <option value="paged">分页翻页</option>
               </select>
             </label>
-          )}
-          <button
-            className="reader-more-row"
-            onClick={() => void act(() => window.media.reveal(item.id))}
-          >
-            <FolderOpen size={16} />
-            <span>在文件夹中显示</span>
-          </button>
-        </div>
-      )}
-
-      {showToc && (
-        <aside className="reader-drawer reader-toc">
-          <div className="reader-drawer-heading">
-            <strong>阅读导航</strong>
-            <IconButton label="关闭目录" onClick={() => setShowToc(false)}>
-              <X size={17} />
-            </IconButton>
-          </div>
-          <div
-            className="reader-drawer-tabs"
-            role="tablist"
-            aria-label="阅读导航"
-          >
-            <button
-              role="tab"
-              aria-selected={tocTab === "chapters"}
-              onClick={() => setTocTab("chapters")}
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void act(async () => {
+                  await applySeek.current(
+                    Math.max(0, Math.min(100, Number(seekDraft) || 0)) * 10,
+                  );
+                });
+              }}
             >
-              目录
-            </button>
-            <button
-              role="tab"
-              aria-selected={tocTab === "bookmarks"}
-              onClick={() => setTocTab("bookmarks")}
-            >
-              书签 <span>{bookmarks.length}</span>
-            </button>
+              <label>
+                {online ? "章内进度" : "全书进度"}
+                <input
+                  aria-label="阅读进度百分比"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={seekDraft}
+                  onChange={(event) => setSeekDraft(event.target.value)}
+                />
+                %
+              </label>
+              <button
+                type="submit"
+                className="text-button"
+                disabled={item.ext === "epub" && !wholeBookReady}
+              >
+                跳转
+              </button>
+            </form>
+            {online && (
+              <label>
+                章节
+                <select
+                  aria-label="跳转章节"
+                  value={online.chapterId}
+                  onChange={(event) => {
+                    setShowChrome(false);
+                    void act(async () => {
+                      await online.navigateChapter(event.target.value);
+                    });
+                  }}
+                >
+                  {online.details.chapters.map((chapter, index) => (
+                    <option key={chapter.id} value={chapter.id}>
+                      {index + 1}. {chapter.volume} · {chapter.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
-          <div className="reader-drawer-list">
-            {tocTab === "chapters"
-              ? item.ext === "txt"
-                ? chapters.map((chapter) => (
-                    <button
-                      key={chapter.index}
-                      className={
-                        currentChapter?.index === chapter.index ? "current" : ""
-                      }
-                      onClick={() => {
-                        const target =
-                          container.current?.querySelector<HTMLElement>(
-                            `[data-offset="${chapter.index}"]`,
-                          );
-                        target?.scrollIntoView({ block: "start" });
-                        currentProgress.current = {
-                          ...currentProgress.current,
-                          textOffset: chapter.index,
-                        };
-                        setShowToc(false);
-                      }}
-                    >
-                      {chapter.label}
-                    </button>
-                  ))
-                : toc.map((chapter, index) => (
-                    <button
-                      key={chapter.href}
-                      className={index === activeTocIndex ? "current" : ""}
-                      onClick={() => {
-                        sessionRef.current?.display(chapter.href);
-                        setShowToc(false);
-                      }}
-                    >
-                      {chapter.label}
-                    </button>
-                  ))
-              : bookmarks.map((mark, index) => (
-                  <div
-                    className="reader-bookmark-row"
-                    key={`${mark.cfi ?? mark.textOffset ?? mark.position}-${index}`}
+          {showMore && (
+            <div className="reader-more-popover">
+              {item.ext === "txt" && (
+                <label className="reader-more-row">
+                  <span>文本编码</span>
+                  <select
+                    aria-label="文本编码"
+                    value={encoding}
+                    onChange={(event) => setEncoding(event.target.value)}
                   >
-                    <button onClick={() => restoreBookmark(mark)}>
-                      <BookMarked size={15} />
-                      <span>书签 {String(index + 1).padStart(2, "0")}</span>
-                    </button>
-                    <button
-                      className="reader-bookmark-remove"
-                      aria-label={`移除书签 ${index + 1}`}
-                      onClick={() => removeBookmark(index)}
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                ))}
-            {tocTab === "chapters" && !chapters.length && !toc.length && (
-              <p>此书暂无章节目录</p>
-            )}
-            {tocTab === "bookmarks" && !bookmarks.length && (
-              <p>还没有添加书签</p>
-            )}
-          </div>
-        </aside>
-      )}
+                    <option value="">自动识别</option>
+                    <option value="utf-8">UTF-8</option>
+                    <option value="gb18030">GB18030</option>
+                    <option value="utf16-le">UTF-16 LE</option>
+                    <option value="utf16-be">UTF-16 BE</option>
+                  </select>
+                </label>
+              )}
+              {item.onlineNovelRef ? (
+                <button
+                  className="reader-more-row"
+                  onClick={() =>
+                    void act(() =>
+                      window.media.onlineNovels.enqueue(item.onlineNovelRef!, [
+                        item.onlineNovelRef!.chapterId,
+                      ]),
+                    )
+                  }
+                >
+                  下载当前章
+                </button>
+              ) : (
+                <button
+                  className="reader-more-row"
+                  onClick={() => void act(() => window.media.reveal(item.id))}
+                >
+                  <FolderOpen size={16} />
+                  <span>在文件夹中显示</span>
+                </button>
+              )}
+            </div>
+          )}
 
-      {showOptions && (
-        <aside className="reader-drawer reader-appearance">
-          <div className="reader-drawer-heading">
-            <strong>阅读外观</strong>
-            <IconButton
-              label="关闭阅读外观"
-              onClick={() => setShowOptions(false)}
-            >
-              <X size={17} />
-            </IconButton>
-          </div>
-          <ReaderPreferences compact />
-        </aside>
-      )}
+          {showToc && (
+            <aside className="reader-drawer reader-toc">
+              <div className="reader-drawer-heading">
+                <strong>阅读导航</strong>
+                <IconButton label="关闭目录" onClick={() => setShowToc(false)}>
+                  <X size={17} />
+                </IconButton>
+              </div>
+              <div
+                className="reader-drawer-tabs"
+                role="tablist"
+                aria-label="阅读导航"
+              >
+                <button
+                  role="tab"
+                  aria-selected={tocTab === "chapters"}
+                  onClick={() => setTocTab("chapters")}
+                >
+                  目录
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={tocTab === "bookmarks"}
+                  onClick={() => setTocTab("bookmarks")}
+                >
+                  书签 <span>{bookmarks.length}</span>
+                </button>
+              </div>
+              <div className="reader-drawer-list">
+                {tocTab === "chapters"
+                  ? online
+                    ? online.details.chapters.map((chapter, index, all) => (
+                        <div key={chapter.id}>
+                          {(index === 0 ||
+                            all[index - 1].volume !== chapter.volume) && (
+                            <p>{chapter.volume}</p>
+                          )}
+                          <button
+                            className={
+                              chapter.id === online.chapterId ? "current" : ""
+                            }
+                            onClick={() => {
+                              void act(async () => {
+                                await online.navigateChapter(chapter.id);
+                              });
+                              setShowToc(false);
+                            }}
+                          >
+                            {chapter.title}
+                            {chapter.downloaded ? " · 已下载" : ""}
+                          </button>
+                        </div>
+                      ))
+                    : item.ext === "txt"
+                      ? chapters.map((chapter) => (
+                          <button
+                            key={chapter.index}
+                            className={
+                              currentChapter?.index === chapter.index
+                                ? "current"
+                                : ""
+                            }
+                            onClick={() => {
+                              const target =
+                                container.current?.querySelector<HTMLElement>(
+                                  `[data-offset="${chapter.index}"]`,
+                                );
+                              target?.scrollIntoView({ block: "start" });
+                              currentProgress.current = {
+                                ...currentProgress.current,
+                                textOffset: chapter.index,
+                              };
+                              setShowToc(false);
+                            }}
+                          >
+                            {chapter.label}
+                          </button>
+                        ))
+                      : toc.map((chapter, index) => (
+                          <button
+                            key={chapter.href}
+                            className={
+                              index === activeTocIndex ? "current" : ""
+                            }
+                            onClick={() => {
+                              sessionRef.current?.display(chapter.href);
+                              setShowToc(false);
+                            }}
+                          >
+                            {chapter.label}
+                          </button>
+                        ))
+                  : bookmarks.map((mark, index) => (
+                      <div
+                        className="reader-bookmark-row"
+                        key={`${mark.cfi ?? mark.textOffset ?? mark.position}-${index}`}
+                      >
+                        <button onClick={() => restoreBookmark(mark)}>
+                          <BookMarked size={15} />
+                          <span>
+                            {mark.label ||
+                              `书签 ${String(index + 1).padStart(2, "0")}`}
+                          </span>
+                        </button>
+                        <button
+                          className="reader-bookmark-remove"
+                          aria-label={`移除书签 ${index + 1}`}
+                          onClick={() => removeBookmark(index)}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                {tocTab === "chapters" && !chapters.length && !toc.length && (
+                  <p>此书暂无章节目录</p>
+                )}
+                {tocTab === "bookmarks" && !bookmarks.length && (
+                  <p>还没有添加书签</p>
+                )}
+              </div>
+            </aside>
+          )}
 
+          {showOptions && (
+            <aside className="reader-drawer reader-appearance">
+              <div className="reader-drawer-heading">
+                <strong>阅读外观</strong>
+                <IconButton
+                  label="关闭阅读外观"
+                  onClick={() => setShowOptions(false)}
+                >
+                  <X size={17} />
+                </IconButton>
+              </div>
+              <ReaderPreferences compact hideMode />
+            </aside>
+          )}
+        </section>
+      )}
       {error && (
         <div className="reader-error" role="alert">
           <div>
@@ -1108,51 +1478,46 @@ export default function NovelViewer({
         </div>
       )}
 
-      <footer className="reader-chrome reader-footer">
-        <IconButton
-          label="上一页"
-          disabled={
-            item.ext === "txt" &&
-            settings.readerMode === "scroll" &&
-            (container.current?.scrollTop ?? 0) <= 0
-          }
-          onClick={() => movePage(-1)}
-        >
-          <ChevronLeft size={18} />
-        </IconButton>
-        <div
-          className="reader-progress-label"
-          title={currentChapter?.label ?? item.title}
-        >
-          {item.ext === "txt"
-            ? (currentChapter?.label ?? "阅读进度")
-            : wholeBookReady
-              ? "全书阅读进度"
-              : "章节阅读进度"}
+      {!showChrome && (
+        <output className="reader-corner-progress" aria-label="阅读进度文本">
+          {online
+            ? `${Math.max(1, online.details.chapters.findIndex((chapter) => chapter.id === online.chapterId) + 1)}/${online.details.chapters.length}章 · ${(Math.max(0, Math.min(1, wholeBookReady ? wholeBookProgress : chapterProgress)) * 100).toFixed(1)}%`
+            : progressLabel}
+        </output>
+      )}
+      {chapterPending && (
+        <div className="reader-chapter-notice" role="status">
+          正在打开相邻章节…
         </div>
-        <input
-          type="range"
-          min="0"
-          max="1000"
-          value={progressValue}
-          aria-label="阅读进度"
-          disabled={item.ext === "epub" && !wholeBookReady}
-          onPointerDown={(event) => {
-            seekController.begin();
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }}
-          onPointerUp={() => seekController.finish()}
-          onPointerCancel={() => seekController.finish()}
-          onLostPointerCapture={() => seekController.finish()}
-          onBlur={() => seekController.finish()}
-          onKeyUp={() => seekController.finish()}
-          onChange={(event) => seekController.input(Number(event.target.value))}
-        />
-        <output className="reader-progress-value">{progressLabel}</output>
-        <IconButton label="下一页" onClick={() => movePage(1)}>
-          <ChevronRight size={18} />
-        </IconButton>
-      </footer>
+      )}
+      {chapterFailure && (
+        <div className="reader-chapter-notice" role="alert">
+          <span>{chapterFailure.message}</span>
+          <button
+            onClick={() => {
+              const direction = chapterFailure.direction;
+              chapterFailureRef.current = undefined;
+              setChapterFailure(undefined);
+              void crossChapter(direction);
+            }}
+          >
+            重试切章
+          </button>
+          <button
+            onClick={() => {
+              chapterFailureRef.current = undefined;
+              setChapterFailure(undefined);
+            }}
+          >
+            关闭
+          </button>
+        </div>
+      )}
+      {endNotice && !chapterPending && !chapterFailure && (
+        <div className="reader-end-notice" role="status">
+          {endNotice}
+        </div>
+      )}
     </div>
   );
 }

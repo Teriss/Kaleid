@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AppAPI } from "../shared/types";
 import type { VideoAPI } from "../shared/video";
+import { NOVEL_API_METHODS } from "../shared/onlineNovels";
 const video = {
   windowGesture: (
     id: string,
@@ -125,6 +126,17 @@ const api: Record<string, any> = Object.fromEntries(
     (...args: unknown[]) => ipcRenderer.invoke("media:call", method, args),
   ]),
 );
+api.onlineNovels = Object.fromEntries(
+  NOVEL_API_METHODS.map((method) => [
+    method,
+    (...args: unknown[]) => ipcRenderer.invoke("novel:call", method, args),
+  ]),
+);
+api.onlineNovels.onChange = (callback: () => void) => {
+  const listener = () => callback();
+  ipcRenderer.on("novel:change", listener);
+  return () => ipcRenderer.removeListener("novel:change", listener);
+};
 api.onlineComics = Object.fromEntries(
   [
     "categories",

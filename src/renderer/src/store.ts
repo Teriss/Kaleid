@@ -321,13 +321,18 @@ usePlayback.subscribe((state, previous) => {
     persistMusicSession();
 });
 export const resource = (item: MediaItem, variant = "file") =>
-  item.remoteData?.comicRef && (variant === "cover" || variant === "thumbnail")
-    ? item.remoteCover || item.cover || ""
-    : isRemote(item)
+  item.onlineNovelRef
     ? variant === "cover" || variant === "thumbnail"
-      ? (item.remoteCover ?? "")
-      : (item.remoteAudio ?? "")
-    : `media://asset/${item.id}/${variant}?v=${item.resourceVersion ?? item.modifiedAt}`;
+      ? item.remoteCover || item.cover || ""
+      : `media://novel/chapter/${item.id.replace(/^novel-online:/, "")}?v=${item.resourceVersion || 0}`
+    : (item.remoteData?.comicRef || item.remoteData?.novel) &&
+        (variant === "cover" || variant === "thumbnail")
+      ? item.remoteCover || item.cover || ""
+      : isRemote(item)
+        ? variant === "cover" || variant === "thumbnail"
+          ? (item.remoteCover ?? "")
+          : (item.remoteAudio ?? "")
+        : `media://asset/${item.id}/${variant}?v=${item.resourceVersion ?? item.modifiedAt}`;
 export function time(seconds = 0) {
   if (!Number.isFinite(seconds)) return "0:00";
   const total = Math.max(0, Math.floor(seconds));

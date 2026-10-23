@@ -51,7 +51,7 @@ export function attachReaderGestures(
     textSelection(): boolean;
     onPage(direction: number): void;
     onWheelPage?(direction: number): void;
-    onScroll?(x: number, y: number): void;
+    onScroll?(x: number, y: number, source?: "wheel" | "drag"): void;
     onCenter(): void;
     scrollTarget?(): HTMLElement | null;
     onActivity?(): void;
@@ -140,6 +140,7 @@ export function attachReaderGestures(
         options.onScroll(
           pointer.lastX - event.clientX,
           pointer.lastY - event.clientY,
+          "drag",
         );
       } else {
         scroller().scrollLeft = pointer.scrollLeft - deltaX;
@@ -220,7 +221,7 @@ export function attachReaderGestures(
         size || 24,
         target.clientHeight,
       );
-      if (options.onScroll) options.onScroll(0, delta);
+      if (options.onScroll) options.onScroll(0, delta, "wheel");
       else target.scrollTop += delta;
       return;
     }

@@ -4,6 +4,7 @@ import VideoExportTasks from "./VideoExportTasks";
 import VideoPlayer from "./VideoPlayer";
 import ComicLibraryPanel from "./ComicLibraryPanel";
 import OnlineComics from "./OnlineComics";
+import OnlineNovels from "./OnlineNovels";
 import {
   useCallback,
   useEffect,
@@ -252,7 +253,7 @@ export default function App() {
   );
   const previousType =
     (previousNormal?.type as MediaType | undefined) ?? previousLibrary?.type;
-  const currentType = ["type", "libraries", "music", "comic"].includes(
+  const currentType = ["type", "libraries", "music", "comic", "novel"].includes(
     scope.view,
   )
     ? (scope.type as MediaType)
@@ -261,12 +262,14 @@ export default function App() {
         ? ((scope.type as MediaType | undefined) ?? previousType)
         : undefined));
   const layoutsForView = supportedLayouts(currentType).filter((layout) =>
-    ["recordCrate", "screeningRoom", "photoLightbox"].includes(layout)
-      ? !["favorites", "recent"].includes(scope.view) ||
-        Boolean(scope.localOnly)
-      : layout !== "archiveShelf" ||
-        Boolean(scope.type) ||
-        scope.view === "library",
+    scope.view === "novel"
+      ? ["grid", "archiveShelf", "carousel"].includes(layout)
+      : ["recordCrate", "screeningRoom", "photoLightbox"].includes(layout)
+        ? !["favorites", "recent"].includes(scope.view) ||
+          Boolean(scope.localOnly)
+        : layout !== "archiveShelf" ||
+          Boolean(scope.type) ||
+          scope.view === "library",
   );
   useLayoutEffect(() => {
     const layout = normalizeLayout(
@@ -318,13 +321,18 @@ export default function App() {
               scope.localOnly
                 ? window.media.query(q)
                 : specialPage(scope.view as "favorites" | "recent", q)
-          : scope.view === "libraries" || scope.view === "comic"
+          : scope.view === "libraries" ||
+              scope.view === "comic" ||
+              scope.view === "novel"
             ? async () => ({ items: [], total: 0 })
             : undefined,
     [key],
   );
   const media = useMediaSource(query, revision, memoryRef.current, fetchMusic);
-  const wallView = scope.view !== "comic" && memory.layout === "bravais";
+  const wallView =
+    scope.view !== "comic" &&
+    scope.view !== "novel" &&
+    memory.layout === "bravais";
   const musicWall = currentType === "music" && wallView;
   const wallFilter = useMusicWallFilter(
     media.source,
@@ -444,6 +452,7 @@ export default function App() {
           navigate(last, false);
         else if (
           last?.view === "music" ||
+          last?.view === "novel" ||
           last?.view === "libraries" ||
           last?.view === "favorites"
         )
@@ -1170,6 +1179,10 @@ export default function App() {
   }
   async function activateType(type: MediaType) {
     const serial = ++typeNavigationSerial.current;
+    if (type === "novel") {
+      navigate({ view: "novel", type: "novel", section: "home" });
+      return;
+    }
     if (type === "comic") {
       navigate({
         view: "comic",
@@ -1364,9 +1377,8 @@ export default function App() {
     }
   }
   function goBack() {
-    const dialogs = document.querySelectorAll<HTMLDialogElement>(
-      "dialog[open]",
-    );
+    const dialogs =
+      document.querySelectorAll<HTMLDialogElement>("dialog[open]");
     const topDialog = dialogs.item(dialogs.length - 1);
     if (topDialog) {
       topDialog.dispatchEvent(new Event("cancel", { cancelable: true }));
@@ -1409,7 +1421,10 @@ export default function App() {
       setRenameItem(null);
       return;
     }
-    if (scopeRef.current.view === "comic" && scopeRef.current.remoteKind === "chapter") {
+    if (
+      scopeRef.current.view === "comic" &&
+      scopeRef.current.remoteKind === "chapter"
+    ) {
       window.dispatchEvent(new Event("comic:back"));
       return;
     }
@@ -1655,7 +1670,7 @@ export default function App() {
   }, [contextMenu]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (scope.view === "comic") return;
+      if (scope.view === "comic" || scope.view === "novel") return;
       const target = event.target as HTMLElement;
       const typing =
         ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName) ||
@@ -1839,14 +1854,16 @@ export default function App() {
         label="收藏"
         active={scope.view === "favorites"}
         onClick={() =>
-          scope.view === "comic"
-            ? navigate({
-                view: "comic",
-                type: "comic",
-                providerId: scope.providerId,
-                section: "favorites",
-              })
-            : toggleSpecial("favorites")
+          scope.view === "novel"
+            ? navigate({ view: "novel", type: "novel", section: "shelf" })
+            : scope.view === "comic"
+              ? navigate({
+                  view: "comic",
+                  type: "comic",
+                  providerId: scope.providerId,
+                  section: "favorites",
+                })
+              : toggleSpecial("favorites")
         }
       >
         <Heart size={17} />
@@ -1854,7 +1871,7 @@ export default function App() {
       <IconButton
         label="文件夹"
         active={scope.view === "folders"}
-        disabled={scope.view === "comic"}
+        disabled={scope.view === "comic" || scope.view === "novel"}
         onClick={() => setOverlay("folders")}
       >
         <FolderOpen size={17} />
@@ -1863,20 +1880,27 @@ export default function App() {
         label="搜索"
         active={Boolean(searchTerm)}
         onClick={() =>
-          scope.view === "comic"
+          scope.view === "novel"
             ? navigate({
-                view: "comic",
-                type: "comic",
-                providerId: scope.providerId,
+                view: "novel",
+                type: "novel",
                 section: "search",
                 searchMode: "aggregate",
-                remoteId: undefined,
-                remoteKind: undefined,
-                comicChapterId: undefined,
               })
-            : wallView
-              ? openWallSearch()
-              : setOverlay("search")
+            : scope.view === "comic"
+              ? navigate({
+                  view: "comic",
+                  type: "comic",
+                  providerId: scope.providerId,
+                  section: "search",
+                  searchMode: "aggregate",
+                  remoteId: undefined,
+                  remoteKind: undefined,
+                  comicChapterId: undefined,
+                })
+              : wallView
+                ? openWallSearch()
+                : setOverlay("search")
         }
       >
         <Search size={17} />
@@ -1912,8 +1936,7 @@ export default function App() {
   }
   const basicContentNavigation =
     currentType === "music" &&
-    (musicWall ||
-      (scope.view !== "favorites" && scope.view !== "recent")) ? (
+    (musicWall || (scope.view !== "favorites" && scope.view !== "recent")) ? (
       <div className="content-navigation-body">
         <MusicSources
           wall={musicWall && remoteMusic}
@@ -2029,7 +2052,12 @@ export default function App() {
               <button
                 aria-label="清除搜索"
                 onClick={() =>
-                  navigate({ ...scope, search: undefined }, true, false, "replace")
+                  navigate(
+                    { ...scope, search: undefined },
+                    true,
+                    false,
+                    "replace",
+                  )
                 }
               >
                 {searchTerm} ×
@@ -2173,6 +2201,7 @@ export default function App() {
   };
   const canReturnToParent =
     scope.view !== "comic" &&
+    scope.view !== "novel" &&
     (parents.current.canBack ||
       Boolean(parentLibraryLocation(scope, activeLibrary?.roots)));
   const persistentWall = (
@@ -2193,7 +2222,27 @@ export default function App() {
     >
       <div className="window-drag" aria-hidden="true" />
       <div className="browser-content" inert={blocked}>
-        {booted && scope.view === "comic" ? (
+        {booted && scope.view === "novel" ? (
+          <OnlineNovels
+            scope={scope}
+            navigate={(next, mode = "root") =>
+              navigate(next, true, false, mode)
+            }
+            onBack={popParentPage}
+            memory={memory}
+            remember={remember}
+            local={() =>
+              navigate(
+                { view: "libraries", type: "novel" },
+                true,
+                false,
+                "push",
+              )
+            }
+            openLocal={(item) => void open(item, 0)}
+            openLayout={() => setOverlay("layout")}
+          />
+        ) : booted && scope.view === "comic" ? (
           <OnlineComics
             scope={scope}
             navigate={(next, mode = "root") =>
@@ -2254,11 +2303,16 @@ export default function App() {
                 reducedMotion={settings.reducedMotion}
                 libraries={libraries.filter((lib) => lib.type === scope.type)}
                 open={(lib) =>
-                  navigate({
-                    view: "library",
-                    libraryId: lib.id,
-                    type: lib.type,
-                  }, true, false, "push")
+                  navigate(
+                    {
+                      view: "library",
+                      libraryId: lib.id,
+                      type: lib.type,
+                    },
+                    true,
+                    false,
+                    "push",
+                  )
                 }
                 create={() =>
                   setCreateType((scope.type as MediaType) ?? "image")
@@ -2273,11 +2327,16 @@ export default function App() {
                       key={lib.id}
                       className="type-library-entry"
                       onClick={() =>
-                        navigate({
-                          view: "library",
-                          libraryId: lib.id,
-                          type: lib.type,
-                        }, true, false, "push")
+                        navigate(
+                          {
+                            view: "library",
+                            libraryId: lib.id,
+                            type: lib.type,
+                          },
+                          true,
+                          false,
+                          "push",
+                        )
                       }
                     >
                       <FolderOpen size={25} />
@@ -2383,7 +2442,7 @@ export default function App() {
         <AutoHideNavigation
           edge={settings.navigationPosition}
           locked={Boolean(overlay)}
-          alwaysAutoHide={scope.view === "comic"}
+          alwaysAutoHide={scope.view === "comic" || scope.view === "novel"}
           className="main-chrome"
         >
           {sideNavigation ? (
@@ -2433,6 +2492,7 @@ export default function App() {
         )}
         {contentNavigation &&
           scope.view !== "comic" &&
+          scope.view !== "novel" &&
           (!wallView || scope.view === "libraries") && (
             <AutoHideNavigation
               edge="top"
@@ -2472,9 +2532,7 @@ export default function App() {
         {navigationRetry && (
           <button
             className="page-retry"
-            onClick={() =>
-              navigate(navigationRetry, true, false, "replace")
-            }
+            onClick={() => navigate(navigationRetry, true, false, "replace")}
           >
             页面未能载入，重试
           </button>

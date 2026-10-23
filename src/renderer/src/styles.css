@@ -161,7 +161,8 @@ svg {
   left: 0;
   right: 0;
   height: 36px;
-  z-index: 1;
+  /* Keep the drag hit target above the full-window content layer. */
+  z-index: 2;
   -webkit-app-region: drag;
 }
 .window-drag:after {

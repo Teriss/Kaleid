@@ -19,6 +19,7 @@ import { byteRange, isWithin, normalized } from "./core";
 import { EXTENSIONS } from "./core";
 import { installMusic } from "./music";
 import { installOnlineComics } from "./onlineComics";
+import { installOnlineNovels } from "./onlineNovels";
 import { installVideo } from "./video";
 import { installVideoOverlay } from "./videoOverlay";
 import type { MediaQuery, Settings } from "../shared/types";
@@ -68,7 +69,7 @@ function synchronizeTheme(theme: Settings["theme"]) {
     if (win === window) {
       win.setBackgroundColor(appTheme === "light" ? "#eeefec" : "#141414");
       win.setTitleBarOverlay({
-        color: "#00000000",
+        color: appTheme === "light" ? "#eeefec" : "#141414",
         symbolColor: appTheme === "light" ? "#303630" : "#dedede",
         height: 36,
       });
@@ -241,6 +242,7 @@ void app
       () => appTheme,
     );
     const onlineComics = installOnlineComics(() => window, here);
+    const onlineNovels = installOnlineNovels(() => window);
     const videoOverlay = installVideoOverlay(() => window);
     const videoService = installVideo(() => window, call, videoOverlay);
     service = utilityProcess.fork(path.join(here, "worker.js"), [], {
@@ -297,6 +299,8 @@ void app
       }
     });
     protocol.handle("media", async (request) => {
+      if (new URL(request.url).host === "novel")
+        return onlineNovels.resource(request);
       if (new URL(request.url).host === "comic")
         return onlineComics.resource(request);
       const cors = {
@@ -538,7 +542,10 @@ void app
         };
       }
       if (!forwarded.has(method)) throw new Error("不支持的操作");
-      if (method === "clearCache") await onlineComics.clearCache();
+      if (method === "clearCache") {
+        await onlineComics.clearCache();
+        await onlineNovels.clearCache();
+      }
       if (method === "addRoots") args[1] = await validatedRoots(args[1]);
       if (method === "saveSettings") {
         args[0] = {
@@ -581,7 +588,7 @@ void app
         autoHideMenuBar: true,
         titleBarStyle: "hidden",
         titleBarOverlay: {
-          color: "#00000000",
+          color: appTheme === "light" ? "#eeefec" : "#141414",
           symbolColor: appTheme === "light" ? "#303630" : "#dedede",
           height: 36,
         },
@@ -592,6 +599,8 @@ void app
           sandbox: true,
         },
       });
+      // The app has no native menu bar; keep Alt from revealing an empty menu strip.
+      window.setMenu(null);
       videoOverlay.bindWindow(window);
       videoService.bindWindow(window);
       window.webContents.on("will-navigate", (event) => event.preventDefault());

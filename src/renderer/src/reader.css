@@ -39,6 +39,33 @@
 .reader input:focus-visible {
   outline-color: var(--reader-accent);
 }
+.reader-exit-button {
+  position: absolute;
+  z-index: 13;
+  top: 14px;
+  left: 14px;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--reader-muted);
+  background: color-mix(in srgb, var(--reader-panel) 86%, transparent);
+  border: 1px solid var(--reader-border);
+  border-radius: 12px;
+  opacity: 0.82;
+  backdrop-filter: blur(12px);
+  transition:
+    color 140ms ease,
+    opacity 140ms ease,
+    background-color 140ms ease;
+}
+.reader-exit-button:hover,
+.reader-exit-button:focus-visible {
+  color: var(--reader-fg);
+  background: color-mix(in srgb, var(--reader-accent) 13%, var(--reader-panel));
+  opacity: 1;
+}
 .reader-chrome {
   position: absolute;
   z-index: 6;
@@ -596,4 +623,139 @@
   .reader-theme-card {
     transition-duration: 0s;
   }
+}
+
+/* One menu surface for local TXT/EPUB and online chapters. It never resizes the book. */
+.reader-bottom-panel {
+  position: absolute;
+  z-index: 10;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(760px, calc(100% - 32px));
+  max-height: min(80vh, 760px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--reader-border);
+  border-radius: 16px;
+  color: var(--reader-fg);
+  background: var(--reader-panel);
+  box-shadow: 0 12px 38px #0002;
+}
+.reader-panel-heading,
+.reader-panel-actions,
+.reader-panel-controls,
+.reader-panel-controls form,
+.reader-panel-controls label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.reader-panel-heading .reader-book-title {
+  flex: 1;
+  text-align: left;
+}
+.reader-panel-actions,
+.reader-panel-controls {
+  flex-wrap: wrap;
+}
+.reader-panel-controls {
+  font-size: 12px;
+  color: var(--reader-muted);
+}
+.reader-panel-controls > *,
+.reader-panel-controls form > * {
+  flex-shrink: 0;
+}
+.reader-panel-controls label {
+  white-space: nowrap;
+}
+.reader .reader-bottom-panel .reader-panel-controls input,
+.reader .reader-bottom-panel .reader-panel-controls select {
+  min-width: 0;
+  max-width: 270px;
+  padding: 7px 9px;
+  color: var(--reader-fg);
+  background: var(--reader-bg);
+  border: 1px solid var(--reader-border);
+  border-radius: 7px;
+}
+.reader-panel-controls input {
+  width: 72px;
+}
+.reader-bottom-panel .text-button {
+  padding: 7px 9px;
+  color: var(--reader-fg);
+  background: transparent;
+}
+.reader-bottom-panel .reader-drawer,
+.reader-bottom-panel .reader-more-popover {
+  position: static;
+  inset: auto;
+  width: 100%;
+  max-height: 48vh;
+  min-height: 0;
+  border: 1px solid var(--reader-border);
+  box-shadow: none;
+  overflow: auto;
+}
+.reader-corner-progress {
+  position: absolute;
+  right: 14px;
+  bottom: 8px;
+  z-index: 4;
+  pointer-events: none;
+  color: var(--reader-muted);
+  font-size: 10px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.reader-chapter-notice,
+.reader-end-notice {
+  position: absolute;
+  z-index: 12;
+  bottom: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: var(--reader-fg);
+  background: var(--reader-panel);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.reader-chapter-notice button {
+  color: var(--reader-fg);
+  white-space: nowrap;
+}
+.reader-end-notice {
+  color: var(--reader-muted);
+  background: transparent;
+  pointer-events: none;
+}
+@media (max-width: 600px) {
+  .reader-bottom-panel {
+    width: calc(100% - 20px);
+    padding: 12px;
+    bottom: 10px;
+  }
+  .reader-panel-controls > label:last-child {
+    width: 100%;
+  }
+  .reader-panel-controls > label:last-child select {
+    flex: 1;
+    max-width: 100%;
+  }
+}
+
+.browser-shell:has(.reader-immersive) .music-quick-dock {
+  visibility: hidden;
+  pointer-events: none;
 }

@@ -306,13 +306,6 @@ body {
   background: var(--app-surface);
 }
 
-.reader :is(.reader-chrome, .reader-drawer, .reader-more-popover) {
-  --reader-fg: var(--app-text);
-  --reader-muted: var(--app-muted);
-  --reader-panel: var(--app-surface);
-  --reader-border: var(--app-line);
-  --reader-accent: var(--app-text);
-}
 
 .modal {
   color: var(--app-text);

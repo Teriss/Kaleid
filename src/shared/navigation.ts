@@ -7,6 +7,7 @@ export interface BrowseLocation {
     | "libraries"
     | "music"
     | "comic"
+    | "novel"
     | "favorites"
     | "recent"
     | "folders";
@@ -20,7 +21,11 @@ export interface BrowseLocation {
   providerId?: string;
   section?: string;
   remoteId?: string;
-  remoteKind?: "playlist" | "album" | "artist" | "comic" | "chapter";
+  remoteKind?: "playlist" | "album" | "artist" | "comic" | "chapter" | "novel";
+  novelChapterId?: string;
+  novelPage?: number;
+  novelSearchId?: string;
+  novelSearchSources?: string[];
   comicChapterId?: string | null;
   searchMode?: "aggregate" | "single";
   /** Distinguishes independent comic search result pages in the parent stack. */

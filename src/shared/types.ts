@@ -70,6 +70,8 @@ export interface Library {
   createdAt: number;
 }
 export interface MediaItem {
+  onlineNovelRef?: import("./onlineNovels").OnlineNovelChapterRef;
+  novelRequiredFont?: boolean;
   videoCodec?: string;
   audioCodec?: string;
   videoInfoVersion?: number;
@@ -248,6 +250,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lyricsPresentation: "split",
 };
 export interface AppAPI {
+  onlineNovels: import("./onlineNovels").OnlineNovelsAPI;
   onlineComics: import("./onlineComics").OnlineComicsAPI;
   comicHub: import("./onlineComics").ComicHubAPI;
   appTheme(): Promise<Settings["theme"]>;

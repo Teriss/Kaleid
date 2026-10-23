@@ -28,6 +28,8 @@ dist/
 !tests/unit/
 !tests/unit/readerColors.test.ts
 !tests/unit/readerGestures.test.ts
+!tests/unit/onlineNovels.test.ts
+!tests/unit/readingSearch.test.ts
 !tests/e2e/
 !tests/e2e/reader.spec.ts
 
