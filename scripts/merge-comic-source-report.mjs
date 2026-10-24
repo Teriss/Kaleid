@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 
 const artifact = "artifacts/comic-source-audit/electron-live-report.json";
-const documentation = "docs/comic-source-verification.json";
+const output = "artifacts/comic-source-audit/source-verification.json";
 const report = JSON.parse(await fs.readFile(artifact, "utf8"));
 const classify = (error = "") => {
   if (/\b401\b|登录|log(?:ged)? ?in|auth|cookie|需要登录/i.test(error))
@@ -23,7 +23,11 @@ for (const source of report.sources) {
 }
 await fs.writeFile(artifact, JSON.stringify(report, null, 2) + "\n");
 
-const details = JSON.parse(await fs.readFile(documentation, "utf8"));
+const baseline = JSON.parse(await fs.readFile("scripts/comic-sources-baseline.json", "utf8"));
+const details = {
+  repository: baseline.repository,
+  sources: baseline.sources.map((source) => ({ ...source })),
+};
 const byFile = new Map(report.sources.map((source) => [source.file, source]));
 for (const source of details.sources) {
   const electron = byFile.get(source.file);
@@ -61,5 +65,5 @@ if (baozi) {
     },
   ];
 }
-await fs.writeFile(documentation, JSON.stringify(details, null, 2) + "\n");
+await fs.writeFile(output, JSON.stringify(details, null, 2) + "\n");
 console.log(JSON.stringify(details.electronAudit));

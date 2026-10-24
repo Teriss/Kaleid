@@ -1,86 +1,91 @@
-# Third-party notices
+# 第三方版权与许可说明
 
-## Online novel transport
+Kaleid 自有代码按 [GNU AGPL v3.0 only](LICENSE) 发布（SPDX：`AGPL-3.0-only`）。本文记录实际引入或适配的代码、数据和发行组件；它不替代各组件的完整许可证，也不将第三方作品重新授权为 Kaleid 自有代码。
 
-The light novel integration uses Microsoft's SignalR JavaScript client and MessagePack protocol package, pinned to version `10.0.11`. These packages retain their MIT license and copyright notices under `node_modules/@microsoft/`.
+## 代码许可与发行
 
-The LightNovelShelf adapter implements the public interface described by the [official Web client](https://github.com/LightNovelShelf/Web). No upstream novel text, illustrations, fonts, credentials or branding assets are bundled with Kaleid. Content is fetched only when using the selected source and remains subject to that source's access permissions.
+Folia 的 AGPLv3 代码已与应用集成，Kaleid 继续使用现有 AGPL-3.0-only 主体许可。Wenku8 和 Venera 相关 GPLv3 部分保留其许可证，组合按 GPLv3 / AGPLv3 第 13 条处理。
 
-## Wenku8 Flutter archive shelf
+分发修改版本或安装包时，需要保留上游版权、许可、修改说明，并按相应许可提供匹配的完整源代码与构建材料。AGPL 对修改版本的网络交互另有第 13 条要求。仅写“参考了某项目”或添加致谢，不能代替实际复制、适配代码时的许可义务；AGPL 本身也不能附加“禁止商用”等额外限制。
 
-The archive shelf geometry, continuous extraction wave and inertial snapping are adapted from Wenku8 Flutter by mikufoxxx, MewX and contributors.
-
-- Repository: https://github.com/mikufoxxx/Wenku8_Flutter
-- Pinned revision: `689e8979002c69aaff60930fa45a9468998c51ab`.
-- The Flutter distribution is GPL version 3 according to its NOTICE; the original GPL-2.0-or-later LICENSE is retained upstream. Both notices and the full GPL v3 text are preserved in `vendor/wenku8/`.
-- The TypeScript adaptation in `archiveShelfModel.ts` remains GPL-3.0-only. The GPLv3/AGPLv3 combination uses the section 13 permission in those licenses; existing AGPL portions retain their license.
-- Modifications dated 2026-10-22, provenance and unmodified reference Dart sources: `vendor/wenku8/ADAPTATIONS.md` and `vendor/wenku8/lib/`.
-- Editable source, original reference sources and license notices are included in Kaleid-Source.zip; notices are also included in the desktop package. No novel files, cover images, illustrations, fonts, or Wenku8 branding are copied from that project.
-
-## FFmpeg
-
-The Windows desktop package includes the FFmpeg 6.1.1 static Windows build distributed by `ffmpeg-static` 5.3.0. The included build identifies itself as GPL v3 and its build configuration enables GPL and version 3 components. Its README and full license are shipped beside `ffmpeg.exe` in `resources/app.asar.unpacked/node_modules/ffmpeg-static/`.
-
-- FFmpeg source revision: https://github.com/FFmpeg/FFmpeg/commit/e38092ef93
-- Windows build provider: https://www.gyan.dev/ffmpeg/builds/
-- FFmpeg license information: https://www.ffmpeg.org/legal.html
-- `ffmpeg-static` package: https://github.com/eugeneware/ffmpeg-static
-
-The packaged binary's `ffmpeg.exe.README` and `ffmpeg.exe.LICENSE` are the authoritative build-specific notices. Review the corresponding source and redistribution terms when publishing installers.
-
-## Native video playback components
-
-The Windows x64 package includes mpv from the shinchiro mpv-winbuild-cmake `20261020` release, and FFprobe from `@ffprobe-installer/win32-x64` version `5.1.0`. Exact archive names, asset IDs or registry URLs, sizes and SHA-256 checksums are pinned in `scripts/video-runtime.json`, also shipped as `resources/video-runtime/runtime-lock.json`. Unmodified distribution documentation is retained beside the executables; copying files are included in `resources/video-runtime/licenses/`.
-
-- mpv source revision: `6a262d11f6`, https://github.com/mpv-player/mpv/tree/6a262d11f6
-- mpv's linked FFmpeg source revision: `38ac3a923`, https://github.com/FFmpeg/FFmpeg/tree/38ac3a923
-- FFprobe source revision: `2296078397`, https://github.com/FFmpeg/FFmpeg/tree/2296078397 (Gyan essentials build dated 2023-02-13; GPL v3 or later as reported by `ffprobe -L`)
-- FFprobe binary package: https://www.npmjs.com/package/@ffprobe-installer/win32-x64/v/5.1.0
-- Windows build scripts and dependency source recipes: https://github.com/shinchiro/mpv-winbuild-cmake
-- Pinned binary release: https://github.com/shinchiro/mpv-winbuild-cmake/releases/tag/20261020
-- mpv copying information: https://github.com/mpv-player/mpv/blob/6a262d11f6/Copyright
-- FFmpeg licensing: https://ffmpeg.org/legal.html
-
-These builds include GPL components. Their copyright, copying files and build recipes govern redistribution; include the corresponding source for the distributed build when publishing binaries. The Kaleid C# window host is part of this project's AGPL-3.0 source archive. Its self-contained .NET runtime is distributed under the .NET MIT license and runtime third-party notices shipped in `resources/video-runtime/host/`.
-
-## FSRCNNX real-time upscaling shader
-
-The package includes the unmodified `FSRCNNX_x2_8-0-4-1.glsl` shader from igv's FSRCNNX 1.1 release. Copyright (C) 2017–2021 igv. The shader's own header licenses it under LGPL-3.0-or-later; retain that header. Its full editable source is shipped in `resources/video-runtime/shaders/` and in the application source archive. LGPL-3.0 and the accompanying GPL-3.0 text are shipped in `resources/video-runtime/licenses/`.
-
-- Release and corresponding source: https://github.com/igv/FSRCNN-TensorFlow/releases/tag/1.1
-- Exact upstream shader URL and SHA-256: `scripts/video-runtime.json` (`shader` entry).
-- Preparation verifies the bundled source checksum before copying it. No TensorFlow, Python, or separate model runtime is distributed for this feature.
-- NVIDIA RTX processing uses the existing mpv Direct3D 11 interface and the user's installed NVIDIA driver. No NVIDIA RTX SDK redistributable is added.
+项目通过 `npm run source:bundle` 生成 `artifacts/Kaleid-Source.zip`。发布者应核对其中的源码、固定依赖和构建输入，并与安装包一起提供；外部二进制组件还应提供其相应构建的源代码获取方式和许可材料。生成归档本身不等于已经完成全部发行义务。
 
 ## Folia Major
 
-Music adapters, lyrics, visualizers, audio effects, and backend bridges are derived from Folia Major by chthollyphile and contributors.
+- 项目：[chthollyphile/folia-major](https://github.com/chthollyphile/folia-major)，作者 chthollyphile 及贡献者。
+- 固定提交：`26c57f9b1b26b402a09e8943171a332215418ce6`，该提交版本 0.7.21。
+- 许可：GNU AGPL v3，完整文本保留在 [vendor/folia/LICENSE](vendor/folia/LICENSE)。
+- 实际用途：音乐适配、歌词、可视化、音效、后台桥接及部分墙面与网格几何算法。
+- 修改与边界：[vendor/folia/ADAPTATIONS.md](vendor/folia/ADAPTATIONS.md)，来源记录：[UPSTREAM.json](vendor/folia/UPSTREAM.json)。
 
-- Repository: https://github.com/chthollyphile/folia-major
-- Pinned revision: `26c57f9b1b26b402a09e8943171a332215418ce6`
-- Upstream version: 0.7.21, as declared by that revision's package.json.
-- License: GNU Affero General Public License, version 3 (`vendor/folia/LICENSE`, reproduced as the project's `LICENSE`).
-- Kaleid modifications and boundaries: `vendor/folia/ADAPTATIONS.md`.
-- This is a modified integration into Kaleid. It is not an official Folia release.
-- The matching application and vendored source, dependency lockfiles, and build instructions are included in `Kaleid-Source.zip` alongside each preview package. Upstream copyright and license notices are retained in source files.
+Kaleid 使用自己的应用外壳和播放整合。保留的上游文件不表示所有 Folia 功能均已启用；当前不提供其双音轨混音引擎和 Folium 插件宿主。
 
-Other dependencies retain their respective package license files under node_modules. The source archive contains the lockfile required to reproduce their exact versions.
+## Wenku8 Flutter
 
-## 7-Zip comic archive runtime
+- 项目：[mikufoxxx/Wenku8_Flutter](https://github.com/mikufoxxx/Wenku8_Flutter)，作者 mikufoxxx、MewX 及上游贡献者。
+- 固定提交：`689e8979002c69aaff60930fa45a9468998c51ab`。
+- 其原始 [LICENSE](vendor/wenku8/LICENSE) 保留 GPL-2.0-or-later 声明；固定版本的 [NOTICE](vendor/wenku8/NOTICE) 声明 Flutter 组合发行使用 GPLv3，完整文本保留在 [GPL-3.0.txt](vendor/wenku8/GPL-3.0.txt)。
+- Kaleid 将书架几何、连续抽取波和惯性吸附算法适配到 TypeScript；适配部分保留 GPL-3.0-only 许可。
+- 2026-10-22 的修改记录及未修改的 Dart 参考源码见 [vendor/wenku8/ADAPTATIONS.md](vendor/wenku8/ADAPTATIONS.md) 和 `vendor/wenku8/lib/`。
 
-Comic archive reading bundles the unmodified Windows x64 `7z.exe` and `7z.dll` from Igor Pavlov's official 7-Zip 26.04 distribution. The exact release URL, archive SHA-256 and individual file hashes are pinned in `scripts/comic-runtime.json`. `scripts/prepare-comic.mjs` verifies all hashes. The installer is unpacked into build artifacts; it is not run or installed on the user's computer.
+未复制其小说内容、封面、插图、品牌或字体资源。
 
-- Upstream release and corresponding source: https://github.com/ip7z/7zip/releases/tag/26.04
-- Copyright (C) 1999–2026 Igor Pavlov. Most code is GNU LGPL; other portions use BSD terms, and RAR decompression portions carry the unRAR restriction. The complete upstream `License.txt` is shipped beside the binaries in `resources/comic-runtime/`.
-- This component is distributed separately from application code and is only invoked as a console process for local archive reading. No changes have been made to its binaries. Users may replace both binaries with compatible versions in that resource directory.
-- Reader behaviour was researched using Venera, Mihon, OpenComic, Komga and Kavita. The local archive implementation incorporates no source files or assets from those applications. The separate online compatibility layer incorporates Venera init.js as described below.
+## Venera 与 Venera-Next
 
-## Venera online comic compatibility library
+- 接口原始项目：[venera-app/venera](https://github.com/venera-app/venera)，GNU GPL v3。
+- 直接来源：[CyrilPeng/Venera-Next](https://github.com/CyrilPeng/Venera-Next)，固定提交 `4ac4a4e68644dc51ecee5144dd9398d071692e25`，版本 `1.18.0+234`。
+- `vendor/venera/init.js` 基于该提交的 `assets/init.js`，GPLv3 完整文本见 [vendor/venera/LICENSE](vendor/venera/LICENSE)。
+- Kaleid 修改了 `Network.setCookies` 和 `Network.deleteCookies`，使其返回宿主操作结果，支持调用者等待 Cookie 写入或删除完成；不能将本地文件描述为“未经修改的上游文件”。
+- 上游与本地校验值见 [UPSTREAM.json](vendor/venera/UPSTREAM.json)，集成与修改记录见 [ADAPTATIONS.md](vendor/venera/ADAPTATIONS.md)。
 
-- Repository: https://github.com/CyrilPeng/Venera-Next
-- Fixed revision: `4ac4a4e68644dc51ecee5144dd9398d071692e25`, upstream version `1.18.0+234`.
-- `vendor/venera/init.js` is the unmodified `assets/init.js` from that revision, distributed under GPL-3.0. Its checksum and license checksum are recorded in `vendor/venera/UPSTREAM.json`; the GPL-3.0 license text is preserved in `vendor/venera/LICENSE`.
-- Kaleid implements its own QuickJS host bridges, per-source Electron Session networking and reader/download integration. This integration is not an official Venera-Next release. The matching source and build inputs are included in `Kaleid-Source.zip`; integration changes and boundaries are documented in `vendor/venera/ADAPTATIONS.md`.
-- Site scripts are installed separately at the user's request. The preset index is https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/index.json. Their licenses and notices remain governed by their upstream authors; the installer does not bundle these scripts. `scripts/comic-sources-baseline.json` records the tested script identities and hashes.
-- `vendor/venera/tags.json` is the simplified-Chinese EhTagTranslation index bundled by Venera-Prime at pinned commit `04ff27009d8379c3e0368a31ee08efe02d241d0c`. The tag data is separately licensed CC BY-NC-SA 3.0 CN; its matching license is in `vendor/venera/TAGS_LICENSE.md`, with source and checksum in `vendor/venera/TAGS_UPSTREAM.json`. The detail page credits EhTagTranslation when it uses this data.
-- QuickJS/quickjs-emscripten, Cheerio, iconv-lite and Sharp retain their upstream dependency licenses in the distributed node_modules. The checked QuickJS WASM variant is pinned to quickjs-emscripten 0.32.0.
+Kaleid 自行实现 QuickJS 宿主、网络会话和阅读、下载整合。站点脚本由用户单独安装，不随应用、源码包发布，也不提供默认仓库。Kaleid 不是 Venera 或 Venera-Next 的官方发行版。
+
+## EhTagTranslation 标签数据
+
+`vendor/venera/tags.json` 是独立数据集，原始数据来自 [EhTagTranslation/Database](https://github.com/EhTagTranslation/Database)，当前文件直接取自 Venera-Prime 提交 `04ff27009d8379c3e0368a31ee08efe02d241d0c` 的 `assets/tags.json`，未修改数据内容。
+
+- 许可：[CC BY-NC-SA 3.0 中国大陆](https://creativecommons.org/licenses/by-nc-sa/3.0/cn/)。
+- 本地完整文本：[TAGS_LICENSE.md](vendor/venera/TAGS_LICENSE.md)。
+- 来源、固定提交和校验值：[TAGS_UPSTREAM.json](vendor/venera/TAGS_UPSTREAM.json)。
+
+该数据不按 AGPL 重新授权。使用和分发时应署名、保留许可、遵守非商业性使用与相同方式共享条件。不能据此宣称软件代码也“禁止商用”，也不能把整套发行物描述为全部仅受 AGPL 约束。计划提供可商业再分发的完整发行物时，需要移除或替换这份数据，或取得相应额外授权。
+
+## 小说源传输依赖
+
+Microsoft SignalR JavaScript 客户端和 MessagePack 协议包固定为 10.0.11，按 MIT 许可使用，原始声明保留在依赖包中。
+
+`host.signalr` 供用户安装的小说源按需调用。小说源脚本、小说正文、账号凭据和站点品牌资源不随应用发布。源脚本自身及站点内容的权利归属与访问条件由对应作者和服务提供方决定。
+
+## 视频与漫画运行组件
+
+### FFmpeg
+
+- 随 `ffmpeg-static` 5.3.0 提供 Windows FFmpeg 6.1.1 静态构建，该二进制报告启用了 GPLv3 组件。
+- 源码提交：[e38092ef93](https://github.com/FFmpeg/FFmpeg/commit/e38092ef93)，构建提供者：[Gyan](https://www.gyan.dev/ffmpeg/builds/)。
+- 构建专用 `ffmpeg.exe.README` 和 `ffmpeg.exe.LICENSE` 随二进制保留，位置为 `resources/app.asar.unpacked/node_modules/ffmpeg-static/`。
+- 许可与源代码义务以相应构建为准，参见 [FFmpeg 法律说明](https://www.ffmpeg.org/legal.html)。
+
+### mpv、FFprobe 与视频宿主
+
+- Windows mpv 固定为 [mpv-winbuild-cmake 20261020](https://github.com/shinchiro/mpv-winbuild-cmake/releases/tag/20261020) 构建，mpv 源码提交 `6a262d11f6`，其 FFmpeg 源码提交 `38ac3a923`。
+- FFprobe 来自 `@ffprobe-installer/win32-x64` 5.1.0，源码提交 `2296078397`，构建报告 GPLv3-or-later。
+- 精确下载地址、文件大小、哈希及组件版本在 `scripts/video-runtime.json` 固定，并随包保存为 `resources/video-runtime/runtime-lock.json`。
+- 未修改的发行说明和 COPYING 材料保留在 `resources/video-runtime/` 及 `licenses/`。构建和依赖来源见 [mpv-winbuild-cmake](https://github.com/shinchiro/mpv-winbuild-cmake) 与 [mpv Copyright](https://github.com/mpv-player/mpv/blob/6a262d11f6/Copyright)。
+
+这些二进制包含 GPL 组件，发布者需要核对并提供对应构建的源代码材料。Kaleid 的 C# 视频窗口宿主属于本项目 AGPL 源码；其随附 .NET 运行时保留 MIT 许可及运行时第三方声明。
+
+### FSRCNNX 超分着色器
+
+保留 igv 的 [FSRCNNX 1.1](https://github.com/igv/FSRCNN-TensorFlow/releases/tag/1.1) 原始 `FSRCNNX_x2_8-0-4-1.glsl`，版权属于 igv（2017–2021），按文件头的 LGPL-3.0-or-later 许可。
+
+完整可编辑着色器在 `scripts/video-shaders/` 和发行资源中保留；LGPLv3 与 GPLv3 文本随运行组件提供。来源和校验值见 `scripts/video-runtime.json`。NVIDIA RTX 处理通过 mpv 与用户驱动调用，没有另行附带 NVIDIA RTX SDK 再发行包。
+
+### 7-Zip
+
+使用 Igor Pavlov 的官方 [7-Zip 26.04](https://github.com/ip7z/7zip/releases/tag/26.04) Windows x64 `7z.exe` 与 `7z.dll`，二进制未经修改。固定版本与校验值见 `scripts/comic-runtime.json`。
+
+Copyright (C) 1999–2026 Igor Pavlov。主要代码使用 LGPL，部分使用 BSD 条款，RAR 解压部分另有 unRAR 限制；完整 `License.txt` 随 `resources/comic-runtime/` 提供。7-Zip 作为独立控制台进程处理本地归档，用户可用兼容版本替换该目录中的二进制。
+
+## 其他依赖
+
+QuickJS / quickjs-emscripten、Cheerio、iconv-lite、Sharp 及其他依赖保留各自包内的版权和许可证。精确依赖版本由 `package-lock.json` 固定；本项目的主体许可不覆盖或取消这些独立声明。

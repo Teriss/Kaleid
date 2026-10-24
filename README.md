@@ -1,69 +1,138 @@
 # Kaleid
 
-Kaleid 是一款面向 Windows 的本地优先多媒体浏览器，可在同一媒体库中整理和浏览图片、音乐、视频、小说与漫画。当前版本为 **0.4.0-preview.5**，仍处于预览阶段。
+<p align="center">
+  <img src="build/kaleid-icon.png" width="112" alt="Kaleid 图标" />
+</p>
 
-[下载与更新说明](https://github.com/Teriss/Kaleid/releases)
+<p align="center"><strong>把图片、音乐、视频、小说和漫画放进同一个媒体库。</strong></p>
 
-## 功能概览
+<p align="center">
+  <img src="https://img.shields.io/badge/Windows-x64-0078D4" alt="Windows x64" />
+  <img src="https://img.shields.io/badge/Status-Preview-orange" alt="预览版本" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/Code-AGPL--3.0--only-blue" alt="代码许可证 AGPL-3.0-only" /></a>
+</p>
 
-- **媒体库**：按类型建立媒体库并添加一个或多个文件夹。应用索引和监听来源目录，原文件保留在原位置；收藏、阅读进度和浏览状态保存在应用数据中。
-- **浏览布局**：可选墙面、空间网格、标准网格和封面流；图片还支持等高与等宽画廊，小说和漫画支持立体书架。收藏、搜索、排序和浏览历史可在库内使用。
-- **音乐**：浏览本地音乐、维护队列和歌单、查看歌词，并使用均衡器、音效、桌面歌词及迷你控制。也可连接网易云音乐、QQ 音乐或 YouTube Music；在线内容受平台、地区和账号权限影响。
-- **视频**：内置 mpv 播放常见格式，支持音轨与字幕选择、续播、画中画和片段导出；可选启用实时超分。
-- **小说**：阅读 TXT、EPUB，支持目录、书签、阅读进度和排版设置；在线书源的可用内容取决于站点访问与账号权限。
-- **漫画**：阅读图片目录、CBZ/ZIP、CBR/RAR 和 7z/CB7，支持双页、缩放、书签与连续翻章；也可配置兼容 Venera 的在线来源。
+<p align="center">
+  <a href="#features">功能</a> ·
+  <a href="#installation">下载安装</a> ·
+  <a href="#start">快速上手</a> ·
+  <a href="docs/source-api.md">漫画与小说源 API</a> ·
+  <a href="#credits">致谢与许可</a>
+</p>
 
-更多功能、来源和已知限制见[文档目录](docs/)。
+Kaleid 是面向 Windows 的本地优先多媒体浏览器。可以浏览自己的媒体文件，也可以按需配置在线音乐服务、漫画源和小说源，在统一界面中播放、阅读与管理收藏。
 
-## 安装与使用
+当前处于预览阶段，发行目标为 **Windows x64**。
 
-1. 从 [Releases](https://github.com/Teriss/Kaleid/releases) 下载 `Kaleid-...-Setup.exe` 并运行安装程序。
-2. 启动后创建媒体库，选择媒体类型并添加已有文件夹。
-3. 在线音乐、小说、漫画及 AI 主题等功能，可按需在应用内登录或配置服务。
+<a id="features"></a>
 
-安装包面向 **Windows x64**。目前安装程序未签名，Windows 可能显示发布者无法验证的提示。升级时请使用相同的应用安装包；应用数据与媒体源目录分开保存。
+## 功能
 
-## 从源码运行
+### 媒体库与浏览
 
-构建环境：Windows x64、Node.js 24 或兼容版本，以及 .NET 10 SDK。
+- 按图片、音乐、视频、小说、漫画建立媒体库，添加多个文件夹，扫描并监听文件变化。
+- 墙面、空间网格、标准网格、封面流等浏览布局；图片可使用等高、等宽画廊，小说和漫画可使用立体书架。
+- 搜索、排序、收藏、历史记录，以及各媒体类型独立的浏览位置。
+- 深色与浅色主题、导航位置、自动隐藏导航和减少动态效果设置。
+
+### 图片
+
+浏览本地图片、放大查看和切换图片，按文件夹组织内容，并在画廊或墙面中快速定位。
+
+### 音乐
+
+- 本地音乐、播放队列、歌单与播放会话恢复。
+- 歌词、动态歌词样式和背景，桌面歌词与迷你播放控制。
+- 十段均衡器、响度统一、音效、睡眠定时及输出设备选择。
+- 可按需连接网易云音乐、QQ 音乐和 YouTube Music；实际内容、音质与登录能力取决于平台和账号权限。
+
+### 视频
+
+- 基于 mpv 的本地播放，支持音轨、字幕、播放速度、画面比例与进度恢复。
+- 画中画；可设置离开播放页后是否自动进入画中画。
+- 截取视频片段，导出 MP4 或 GIF。
+- 可选通用超分和 NVIDIA RTX 处理，实际可用性取决于硬件、驱动与视频格式。
+
+### 小说
+
+- 本地 TXT、EPUB 阅读，支持目录、书签、进度和排版设置。
+- 通过独立 JavaScript 书源使用搜索、最新、热门、作品详情与目录，功能按来源能力显示。
+- 书架、稍后阅读、追更、历史和章节离线下载。
+- 支持来源提供的账号登录、API 节点设置和原生 EPUB 导出。
+
+### 漫画
+
+- 阅读图片目录、CBZ / ZIP、CBR / RAR 和 7z / CB7。
+- 单页、双页、纵向条漫、缩放、章节切换、缩略图、书签与继续阅读。
+- 本地作品与章节整理，识别部分 ComicInfo.xml 元数据。
+- 通过 Venera 兼容 JavaScript 源使用搜索、探索、分类、收藏、登录和下载，具体能力由脚本决定。
+- 漫画源独立管理、批量导入、检查更新，以及按来源设置搜索语言筛选。
+
+<a id="installation"></a>
+
+## 下载安装
+
+在本仓库的 [Releases](https://github.com/Teriss/Kaleid/releases) 中选择 Windows x64 安装包 `Kaleid-…-Setup.exe`，运行安装程序。升级时使用新版本安装包。
+
+本地文件保留在用户选定的文件夹中；应用的索引、设置、收藏、阅读进度和缓存保存在用户数据目录。下载内容保存在应用中设置的下载目录。
+
+<a id="start"></a>
+
+## 快速上手
+
+1. 创建媒体库，选择媒体类型并添加文件夹。
+2. 选择喜欢的布局，打开媒体开始播放或阅读。
+3. 在设置中调整外观、阅读偏好和播放行为。
+4. 需要在线内容时，再进入对应的音乐账号或漫画、小说源管理入口进行配置。
+
+### 配置漫画与小说源
+
+应用不预装站点源，不预填或推荐源仓库。
+
+请阅读 [漫画、小说源配置与 API](docs/source-api.md)，其中包含：
+
+- 漫画和小说源的安装、启用、账号与 API 节点配置。
+- Venera 兼容漫画源、Kaleid NovelSource API v1 的最小示例。
+- 网络请求、设置、登录、章节和仓库索引的接口说明。
+
+### 使用范围
+
+当前提供 Windows x64 版本；不将 macOS、Linux 或其他架构列为已支持平台。小说暂不支持 DRM 保护的 EPUB；漫画暂不支持 PDF、加密或分卷压缩包。
+
+在线内容由用户配置的服务提供，站点变化可能影响搜索、登录和加载。Kaleid 不附带小说正文、漫画图片或站点源脚本。
+
+<details>
+<summary>从源码运行与打包</summary>
+
+需要 Windows x64、Node.js 24 和 .NET 10 SDK。在项目根目录执行：
 
 ```powershell
-git clone https://github.com/Teriss/Kaleid.git
-cd Kaleid
 npm ci
 npm run dev
 ```
 
-常用命令：
+构建安装包：
 
 ```powershell
-npm run build   # 类型检查与生产构建
-npm run preview # 预览生产构建
-npm run dist    # 构建 Windows x64 安装包及源码归档
+npm run dist
 ```
 
-开发和打包首次运行时会下载并准备视频、漫画所需的固定版本运行组件，因此需要网络连接。`npm run dist` 生成的安装程序保存在 `release/` 目录。
+首次开发或构建会联网准备固定版本的漫画、视频运行组件。安装包输出到 `release/`，项目源码归档为 `artifacts/Kaleid-Source.zip`；发布安装包时应同时提供匹配的源码和第三方许可材料。
 
-## 已知限制
+</details>
 
-- 当前为预览版，仅针对 Windows x64 打包和验收；macOS 与 Linux 尚未验收。
-- 暂不支持 DRM 保护的 EPUB、PDF，以及加密或分卷漫画压缩包。
-- 在线服务依赖第三方站点，功能、登录方式与内容可用性可能随站点变化。
-- 音乐服务仍有部分上游功能处于移植中，详情见[音乐移植说明](docs/music-port-status.md)。
-- 视频超分效果与兼容性取决于显卡、驱动和媒体编码。
+<a id="credits"></a>
 
-各功能的详细行为与测试边界见：[视频播放](docs/video-playback.md)、[漫画阅读](docs/comic-reader.md)、[在线小说](docs/online-novels.md)、[在线漫画](docs/online-comics.md)、[导航与音乐墙面](docs/navigation-and-music-wall.md)。
+## 致谢与许可
 
-## 数据与许可
+感谢以下项目及其贡献者：
 
-媒体文件留在用户选择的来源目录。索引数据库、缓存、阅读进度及应用设置保存在 Electron 用户数据目录中；升级不会把这些数据写入媒体文件夹。
+- [Wenku8_Flutter](https://github.com/mikufoxxx/Wenku8_Flutter)：立体书架几何、抽取动画与惯性运动算法的参考和适配。
+- [Folia Major](https://github.com/chthollyphile/folia-major)：音乐服务适配、歌词、视觉效果、音效及部分浏览布局算法。
+- [Venera](https://github.com/venera-app/venera)：漫画扩展接口；当前兼容库直接取自其衍生项目 [Venera-Next](https://github.com/CyrilPeng/Venera-Next) 的固定版本。
 
-### 许可证与上游项目
+Kaleid 自有代码以 **AGPL-3.0-only** 发布，完整文本见 [LICENSE](LICENSE)。引入和适配的第三方代码继续保留各自版权与许可证；GPLv3 与 AGPLv3 代码的组合按两者第 13 条处理，不能将所有上游文件统一改标为自有代码。
 
-Kaleid 自有代码按 GNU Affero General Public License v3.0 only（**AGPL-3.0-only**）发布，见 [LICENSE](LICENSE)。项目也包含按各自许可证保留的上游代码或适配：
+随附的 EhTagTranslation 标签翻译数据另按 **CC BY-NC-SA 3.0 CN** 授权，不包含在代码的 AGPL 授权范围内。涉及该数据的再分发、修改或商业使用，应单独核对其条款。
 
-- [Folia Major](https://github.com/chthollyphile/folia-major)：音乐、歌词、可视化及相关服务代码，采用 AGPL-3.0；集成版本和改动见 [`vendor/folia/ADAPTATIONS.md`](vendor/folia/ADAPTATIONS.md)。
-- [Wenku8 Flutter](https://github.com/mikufoxxx/Wenku8_Flutter)：立体书架几何与运动算法的适配及参考源码。适配部分采用 GPL-3.0-only，上游声明和许可证文本保留在 `vendor/wenku8/`；详情见 [`vendor/wenku8/ADAPTATIONS.md`](vendor/wenku8/ADAPTATIONS.md)。
-- [Venera-Next](https://github.com/CyrilPeng/Venera-Next)：随附的 `vendor/venera/init.js` 来自其固定版本，采用 GPL-3.0。Kaleid 自行实现兼容宿主；本项目不是 Venera 或 Venera-Next 的官方发行版。
-
-上游代码仍受各自许可证和版权声明约束，本项目不代表获得上述项目的官方背书。固定版本、修改记录、完整许可证及其他发行组件的声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 `vendor/` 下的说明文件。每个 Release 同时提供 Kaleid 源码归档。
+固定版本、具体修改、数据许可和运行组件说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。Kaleid 是独立项目，不代表上述项目的官方发行或背书。

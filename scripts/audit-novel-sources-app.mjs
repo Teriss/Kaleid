@@ -89,7 +89,8 @@ try {
     report.sources.push(result);
     console.log(JSON.stringify(result));
   }
-  const file = path.resolve("docs/novel-source-verification.json");
+  const file = path.resolve("artifacts/novel-source-audit/report.json");
+  await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, JSON.stringify(report, null, 2) + "\n");
   console.log(file);
 } finally {

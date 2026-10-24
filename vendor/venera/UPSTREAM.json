@@ -7,5 +7,7 @@
   ],
   "license": "GPL-3.0",
   "sha256": "5854a85bc3822819c2742529906ab3b56bd233323034e6d3e7dc062d8e992a35",
+  "local_sha256": "f87d1d708875e23a8f973020065abcf478e3598e55c0808af61d672376d9b76a",
+  "modifications": "Network.setCookies and Network.deleteCookies return the host result; documented 2026-10-25 in ADAPTATIONS.md",
   "license_sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
 }
