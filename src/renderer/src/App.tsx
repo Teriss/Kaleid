@@ -262,8 +262,13 @@ export default function App() {
       (scope.view === "favorites" || scope.view === "recent"
         ? ((scope.type as MediaType | undefined) ?? previousType)
         : undefined));
-  const layoutsForView = supportedLayouts(currentType).filter((layout) =>
-    scope.view === "novel"
+  const layoutMediaType = scope.view === "novel"
+    ? "novel"
+    : scope.view === "comic"
+      ? "comic"
+      : currentType;
+  const layoutsForView = supportedLayouts(layoutMediaType).filter((layout) =>
+    scope.view === "novel" || scope.view === "comic"
       ? ["grid", "archiveShelf", "carousel"].includes(layout)
       : ["recordCrate", "screeningRoom", "photoLightbox"].includes(layout)
         ? !["favorites", "recent"].includes(scope.view) ||
@@ -273,12 +278,17 @@ export default function App() {
           scope.view === "library",
   );
   useLayoutEffect(() => {
-    const layout = normalizeLayout(
-      memoryRef.current.layout,
-      !layoutsForView.includes(memoryRef.current.layout)
-        ? "mixed"
-        : (currentType ?? "mixed"),
-    );
+    const readingHub = scope.view === "novel" || scope.view === "comic";
+    const layout = readingHub
+      ? layoutsForView.includes(memoryRef.current.layout)
+        ? memoryRef.current.layout
+        : "grid"
+      : normalizeLayout(
+          memoryRef.current.layout,
+          !layoutsForView.includes(memoryRef.current.layout)
+            ? "mixed"
+            : (currentType ?? "mixed"),
+        );
     if (layout !== memoryRef.current.layout) {
       memoryRef.current = { ...memoryRef.current, layout };
       setMemory(memoryRef.current);
@@ -1502,6 +1512,14 @@ export default function App() {
   const title =
     scope.view === "library"
       ? (activeLibrary?.name ?? "媒体库")
+      : scope.view === "libraries"
+        ? currentType === "comic"
+          ? "本地漫画"
+          : currentType === "novel"
+            ? "本地小说"
+            : currentType
+              ? typeInfo(currentType).name
+              : "媒体库"
       : scope.view === "favorites"
         ? "收藏"
         : scope.view === "recent"
@@ -2486,11 +2504,12 @@ export default function App() {
               type="button"
               className="text-button browse-back-button"
               aria-label="返回上一级"
+              title="返回上一级"
               onClick={goBack}
             >
               <ChevronLeft size={17} />
-              <span>返回上一级</span>
             </button>
+            <strong className="browse-back-title">{title}</strong>
           </nav>
         )}
         {contentNavigation &&

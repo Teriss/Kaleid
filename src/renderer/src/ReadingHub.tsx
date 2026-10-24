@@ -1,9 +1,11 @@
 // Shared presentation for the comic and novel hubs. Existing class names preserve the comic visual language.
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   forwardRef,
   type HTMLAttributes,
+  type MouseEvent as ReactMouseEvent,
   type ReactEventHandler,
   type ReactNode,
 } from "react";
@@ -15,10 +17,12 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { IconButton } from "./components";
+import { IconButton, Modal } from "./components";
+import { createPortal } from "react-dom";
 import "./readingHub.css";
-import type { MediaLayout } from "../../shared/types";
+import type { MediaItem, MediaLayout } from "../../shared/types";
 import type { LayoutProps } from "./layouts/shared";
+import { ComicResultContent } from "./layouts/shared";
 import StandardGrid from "./layouts/StandardGrid";
 import ArchiveShelf from "./layouts/ArchiveShelf";
 import SpatialGrid from "./layouts/SpatialGrid";
@@ -107,10 +111,14 @@ export function ReadingHubCards<T>({
   open,
   toggleLater,
   isLater,
+  remove,
+  contextMenu,
   transitionId,
   empty = "暂无作品",
   large = false,
   className = "",
+  richItem,
+  richWrap = false,
 }: {
   items: T[];
   identity(item: T): string;
@@ -119,36 +127,63 @@ export function ReadingHubCards<T>({
   open(item: T): void;
   toggleLater?: (item: T, value: boolean) => void;
   isLater?: (item: T) => boolean;
+  remove?: (item: T) => void;
+  contextMenu?(item: T, event: ReactMouseEvent): void;
   transitionId?: (item: T) => string | undefined;
   empty?: string;
   large?: boolean;
   className?: string;
+  /** Supplies a rich result tile for items that have online metadata. */
+  richItem?(item: T): MediaItem | undefined;
+  /** Lay rich tiles out as a wrapping grid instead of a scrolling rail. */
+  richWrap?: boolean;
 }) {
   if (!items.length) return <div className="comic-hub-empty">{empty}</div>;
+  const rich = Boolean(richItem && items.some((item) => richItem(item)));
   return (
-    <div className={`comic-hub-cards ${large ? "is-large" : ""} ${className}`}>
-      {items.map((item) => (
-        <article
-          className="comic-hub-card"
-          key={identity(item)}
-          data-hub-id={identity(item)}
-          data-comic-transition-id={transitionId?.(item)}
-        >
-          <button className="comic-hub-cover" onClick={() => open(item)}>
-            {cover(item)}
-            <span className="comic-hub-card-title">{title(item)}</span>
-          </button>
-          {toggleLater && (
-            <IconButton
-              label={isLater?.(item) ? "从稍后阅读移除" : "加入稍后阅读"}
-              active={isLater?.(item)}
-              onClick={() => toggleLater(item, !isLater?.(item))}
+    <div
+      className={`comic-hub-cards ${large ? "is-large" : ""} ${rich ? "is-rich" : ""} ${rich && richWrap ? "is-wrap" : ""} ${className}`}
+    >
+      {items.map((item) => {
+        const media = richItem?.(item);
+        return (
+          <article
+            className={`comic-hub-card ${media ? "is-rich" : ""}`}
+            key={identity(item)}
+            data-hub-id={identity(item)}
+            data-comic-transition-id={transitionId?.(item)}
+            onContextMenu={(event) => contextMenu?.(item, event)}
+          >
+            <button
+              className={`comic-hub-cover ${media ? "is-rich" : ""}`}
+              onClick={() => open(item)}
             >
-              <BookmarkPlus size={15} />
-            </IconButton>
-          )}
-        </article>
-      ))}
+              {media ? (
+                <ComicResultContent item={media} />
+              ) : (
+                <>
+                  {cover(item)}
+                  <span className="comic-hub-card-title">{title(item)}</span>
+                </>
+              )}
+            </button>
+            {toggleLater && (
+              <IconButton
+                label={isLater?.(item) ? "从稍后阅读移除" : "加入稍后阅读"}
+                active={isLater?.(item)}
+                onClick={() => toggleLater(item, !isLater?.(item))}
+              >
+                <BookmarkPlus size={15} />
+              </IconButton>
+            )}
+            {remove && (
+              <IconButton label="从最近阅读移除" onClick={() => remove(item)}>
+                <X size={15} />
+              </IconButton>
+            )}
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -339,5 +374,211 @@ export function HomeSectionToggle({
       <span className="comic-home-section-title">{title}</span>
       {count != null && <span>{count}</span>}
     </button>
+  );
+}
+
+export interface DownloadQueueGroup {
+  id: string;
+  title: string;
+  subtitle: string;
+  /** Every unfinished task, used by the destructive cancel action. */
+  taskIds: string[];
+  /** Running or waiting tasks; pause applies to these. */
+  activeTaskIds: string[];
+  /** Tasks the user paused; they stay listed so they can be resumed. */
+  pausedTaskIds: string[];
+  downloading: number;
+  queued: number;
+  paused: number;
+  progress?: number;
+  progressLabel: string;
+}
+
+export function DownloadQueueModal({
+  groups,
+  close,
+  pause,
+  resume,
+  cancel,
+}: {
+  groups: DownloadQueueGroup[];
+  close(): void;
+  pause(taskIds: string[]): void;
+  resume(taskIds: string[]): void;
+  cancel(taskIds: string[]): void;
+}) {
+  const activeTasks = groups.reduce(
+    (sum, group) => sum + group.activeTaskIds.length,
+    0,
+  );
+  const pausedTasks = groups.reduce(
+    (sum, group) => sum + group.pausedTaskIds.length,
+    0,
+  );
+  return (
+    <Modal
+      title="下载中"
+      subtitle={[
+        `${groups.length} 部作品`,
+        activeTasks ? `${activeTasks} 个章节任务` : "",
+        pausedTasks ? `${pausedTasks} 个已暂停` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")}
+      className="download-queue-modal"
+      close={close}
+    >
+      {groups.length ? (
+        <div className="download-queue-list">
+          {groups.map((group) => (
+            <article className="download-queue-item" key={group.id}>
+              <div className="download-queue-copy">
+                <strong title={group.title}>{group.title}</strong>
+                <small>{group.subtitle}</small>
+                <div
+                  className="download-queue-progress"
+                  aria-label={`${group.title}：${group.progressLabel}`}
+                >
+                  {group.progress === undefined ? (
+                    <progress aria-label={`${group.title} 下载准备进度`} />
+                  ) : (
+                    <progress
+                      value={group.progress}
+                      max={100}
+                      aria-label={`${group.title} 下载进度`}
+                    />
+                  )}
+                  <small>{group.progressLabel}</small>
+                </div>
+              </div>
+              <div className="download-queue-actions">
+                {group.activeTaskIds.length > 0 && (
+                  <button
+                    className="button secondary"
+                    onClick={() => pause(group.activeTaskIds)}
+                  >
+                    暂停
+                  </button>
+                )}
+                {group.pausedTaskIds.length > 0 && (
+                  <button
+                    className="button secondary"
+                    onClick={() => resume(group.pausedTaskIds)}
+                  >
+                    继续
+                  </button>
+                )}
+                <button
+                  className="text-button danger-text"
+                  onClick={() => cancel(group.taskIds)}
+                >
+                  取消
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="download-queue-empty">当前没有正在下载或排队的内容。</p>
+      )}
+    </Modal>
+  );
+}
+
+export interface HubMenuItem {
+  label: string;
+  Icon?: LucideIcon;
+  danger?: boolean;
+  onSelect(): void;
+}
+
+export function HubContextMenu({
+  heading,
+  items,
+  point,
+  close,
+}: {
+  heading?: string;
+  items: HubMenuItem[];
+  point: { x: number; y: number };
+  close(): void;
+}) {
+  const menu = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = menu.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    node.style.left = `${Math.max(8, Math.min(point.x, window.innerWidth - rect.width - 8))}px`;
+    node.style.top = `${Math.max(8, Math.min(point.y, window.innerHeight - rect.height - 8))}px`;
+    node.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus({
+      preventScroll: true,
+    });
+  }, [point.x, point.y, items.length]);
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    };
+    window.addEventListener("keydown", keydown, true);
+    const scroll = (event: Event) => {
+      if (!menu.current?.contains(event.target as Node)) close();
+    };
+    window.addEventListener("scroll", scroll, true);
+    return () => {
+      window.removeEventListener("keydown", keydown, true);
+      window.removeEventListener("scroll", scroll, true);
+    };
+  }, [close]);
+  if (!items.length) return null;
+  return createPortal(
+    <div
+      className="context-dismiss"
+      onMouseDown={close}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      <div
+        ref={menu}
+        className="media-context-menu hub-context-menu"
+        role="menu"
+        aria-label="内容操作"
+        style={{ left: point.x, top: point.y }}
+        onMouseDown={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+          event.preventDefault();
+          const buttons = [
+            ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+              "[role=menuitem]",
+            ),
+          ];
+          const current = buttons.indexOf(
+            document.activeElement as HTMLButtonElement,
+          );
+          buttons[
+            (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) %
+              buttons.length
+          ]?.focus();
+        }}
+      >
+        {heading && <div className="context-heading">{heading}</div>}
+        {items.map((item) => (
+          <button
+            role="menuitem"
+            key={item.label}
+            className={item.danger ? "danger" : ""}
+            onClick={() => {
+              close();
+              item.onSelect();
+            }}
+          >
+            {item.Icon ? <item.Icon size={15} /> : <span />}
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>,
+    document.body,
   );
 }

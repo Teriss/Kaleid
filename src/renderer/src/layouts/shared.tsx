@@ -210,7 +210,7 @@ export function Poster({
     item.id === currentTrackId;
   return (
     <article
-      className={`poster ${mode}-poster ${active ? "is-focused" : ""} ${selected ? "is-selected" : ""} ${item?.kind === "folder" ? "directory-poster" : ""} ${item?.type === "image" ? "image-poster" : ""} ${item?.missing ? "is-missing" : ""}`}
+      className={`poster ${mode}-poster ${active ? "is-focused" : ""} ${selected ? "is-selected" : ""} ${item?.kind === "folder" ? "directory-poster" : ""} ${item?.type === "image" ? "image-poster" : ""} ${mode === "grid" && item?.type === "comic" && item.remoteData?.comicRef ? "comic-result-card" : ""} ${item?.missing ? "is-missing" : ""}`}
       style={style}
       data-index={index}
       data-media-id={item?.id}
@@ -229,7 +229,15 @@ export function Poster({
         }}
         onContextMenu={(event) => item && contextMenu?.(item, index, event)}
       >
-        {item ? <Cover item={item} /> : <div className="poster-placeholder" />}
+        {mode === "grid" &&
+        item?.type === "comic" &&
+        item.remoteData?.comicRef ? (
+          <ComicResultContent item={item} />
+        ) : item ? (
+          <Cover item={item} />
+        ) : (
+          <div className="poster-placeholder" />
+        )}
         {item?.kind === "folder" && (
           <span
             className="folder-corner"
@@ -238,13 +246,22 @@ export function Poster({
             <Folder size={14} />
           </span>
         )}
-        <span className="poster-shade" />
-        {item && (
-          <span className="poster-caption">
-            <strong>{item.title}</strong>
-            {active && item.artist && <small>{item.artist}</small>}
-          </span>
-        )}
+        {!(
+          mode === "grid" &&
+          item?.type === "comic" &&
+          item.remoteData?.comicRef
+        ) && <span className="poster-shade" />}
+        {item &&
+          !(
+            mode === "grid" &&
+            item.type === "comic" &&
+            item.remoteData?.comicRef
+          ) && (
+            <span className="poster-caption">
+              <strong>{item.title}</strong>
+              {active && item.artist && <small>{item.artist}</small>}
+            </span>
+          )}
         {item?.type === "video" && item.duration ? (
           <span className="poster-duration">{time(item.duration)}</span>
         ) : null}
@@ -306,6 +323,126 @@ export function Poster({
     </article>
   );
 }
+
+/**
+ * Rich online-comic tile: cover, `[<pages>p]` title, tags, rating and upload
+ * time. Shared by the result grid and every hub/section card so all sources
+ * present their comics the same way.
+ */
+export function ComicResultContent({ item }: { item: MediaItem }) {
+  const comic = item.remoteData?.comic as
+    | {
+        maxPage?: number;
+        stars?: number;
+        uploadTime?: string;
+        description?: string;
+        tags?: unknown;
+        tagDisplay?: {
+          namespace: string;
+          tags: { value: string; label: string }[];
+        }[];
+      }
+    | undefined;
+  const maxPage =
+    typeof comic?.maxPage === "number" && comic.maxPage > 0
+      ? comic.maxPage
+      : undefined;
+  const translatedTags = comic?.tagDisplay
+    ?.filter(
+      (group) =>
+        !/^(category|categories|uploader|upload.?time|time|pages|max.?page)$/i.test(
+          group.namespace,
+        ),
+    )
+    .flatMap((group) =>
+      group.tags.map((tag) => ({ value: tag.value, label: tag.label })),
+    );
+  const rawTags = Array.isArray(comic?.tags)
+    ? comic.tags
+        .filter((tag): tag is string => typeof tag === "string")
+        .map((tag) => ({
+          value: tag,
+          label: tag.split(":").at(-1)?.replaceAll("_", " ") ?? tag,
+        }))
+    : [];
+  // Keep descriptive tags (language, artist, parody, character, genre) and
+  // leave source metadata such as category/uploader to the detail view.
+  const tags = (translatedTags ?? rawTags)
+    .filter(
+      ({ value }) =>
+        !/^(category|uploader|upload.?time|max.?page):/i.test(value),
+    )
+    .slice(0, 10);
+  const rating =
+    typeof comic?.stars === "number" && Number.isFinite(comic.stars)
+      ? Math.max(0, Math.min(5, comic.stars))
+      : undefined;
+  // Venera's detailed comic tile also displays the list item's description
+  // below the rating when the detail-only uploadTime field is unavailable.
+  const uploaded = comic?.uploadTime?.trim() || comic?.description?.trim();
+  const date = uploaded ? new Date(uploaded) : undefined;
+  const timeLabel =
+    date && Number.isFinite(date.getTime())
+      ? new Intl.DateTimeFormat("zh-CN", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).format(date)
+      : uploaded;
+  const title = `${maxPage ? `[${maxPage}p]` : ""}${item.title.replace(/\s*\n\s*/g, " ").trim()}`;
+  return (
+    <span className="comic-result-content">
+      <Cover item={item} className="comic-result-cover" />
+      <span className="comic-result-info">
+        <strong className="comic-result-title" title={title}>
+          {title}
+        </strong>
+        {item.artist && (
+          <small className="comic-result-subtitle" title={item.artist}>
+            {item.artist}
+          </small>
+        )}
+        <span className="comic-result-tags" aria-label="漫画标签">
+          {tags.map(({ value, label }, index) => (
+            <span
+              className="comic-result-tag"
+              key={`${value}-${index}`}
+              title={value}
+            >
+              {label}
+            </span>
+          ))}
+        </span>
+        <span className="comic-result-meta">
+          {rating !== undefined && (
+            <span
+              className="comic-result-rating"
+              aria-label={`评分 ${rating.toFixed(2)} / 5`}
+            >
+              <span aria-hidden="true">
+                {"★".repeat(Math.round(rating))}
+                {"☆".repeat(5 - Math.round(rating))}
+              </span>
+              <small>{rating.toFixed(2)}</small>
+            </span>
+          )}
+          {timeLabel && (
+            <small
+              className="comic-result-time"
+              aria-label={`上传时间 ${timeLabel}`}
+            >
+              {timeLabel}
+            </small>
+          )}
+        </span>
+      </span>
+    </span>
+  );
+}
+
 export function Backdrop({
   item,
   reducedMotion,

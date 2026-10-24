@@ -1543,6 +1543,31 @@ select {
   background: light-dark(var(--app-surface), #343436);
   color: var(--ui-ccc);
 }
+.settings-description {
+  max-width: 620px;
+  margin: 0 0 16px;
+  color: light-dark(var(--app-muted), #969699);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.comic-auto-language-list {
+  border-radius: 12px;
+  background: light-dark(var(--app-surface), #242426);
+  padding: 0 14px;
+}
+.comic-auto-language-list .setting-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.comic-auto-language-list .setting-row small {
+  color: light-dark(var(--app-muted), #818186);
+  font-size: 10px;
+}
+.comic-auto-language-list .setting-row select {
+  flex: 0 0 150px;
+}
 .setting-row input[type="range"] {
   width: 140px;
   flex: 0 1 140px;
@@ -1551,6 +1576,17 @@ select {
   font-size: 10px;
   color: var(--ui-888);
   min-width: 20px;
+}
+.video-setting-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.video-setting-copy small {
+  color: light-dark(var(--app-muted), #818186);
+  font-size: 10px;
+  line-height: 1.6;
 }
 .settings-note {
   font-size: 10px;
@@ -3271,10 +3307,12 @@ select {
   position: absolute;
   z-index: 26;
   top: 48px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 48px;
+  transform: none;
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
   width: min(960px, calc(100% - 48px));
   pointer-events: none;
 }
@@ -3286,15 +3324,21 @@ select {
   width: min(960px, calc(100% - 180px));
 }
 .browse-back-button {
-  min-height: 40px;
-  padding: 9px 13px;
-  border: 1px solid var(--ui-ffffff12);
-  border-radius: 10px;
-  background: var(--app-surface);
+  width: 38px;
+  height: 38px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
   color: var(--ui-ccc);
-  box-shadow: 0 4px 18px var(--ui-0002);
   pointer-events: auto;
   -webkit-app-region: no-drag;
+}
+.browse-back-title {
+  color: var(--app-muted);
+  font-size: 16px;
+  font-weight: 600;
+  pointer-events: none;
 }
 .browse-back-button:hover,
 .browse-back-button:focus-visible {

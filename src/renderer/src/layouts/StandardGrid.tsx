@@ -37,19 +37,29 @@ export default function StandardGrid({
   const restored = useRef(false),
     consumed = useRef<number | undefined>(undefined);
   const columns = Math.max(1, Math.floor((width - 80) / minimumCellWidth));
-  const cellWidth = Math.max(100, (width - 80 - (columns - 1) * 22) / columns);
   const kind = source.query.type;
-  const rowHeight =
-    cellWidth *
-      (kind === "video"
-        ? 9 / 16
-        : kind === "novel" || kind === "comic"
-          ? 1.4
-          : 1.12) +
-    36;
+  const comicRows = kind === "comic" && source.external;
+  const columnWidth = comicRows
+    ? Math.max(minimumCellWidth, 460)
+    : minimumCellWidth;
+  const comicColumns = Math.max(1, Math.floor((width - 80) / columnWidth));
+  const gridColumns = comicRows ? comicColumns : columns;
+  const cellWidth = Math.max(
+    100,
+    (width - 80 - (gridColumns - 1) * 22) / gridColumns,
+  );
+  const rowHeight = comicRows
+    ? 248
+    : cellWidth *
+        (kind === "video"
+          ? 9 / 16
+          : kind === "novel" || kind === "comic"
+            ? 1.4
+            : 1.12) +
+      36;
   const from = Math.max(0, Math.floor((scroll - 150) / rowHeight) - 2);
   const to = Math.min(
-    Math.ceil(source.total / columns),
+    Math.ceil(source.total / gridColumns),
     Math.ceil((scroll + height) / rowHeight) + 2,
   );
   const visibleAnchor = useRef<{ id: string; offset: number } | undefined>(
@@ -103,7 +113,7 @@ export default function StandardGrid({
         ref.current.scrollTop = Math.max(
           0,
           topPadding +
-            Math.floor(index / columns) * rowHeight -
+            Math.floor(index / gridColumns) * rowHeight -
             (change.kind === "prepend" ? (anchor?.offset ?? 0) : 0),
         );
         corrected.current = ref.current.scrollTop;
@@ -121,7 +131,7 @@ export default function StandardGrid({
       0,
       Math.floor((element.scrollTop - padding) / rowHeight),
     );
-    const index = Math.min(total - 1, row * columns),
+    const index = Math.min(total - 1, row * gridColumns),
       item = source.peek(index);
     if (item) {
       visibleAnchor.current = {
@@ -129,12 +139,12 @@ export default function StandardGrid({
         offset: padding + row * rowHeight - element.scrollTop,
       };
     }
-  }, [scroll, externalSerial, total, columns, rowHeight]);
+  }, [scroll, externalSerial, total, gridColumns, rowHeight]);
   useLayoutEffect(() => {
     if (!ref.current || !source.getSnapshot().ready) return;
     if (restored.current && consumed.current === memory.focusRequest) return;
     const index = resolveFocusIndex(source, memory);
-    const top = Math.floor(index / columns) * rowHeight;
+    const top = Math.floor(index / gridColumns) * rowHeight;
     const target = memory.revealFocus
       ? Math.max(0, 150 + top - (height - rowHeight) / 2)
       : (memory.scrollTop ?? top);
@@ -160,8 +170,8 @@ export default function StandardGrid({
     const snapshot = source.getSnapshot();
     if (snapshot.refreshSerial !== previous.current.serial && ref.current) {
       ref.current.scrollTop +=
-        (Math.floor(snapshot.anchorIndex / columns) -
-          Math.floor(previous.current.index / columns)) *
+        (Math.floor(snapshot.anchorIndex / gridColumns) -
+          Math.floor(previous.current.index / gridColumns)) *
         rowHeight;
       setScroll(ref.current.scrollTop);
     }
@@ -173,11 +183,11 @@ export default function StandardGrid({
   useEffect(() => {
     void source.ensure(
       Array.from(
-        { length: Math.max(0, (to - from) * columns) },
-        (_, i) => from * columns + i,
+        { length: Math.max(0, (to - from) * gridColumns) },
+        (_, i) => from * gridColumns + i,
       ),
     );
-  }, [source, from, to, columns]);
+  }, [source, from, to, gridColumns]);
   useEffect(() => {
     const element = ref.current;
     if (
@@ -187,12 +197,13 @@ export default function StandardGrid({
       element &&
       element.scrollHeight <= element.clientHeight + 24
     )
-      onReachEnd?.();
-  }, [source, total, ready, height, onReachEnd, interactive]);
+      // Via the ref: a new callback identity must not retrigger pagination.
+      reachEndRef.current?.();
+  }, [source, total, ready, height, interactive]);
   return (
     <div
       ref={ref}
-      className="standard-media standard-grid"
+      className={`standard-media standard-grid${comicRows ? " comic-result-grid" : ""}`}
       style={source.external ? { overflowAnchor: "none" } : undefined}
       data-layout="grid"
       aria-label="标准网格"
@@ -238,7 +249,10 @@ export default function StandardGrid({
           0,
           Math.floor((e.currentTarget.scrollTop - padding) / rowHeight),
         );
-        const at = Math.min(total - 1, row * columns + Math.floor(columns / 2)),
+        const at = Math.min(
+            total - 1,
+            row * gridColumns + Math.floor(gridColumns / 2),
+          ),
           item = source.peek(at);
         if (item) onViewportAnchorChange?.(item, at);
         if (
@@ -250,7 +264,7 @@ export default function StandardGrid({
     >
       <div
         className="standard-space"
-        style={{ height: Math.ceil(source.total / columns) * rowHeight }}
+        style={{ height: Math.ceil(source.total / gridColumns) * rowHeight }}
       >
         {Array.from({ length: Math.max(0, to - from) }, (_, offset) => {
           const row = from + offset;
@@ -261,13 +275,18 @@ export default function StandardGrid({
               style={{
                 transform: `translateY(${row * rowHeight}px)`,
                 height: rowHeight,
-                gridTemplateColumns: `repeat(${columns},minmax(0,1fr))`,
+                gridTemplateColumns: `repeat(${gridColumns},minmax(0,1fr))`,
               }}
             >
               {Array.from(
-                { length: Math.min(columns, source.total - row * columns) },
+                {
+                  length: Math.min(
+                    gridColumns,
+                    source.total - row * gridColumns,
+                  ),
+                },
                 (_, column) => {
-                  const index = row * columns + column,
+                  const index = row * gridColumns + column,
                     item = source.peek(index);
                   const activate = () => {
                     if (item) {

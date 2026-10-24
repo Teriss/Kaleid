@@ -124,6 +124,107 @@
 .comic-home-sources .comic-home-heading {
   position: relative;
 }
+.download-queue-modal {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 32px));
+}
+.download-queue-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.download-queue-trigger > span {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-accent) 16%, transparent);
+  color: var(--app-accent);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+.download-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(560px, calc(100vh - 180px));
+  overflow: auto;
+  padding: 0 20px 14px;
+}
+.download-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--app-line);
+}
+.download-queue-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.download-queue-copy > strong,
+.download-queue-copy > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.download-queue-copy > strong {
+  color: var(--app-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.download-queue-copy > small,
+.download-queue-progress > small {
+  color: var(--app-muted);
+  font-size: 12px;
+}
+.download-queue-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-top: 3px;
+}
+.download-queue-progress progress {
+  width: min(260px, 52%);
+  height: 6px;
+  accent-color: var(--app-accent);
+}
+.download-queue-progress > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.download-queue-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+.download-queue-actions .button {
+  padding: 7px 12px;
+}
+.download-queue-empty {
+  margin: 0;
+  padding: 4px 20px 22px;
+  color: var(--app-muted);
+}
+@media (max-width: 520px) {
+  .download-queue-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .download-queue-actions {
+    align-self: flex-end;
+  }
+  .download-queue-progress progress {
+    width: 120px;
+  }
+}
 .comic-home-heading {
   display: flex;
   align-items: center;
@@ -380,6 +481,12 @@
 }
 .comic-collection-switch .comic-hub-cards {
   flex-basis: 100%;
+}
+.comic-history-page {
+  min-width: 0;
+}
+.comic-history-page .comic-hub-card > .icon-button {
+  opacity: 0.85;
 }
 
 @media (max-width: 800px) {

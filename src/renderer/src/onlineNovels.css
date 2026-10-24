@@ -51,15 +51,13 @@
   font-size: 13px;
   overflow-wrap: anywhere;
 }
-.novel-error button,
-.novel-downloads button {
+.novel-error button {
   color: var(--app-text);
   background: transparent;
   padding: 6px 10px;
   border-radius: 7px;
 }
-.novel-error button:hover,
-.novel-downloads button:hover {
+.novel-error button:hover {
   background: var(--app-surface);
 }
 .novel-results-layout {
@@ -80,19 +78,6 @@
 }
 .novel-volume .online-chapters > div > button > span {
   overflow-wrap: anywhere;
-}
-.novel-downloads {
-  max-height: 320px;
-}
-.novel-downloads > div > div:first-child {
-  flex: 1;
-  min-width: 180px;
-}
-.novel-downloads p {
-  margin: 4px 0;
-}
-.novel-downloads small {
-  color: var(--app-muted);
 }
 .online-novels .comic-single-result-heading {
   flex-shrink: 0;

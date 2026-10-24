@@ -1,6 +1,6 @@
 import { EQUALIZER_PRESETS } from "./music/equalizer";
 import MusicSettings from "./music/MusicSettings";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Monitor,
   BookOpen,
@@ -9,10 +9,12 @@ import {
   X,
   AudioLines,
   Video,
+  Search,
 } from "lucide-react";
 import { IconButton, Modal } from "./components";
 import { act, useApp } from "./store";
 import ReaderPreferences from "./ReaderPreferences";
+import type { ComicSourceInfo } from "../../shared/onlineComics";
 
 export default function SettingsPanel({
   close,
@@ -27,9 +29,18 @@ export default function SettingsPanel({
   const setSection = (value: string) => onSectionChange?.(value);
   const [search, setSearch] = useState("");
   const [confirm, setConfirm] = useState(false);
+  const [comicSources, setComicSources] = useState<ComicSourceInfo[]>([]);
+  useEffect(() => {
+    let live = true;
+    void window.media.onlineComics.sources()
+      .then((sources) => { if (live) setComicSources(sources); })
+      .catch(() => { if (live) setComicSources([]); });
+    return () => { live = false; };
+  }, []);
   const groups = [
     { id: "appearance", label: "外观", icon: Monitor },
     { id: "reading", label: "阅读", icon: BookOpen },
+    { id: "comic-search", label: "漫画搜索", icon: Search },
     { id: "storage", label: "存储", icon: HardDrive },
     { id: "shortcuts", label: "快捷操作", icon: Keyboard },
     { id: "music", label: "音乐", icon: AudioLines },
@@ -63,33 +74,41 @@ export default function SettingsPanel({
         <span className="settings-version">Kaleid 0.4.0 preview 5</span>
       </aside>
       <main className="settings-body">
-        {active === "video" && (
-          <label className="setting-row">
-            <span>
-              <strong>离开视频播放页后自动进入画中画</strong>
-              <small>
-                关闭时，返回或切库会停止播放并保存进度；手动画中画继续播放。
-              </small>
-            </span>
-            <input
-              type="checkbox"
-              aria-label="自动进入画中画"
-              checked={settings.videoAutoPictureInPicture ?? false}
-              onChange={(e) =>
-                void setSettings({
-                  ...settings,
-                  videoAutoPictureInPicture: e.target.checked,
-                })
-              }
-            />
-          </label>
-        )}
         <div className="settings-heading">
           <h2>{groups.find((group) => group.id === active)?.label}</h2>
           <IconButton label="关闭设置" onClick={close}>
             <X size={17} />
           </IconButton>
         </div>
+        {active === "video" && (
+          <div className="settings-group">
+            <div className="setting-row">
+              <span className="video-setting-copy">
+                <strong>离开视频播放页后自动进入画中画</strong>
+                <small>
+                  关闭时，返回或切库会停止播放并保存进度；手动画中画继续播放。
+                </small>
+              </span>
+              <button
+                role="switch"
+                aria-label="自动进入画中画"
+                aria-checked={settings.videoAutoPictureInPicture ?? false}
+                className={`switch ${settings.videoAutoPictureInPicture ? "on" : ""}`}
+                onClick={() =>
+                  void act(() =>
+                    setSettings({
+                      ...settings,
+                      videoAutoPictureInPicture:
+                        !settings.videoAutoPictureInPicture,
+                    }),
+                  )
+                }
+              >
+                <span />
+              </button>
+            </div>
+          </div>
+        )}
         {active === "appearance" && (
           <>
             <h3>显示与动效</h3>
@@ -187,6 +206,44 @@ export default function SettingsPanel({
           <>
             <h3>小说阅读</h3>
             <ReaderPreferences />
+          </>
+        )}
+        {active === "comic-search" && (
+          <>
+            <h3>自动添加语言标签</h3>
+            <p className="settings-description">
+              搜索指定漫画源时，若关键词中没有 language: 标签，就自动补上所选语言。聚合搜索会分别按每个源的设置处理。
+            </p>
+            {!comicSources.length ? (
+              <p className="muted">暂无已安装漫画源。</p>
+            ) : (
+              <div className="comic-auto-language-list">
+                {comicSources.map((source) => (
+                  <label className="setting-row" key={source.id}>
+                    <span>
+                      <strong>{source.name}</strong>
+                      <small>{source.enabled ? "已启用" : "已安装，未启用"}</small>
+                    </span>
+                    <select
+                      aria-label={`${source.name}自动语言筛选`}
+                      value={settings.comicAutoLanguageFilters?.[source.id] || "none"}
+                      onChange={(event) => {
+                        const comicAutoLanguageFilters = { ...(settings.comicAutoLanguageFilters || {}) };
+                        const language = event.target.value;
+                        if (language === "none") delete comicAutoLanguageFilters[source.id];
+                        else comicAutoLanguageFilters[source.id] = language as "chinese" | "english" | "japanese";
+                        void setSettings({ ...settings, comicAutoLanguageFilters });
+                      }}
+                    >
+                      <option value="none">不自动添加</option>
+                      <option value="chinese">中文</option>
+                      <option value="english">英文</option>
+                      <option value="japanese">日文</option>
+                    </select>
+                  </label>
+                ))}
+              </div>
+            )}
           </>
         )}
         {active === "music" && (

@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/venera-app/venera-prime",
+  "commit": "04ff27009d8379c3e0368a31ee08efe02d241d0c",
+  "file": "assets/tags.json",
+  "sha256": "0B26EE22CB9336036E0ADA7AEAB3B277BE33D002947EFEC6DEAF81F6F4307E54",
+  "dataSource": "https://github.com/EhTagTranslation/Database",
+  "license": "CC BY-NC-SA 3.0 CN",
+  "licenseFile": "TAGS_LICENSE.md"
+}

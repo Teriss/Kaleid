@@ -208,6 +208,7 @@ export interface ComicContext {
 export interface Settings {
   theme: "dark" | "light";
   videoAutoPictureInPicture: boolean;
+  comicAutoLanguageFilters: Record<string, "chinese" | "english" | "japanese">;
   navigationAutoHide: boolean;
   reducedMotion: boolean;
   navigationPosition: "top" | "bottom" | "left" | "right";
@@ -230,6 +231,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
   videoAutoPictureInPicture: false,
+  comicAutoLanguageFilters: {},
   navigationAutoHide: true,
   reducedMotion: false,
   navigationPosition: "right",
@@ -249,6 +251,14 @@ export const DEFAULT_SETTINGS: Settings = {
   sleepTimerMinutes: 0,
   lyricsPresentation: "split",
 };
+/**
+ * Payload of the `comic:change` / `novel:change` events. `download` marks pure
+ * queue progress, which the renderer can apply without reloading any list; a
+ * missing event is a real state transition and deserves a full refresh.
+ */
+export interface OnlineChangeEvent {
+  download?: boolean;
+}
 export interface AppAPI {
   windowState(): Promise<import("./windowControls").MainWindowState>;
   windowCommand(command: import("./windowControls").MainWindowCommand): Promise<void>;

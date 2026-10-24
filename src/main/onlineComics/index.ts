@@ -14,7 +14,6 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import {
-  DEFAULT_COMIC_REPOSITORY,
   type ComicAddressResult,
   type ComicRepositoryEntry,
   type ComicSourceInfo,
@@ -22,6 +21,7 @@ import {
   type OnlineChapterRef,
   type OnlineComic,
   type OnlineComicDetails,
+  type ComicTagTarget,
   type ComicSearchPage,
   type ComicThumbnailPage,
   type ComicDownloadTask,
@@ -30,12 +30,25 @@ import {
   type ComicHubRef,
   type ComicFollowState,
 } from "../../shared/onlineComics";
-import type { ComicBookmark, Progress } from "../../shared/types";
+import type {
+  ComicBookmark,
+  Progress,
+  OnlineChangeEvent,
+} from "../../shared/types";
 import type { RuntimeState } from "./runtime";
 import { OnlineComicStore, digest, comicKey, chapterKey } from "./store";
 import { comicSections } from "./normalize";
 import { prepareSourceRequest, sourceResponseCacheKey } from "./network";
 import { parseThumbnail, cropThumbnail } from "./thumbnails";
+import { ComicTagTranslations } from "./tagTranslations";
+import {
+  claimPath,
+  folderName,
+  insideFolder,
+  movePath,
+  pruneEmptyFolders,
+} from "../downloadPaths";
+import { createChangeSender, type ChangeSender } from "../onlineChange";
 
 interface Source {
   imageEpoch?: string;
@@ -163,12 +176,18 @@ function clean(value: any): any {
     Object.entries(value).map(([k, v]) => [k, clean(v)]),
   );
 }
+const exists = (file: string) =>
+  fs.access(file).then(
+    () => true,
+    () => false,
+  );
 
 export class OnlineComicService implements Omit<
   OnlineComicsAPI,
   "onChange" | "onUI"
 > {
   readonly store: OnlineComicStore;
+  private readonly tagTranslations: ComicTagTranslations;
   private sourcesMap = new Map<string, Source>();
   private child: ReturnType<typeof utilityProcess.fork>;
   private requests = new Map<
@@ -215,7 +234,13 @@ export class OnlineComicService implements Omit<
   private thumbnailOriginals = new Map<string, Promise<Buffer>>();
   private sourceResponseCache = new Map<
     string,
-    { sourceId: string; time: number; status: number; headers: Record<string, string>; body: Uint8Array }
+    {
+      sourceId: string;
+      time: number;
+      status: number;
+      headers: Record<string, string>;
+      body: Uint8Array;
+    }
   >();
   private sourceResponseCacheBytes = 0;
   private imageQueue: {
@@ -230,6 +255,9 @@ export class OnlineComicService implements Omit<
     { read: number; background: number }
   >();
   private closed = false;
+  private readonly change: ChangeSender = createChangeSender((event) => {
+    if (!this.closed) this.getWindow()?.webContents.send("comic:change", event);
+  });
   private childDead = false;
   private sessions = new Map<string, string>();
   private sourceSessionSetup = new WeakMap<object, Promise<void>>();
@@ -239,6 +267,9 @@ export class OnlineComicService implements Omit<
     readonly root: string,
   ) {
     this.store = new OnlineComicStore(path.join(root, "comic-online.sqlite"));
+    this.tagTranslations = new ComicTagTranslations(
+      path.resolve(here, "../../vendor/venera/tags.json"),
+    );
     for (const record of this.store.all("source")) {
       try {
         const state = record.secret
@@ -265,6 +296,7 @@ export class OnlineComicService implements Omit<
         task.state = "paused";
         this.store.set("download", task.id, task);
       }
+    void this.migrateDownloadFolders().catch(() => {});
     this.child = utilityProcess.fork(
       path.join(here, "comicSourceWorker.js"),
       [],
@@ -292,8 +324,8 @@ export class OnlineComicService implements Omit<
       void this.checkFollowing().catch(() => {});
     }, 15000);
   }
-  private changed() {
-    if (!this.closed) this.getWindow()?.webContents.send("comic:change");
+  private changed(event?: OnlineChangeEvent) {
+    this.change.send(event);
   }
   private save(source: Source) {
     if (source.staging) return;
@@ -425,7 +457,9 @@ export class OnlineComicService implements Omit<
             const requestUrl = new URL(details.url);
             const safeHeaders = Object.fromEntries(
               Object.entries(headers).filter(([key]) =>
-                /^(accept|accept-language|referer|user-agent|sec-fetch-.*|sec-ch-ua.*)$/i.test(key),
+                /^(accept|accept-language|referer|user-agent|sec-fetch-.*|sec-ch-ua.*)$/i.test(
+                  key,
+                ),
               ),
             );
             for (const key of Object.keys(safeHeaders)) {
@@ -437,15 +471,18 @@ export class OnlineComicService implements Omit<
               .split(";")
               .map((pair) => pair.slice(0, pair.indexOf("=")).trim())
               .filter(Boolean);
-            console.info("[ExHentai request diagnostics]", JSON.stringify({
-              requestId: details.id,
-              url: `${requestUrl.origin}${requestUrl.pathname}`,
-              queryKeys: [...new Set(requestUrl.searchParams.keys())],
-              method: details.method,
-              resourceType: details.resourceType,
-              headers: safeHeaders,
-              cookieNames,
-            }));
+            console.info(
+              "[ExHentai request diagnostics]",
+              JSON.stringify({
+                requestId: details.id,
+                url: `${requestUrl.origin}${requestUrl.pathname}`,
+                queryKeys: [...new Set(requestUrl.searchParams.keys())],
+                method: details.method,
+                resourceType: details.resourceType,
+                headers: safeHeaders,
+                cookieNames,
+              }),
+            );
             callback({ requestHeaders: details.requestHeaders });
           },
         );
@@ -456,23 +493,28 @@ export class OnlineComicService implements Omit<
             const responseHeaders = details.responseHeaders || {};
             const safeHeaders = Object.fromEntries(
               Object.entries(responseHeaders).filter(([key]) =>
-                /^(content-type|content-length|content-encoding|server|cf-ray|cf-mitigated|location|date)$/i.test(key),
+                /^(content-type|content-length|content-encoding|server|cf-ray|cf-mitigated|location|date)$/i.test(
+                  key,
+                ),
               ),
             );
             const setCookieValues = Object.entries(responseHeaders)
               .filter(([key]) => key.toLowerCase() === "set-cookie")
-              .flatMap(([, value]) => Array.isArray(value) ? value : [value]);
+              .flatMap(([, value]) => (Array.isArray(value) ? value : [value]));
             const setCookieNames = setCookieValues
               .map((value) => String(value).split("=", 1)[0].trim())
               .filter(Boolean);
-            console.info("[ExHentai response diagnostics]", JSON.stringify({
-              requestId: details.id,
-              url: `${responseUrl.origin}${responseUrl.pathname}`,
-              queryKeys: [...new Set(responseUrl.searchParams.keys())],
-              statusCode: details.statusCode,
-              headers: safeHeaders,
-              setCookieNames,
-            }));
+            console.info(
+              "[ExHentai response diagnostics]",
+              JSON.stringify({
+                requestId: details.id,
+                url: `${responseUrl.origin}${responseUrl.pathname}`,
+                queryKeys: [...new Set(responseUrl.searchParams.keys())],
+                statusCode: details.statusCode,
+                headers: safeHeaders,
+                setCookieNames,
+              }),
+            );
             callback({ responseHeaders: details.responseHeaders });
           },
         );
@@ -655,19 +697,24 @@ export class OnlineComicService implements Omit<
         const requestUrl = new URL(currentUrl);
         const safeHeaders = Object.fromEntries(
           [...headers.entries()].filter(([key]) =>
-            /^(accept|accept-language|referer|user-agent|sec-fetch-.*|sec-ch-ua.*)$/i.test(key),
+            /^(accept|accept-language|referer|user-agent|sec-fetch-.*|sec-ch-ua.*)$/i.test(
+              key,
+            ),
           ),
         );
         if (safeHeaders.referer)
           safeHeaders.referer = safeHeaders.referer.split(/[?#]/, 1)[0];
-        console.info("[ExHentai request diagnostics]", JSON.stringify({
-          transport: "native-http",
-          url: `${requestUrl.origin}${requestUrl.pathname}`,
-          queryKeys: [...new Set(requestUrl.searchParams.keys())],
-          method,
-          headers: safeHeaders,
-          cookieNames: [...cookies.keys()],
-        }));
+        console.info(
+          "[ExHentai request diagnostics]",
+          JSON.stringify({
+            transport: "native-http",
+            url: `${requestUrl.origin}${requestUrl.pathname}`,
+            queryKeys: [...new Set(requestUrl.searchParams.keys())],
+            method,
+            headers: safeHeaders,
+            cookieNames: [...cookies.keys()],
+          }),
+        );
       }
       const response = await fetch(currentUrl, {
         method,
@@ -680,7 +727,9 @@ export class OnlineComicService implements Omit<
         const responseUrl = new URL(currentUrl);
         const safeHeaders = Object.fromEntries(
           [...response.headers.entries()].filter(([key]) =>
-            /^(content-type|content-length|content-encoding|server|cf-ray|cf-mitigated|location|date)$/i.test(key),
+            /^(content-type|content-length|content-encoding|server|cf-ray|cf-mitigated|location|date)$/i.test(
+              key,
+            ),
           ),
         );
         const responseHeaders = response.headers as Headers & {
@@ -689,19 +738,23 @@ export class OnlineComicService implements Omit<
         const setCookieNames = (responseHeaders.getSetCookie?.() || [])
           .map((value) => value.split("=", 1)[0].trim())
           .filter(Boolean);
-        console.info("[ExHentai response diagnostics]", JSON.stringify({
-          transport: "native-http",
-          url: `${responseUrl.origin}${responseUrl.pathname}`,
-          queryKeys: [...new Set(responseUrl.searchParams.keys())],
-          statusCode: response.status,
-          headers: safeHeaders,
-          setCookieNames,
-        }));
+        console.info(
+          "[ExHentai response diagnostics]",
+          JSON.stringify({
+            transport: "native-http",
+            url: `${responseUrl.origin}${responseUrl.pathname}`,
+            queryKeys: [...new Set(responseUrl.searchParams.keys())],
+            statusCode: response.status,
+            headers: safeHeaders,
+            setCookieNames,
+          }),
+        );
       }
       const responseHeaders = response.headers as Headers & {
         getSetCookie?: () => string[];
       };
-      const setCookies = responseHeaders.getSetCookie?.() ||
+      const setCookies =
+        responseHeaders.getSetCookie?.() ||
         (response.headers.get("set-cookie")
           ? [response.headers.get("set-cookie")!]
           : []);
@@ -791,37 +844,44 @@ export class OnlineComicService implements Omit<
         }
         const storedCookies = await ses.cookies.get({ url });
         const cookies = new Map(
-          storedCookies.map((cookie) => [
-            cookie.name,
-            cookie.value,
-          ]),
+          storedCookies.map((cookie) => [cookie.name, cookie.value]),
         );
-        if (source.meta.key === "ehentai" && new URL(url).hostname === "exhentai.org") {
-          const proxyRoute = (await ses.resolveProxy(url)).split(/[;,]/, 1)[0].trim();
-          console.info("[ExHentai session diagnostics]", JSON.stringify({
-            url: `${new URL(url).origin}${new URL(url).pathname}`,
-            queryKeys: [...new Set(new URL(url).searchParams.keys())],
-            proxyRoute: proxyRoute.toUpperCase().startsWith("DIRECT") ? "direct" : "proxy",
-            sourceRequestedTransport: prepared.httpClient || "default",
-            selectedTransport:
-              prepared.httpClient === "dart:io" &&
-              (proxyRoute.toUpperCase().startsWith("DIRECT") || !proxyRoute)
-                ? "native-http"
-                : "electron-session",
-            cookies: storedCookies.map((cookie) => ({
-              name: cookie.name,
-              domain: cookie.domain,
-              path: cookie.path,
-              secure: cookie.secure,
-              httpOnly: cookie.httpOnly,
-              sameSite: cookie.sameSite,
-              expirationDate: cookie.expirationDate,
-            })),
-            explicitCookieNames: (headers.get("cookie") || "")
-              .split(";")
-              .map((pair) => pair.slice(0, pair.indexOf("=")).trim())
-              .filter(Boolean),
-          }));
+        if (
+          source.meta.key === "ehentai" &&
+          new URL(url).hostname === "exhentai.org"
+        ) {
+          const proxyRoute = (await ses.resolveProxy(url))
+            .split(/[;,]/, 1)[0]
+            .trim();
+          console.info(
+            "[ExHentai session diagnostics]",
+            JSON.stringify({
+              url: `${new URL(url).origin}${new URL(url).pathname}`,
+              queryKeys: [...new Set(new URL(url).searchParams.keys())],
+              proxyRoute: proxyRoute.toUpperCase().startsWith("DIRECT")
+                ? "direct"
+                : "proxy",
+              sourceRequestedTransport: prepared.httpClient || "default",
+              selectedTransport:
+                prepared.httpClient === "dart:io" &&
+                (proxyRoute.toUpperCase().startsWith("DIRECT") || !proxyRoute)
+                  ? "native-http"
+                  : "electron-session",
+              cookies: storedCookies.map((cookie) => ({
+                name: cookie.name,
+                domain: cookie.domain,
+                path: cookie.path,
+                secure: cookie.secure,
+                httpOnly: cookie.httpOnly,
+                sameSite: cookie.sameSite,
+                expirationDate: cookie.expirationDate,
+              })),
+              explicitCookieNames: (headers.get("cookie") || "")
+                .split(";")
+                .map((pair) => pair.slice(0, pair.indexOf("=")).trim())
+                .filter(Boolean),
+            }),
+          );
         }
         for (const pair of (headers.get("cookie") || "").split(";")) {
           const equal = pair.indexOf("=");
@@ -875,14 +935,20 @@ export class OnlineComicService implements Omit<
           }
         } else if (cacheable) {
           const cached = this.sourceResponseCache.get(cacheKey);
-          const lifetime = prepared.cacheTime === "long" ? 6 * 60 * 60 * 1000 : 5000;
+          const lifetime =
+            prepared.cacheTime === "long" ? 6 * 60 * 60 * 1000 : 5000;
           if (cached && Date.now() - cached.time < lifetime) {
             this.sourceResponseCache.delete(cacheKey);
-            this.sourceResponseCache.set(cacheKey, { ...cached, time: Date.now() });
+            this.sourceResponseCache.set(cacheKey, {
+              ...cached,
+              time: Date.now(),
+            });
             return {
               status: cached.status ?? 200,
               headers: cached.headers,
-              body: m.bytes ? cached.body.slice().buffer : new TextDecoder().decode(cached.body),
+              body: m.bytes
+                ? cached.body.slice().buffer
+                : new TextDecoder().decode(cached.body),
               cookies: await ses.cookies.get({}),
             };
           }
@@ -896,12 +962,17 @@ export class OnlineComicService implements Omit<
         // http_client: dart:io requests opt into the native request path.
         const useNativeHttp = prepared.httpClient === "dart:io";
         const response = useNativeHttp
-          ? await this.nativeHttpRequest(ses, url, {
-              method,
-              headers,
-              body: ["GET", "HEAD"].includes(method) ? undefined : body,
-              signal,
-            }, source.meta.key === "ehentai")
+          ? await this.nativeHttpRequest(
+              ses,
+              url,
+              {
+                method,
+                headers,
+                body: ["GET", "HEAD"].includes(method) ? undefined : body,
+                signal,
+              },
+              source.meta.key === "ehentai",
+            )
           : await ses.fetch(url, {
               method,
               headers,
@@ -932,22 +1003,34 @@ export class OnlineComicService implements Omit<
           }
         }
         const contentBytes = Uint8Array.from(Buffer.concat(chunks));
-        if (source.meta.key === "ehentai" && new URL(url).hostname === "exhentai.org") {
+        if (
+          source.meta.key === "ehentai" &&
+          new URL(url).hostname === "exhentai.org"
+        ) {
           const responseUrl = new URL(url);
-          console.info("[ExHentai response body diagnostics]", JSON.stringify({
-            transport: useNativeHttp ? "native-http" : "electron-session",
-            url: `${responseUrl.origin}${responseUrl.pathname}`,
-            queryKeys: [...new Set(responseUrl.searchParams.keys())],
-            statusCode: response.status,
-            bodyBytes: contentBytes.byteLength,
-          }));
+          console.info(
+            "[ExHentai response body diagnostics]",
+            JSON.stringify({
+              transport: useNativeHttp ? "native-http" : "electron-session",
+              url: `${responseUrl.origin}${responseUrl.pathname}`,
+              queryKeys: [...new Set(responseUrl.searchParams.keys())],
+              statusCode: response.status,
+              bodyBytes: contentBytes.byteLength,
+            }),
+          );
         }
         const data = contentBytes.slice().buffer;
         const responseHeaders = Object.fromEntries(response.headers);
-        const jsonResponse = /\bjson\b/i.test(response.headers.get("content-type") || "");
+        const jsonResponse = /\bjson\b/i.test(
+          response.headers.get("content-type") || "",
+        );
         let wellFormedJson = true;
         if (jsonResponse && contentBytes.byteLength > 0) {
-          try { JSON.parse(new TextDecoder().decode(contentBytes)); } catch { wellFormedJson = false; }
+          try {
+            JSON.parse(new TextDecoder().decode(contentBytes));
+          } catch {
+            wellFormedJson = false;
+          }
         }
         if (
           cacheable &&
@@ -968,8 +1051,13 @@ export class OnlineComicService implements Omit<
           this.sourceResponseCache.delete(cacheKey);
           this.sourceResponseCache.set(cacheKey, cacheEntry);
           this.sourceResponseCacheBytes += cacheEntry.body.byteLength;
-          while (this.sourceResponseCacheBytes > 10 * 1024 * 1024 && this.sourceResponseCache.size) {
-            const [oldestKey, oldest] = this.sourceResponseCache.entries().next().value!;
+          while (
+            this.sourceResponseCacheBytes > 10 * 1024 * 1024 &&
+            this.sourceResponseCache.size
+          ) {
+            const [oldestKey, oldest] = this.sourceResponseCache
+              .entries()
+              .next().value!;
             this.sourceResponseCache.delete(oldestKey);
             this.sourceResponseCacheBytes -= oldest.body.byteLength;
           }
@@ -1130,7 +1218,7 @@ export class OnlineComicService implements Omit<
       .filter((s) => !s.staging)
       .map((s) => this.info(s));
   repositories = async (): Promise<string[]> =>
-    this.store.get("preferences", "repositories") || [DEFAULT_COMIC_REPOSITORY];
+    this.store.get("preferences", "repositories") ?? [];
   private async rememberRepository(url: string) {
     this.store.set("preferences", "repositories", [
       ...new Set([...(await this.repositories()), url]),
@@ -1156,7 +1244,9 @@ export class OnlineComicService implements Omit<
       if (typeof rawScriptURL !== "string" || !rawScriptURL)
         throw new Error("源仓库条目缺少脚本地址");
       const scriptURL = sourceURL(
-        entry.url ? new URL(entry.url, url).href : new URL(rawScriptURL, url).href,
+        entry.url
+          ? new URL(entry.url, url).href
+          : new URL(rawScriptURL, url).href,
       );
       return {
         name: String(entry.name || entry.key || rawScriptURL),
@@ -1190,8 +1280,13 @@ export class OnlineComicService implements Omit<
     if (text.length > 4 * 1024 * 1024) throw new Error("源文件超过 4 MiB");
     const contentType = response.headers.get("content-type") || "";
     const trimmed = text.trimStart();
-    if (contentType.includes("text/html") || /^<!doctype html|^<html\b/i.test(trimmed))
-      throw new Error("链接返回了网页而不是漫画源脚本，请使用 Raw 或 jsDelivr 脚本链接");
+    if (
+      contentType.includes("text/html") ||
+      /^<!doctype html|^<html\b/i.test(trimmed)
+    )
+      throw new Error(
+        "链接返回了网页而不是漫画源脚本，请使用 Raw 或 jsDelivr 脚本链接",
+      );
     let parsed: unknown;
     if (trimmed.startsWith("[")) {
       try {
@@ -1200,13 +1295,18 @@ export class OnlineComicService implements Omit<
         throw new Error("仓库索引 JSON 格式错误");
       }
       if (!Array.isArray(parsed)) throw new Error("无效源仓库格式");
-      return { kind: "repository", entries: await this.parseRepository(url, text) };
+      return {
+        kind: "repository",
+        entries: await this.parseRepository(url, text),
+      };
     }
     try {
       const installed = await this.installScript(text, url);
       return { kind: "source", source: installed };
     } catch (error) {
-      throw new Error(`漫画源初始化失败：${String(error).replace(/^Error:\s*/, "")}`);
+      throw new Error(
+        `漫画源初始化失败：${String(error).replace(/^Error:\s*/, "")}`,
+      );
     }
   };
   removeRepository = async (url: string) => {
@@ -1479,7 +1579,7 @@ export class OnlineComicService implements Omit<
       throw new Error("无效页码");
     const s = await this.ready(id);
     const numbered = await this.rpc(s, "has", `${base}.load`);
-    return this.page(
+    return await this.page(
       id,
       await this.rpc(s, "call", `${base}.${numbered ? "load" : "loadNext"}`, [
         ...args,
@@ -1524,7 +1624,7 @@ export class OnlineComicService implements Omit<
           : numbered
             ? page
             : (next ?? null);
-    const result = this.page(
+    const result = await this.page(
       id,
       await this.rpc(
         s,
@@ -1562,7 +1662,7 @@ export class OnlineComicService implements Omit<
   ) => {
     const s = await this.ready(id);
     const numbered = await this.rpc(s, "has", "categoryComics.ranking.load");
-    return this.page(
+    return await this.page(
       id,
       await this.rpc(
         s,
@@ -1597,6 +1697,10 @@ export class OnlineComicService implements Omit<
       description: raw.description,
       tags: clean(raw.tags),
       favoriteId: raw.favoriteId,
+      maxPage: typeof raw.maxPage === "number" ? raw.maxPage : undefined,
+      stars: typeof raw.stars === "number" ? raw.stars : undefined,
+      uploadTime:
+        typeof raw.uploadTime === "string" ? raw.uploadTime : undefined,
       cover: "",
     };
     if (raw.cover)
@@ -1612,11 +1716,20 @@ export class OnlineComicService implements Omit<
       this.store.set("favoriteId", comicKey(comic), raw.favoriteId);
     return comic;
   }
-  private page(id: string, raw: any): ComicSearchPage {
+  private async page(id: string, raw: any): Promise<ComicSearchPage> {
+    const source = this.sourcesMap.get(id);
     const sections = comicSections(raw).map((section) => ({
       ...section,
       comics: section.comics.map((c) => this.comic(id, c)),
     }));
+    if (source?.meta.enableTagsTranslate === true)
+      await Promise.all(
+        sections.flatMap((section) =>
+          section.comics.map(async (comic) => {
+            comic.tagDisplay = await this.tagTranslations.translate(comic.tags);
+          }),
+        ),
+      );
     return {
       comics: sections.flatMap((s) => s.comics),
       sections,
@@ -1628,9 +1741,21 @@ export class OnlineComicService implements Omit<
     if (!Array.isArray(urls) || urls.some((url) => typeof url !== "string"))
       throw new Error("源返回了无效的预览图片列表");
     // Keep opaque image keys intact: onThumbnailLoad may resolve them to URLs.
-    return urls.map((url) => this.assetURL({ ...ref, chapterId: null, index: 0, url, thumbnail: true, preview: true }));
+    return urls.map((url) =>
+      this.assetURL({
+        ...ref,
+        chapterId: null,
+        index: 0,
+        url,
+        thumbnail: true,
+        preview: true,
+      }),
+    );
   }
-  thumbnails = async (ref: OnlineComicRef, next: string | null = null): Promise<ComicThumbnailPage> => {
+  thumbnails = async (
+    ref: OnlineComicRef,
+    next: string | null = null,
+  ): Promise<ComicThumbnailPage> => {
     refCheck(ref);
     if (next !== null && (typeof next !== "string" || next.length > 16384))
       throw new Error("无效预览分页游标");
@@ -1641,13 +1766,23 @@ export class OnlineComicService implements Omit<
     if (pending) return pending;
     const result = (async () => {
       await this.loadComicInfo(source, ref.comicId);
-      const raw = await this.rpc(source, "call", "comic.loadThumbnails", [ref.comicId, next]);
+      const raw = await this.rpc(source, "call", "comic.loadThumbnails", [
+        ref.comicId,
+        next,
+      ]);
       if (source.token !== token) throw new Error("漫画源实例已失效");
       const cursor = raw?.next ?? null;
-      if (cursor !== null && (typeof cursor !== "string" || cursor.length > 16384))
+      if (
+        cursor !== null &&
+        (typeof cursor !== "string" || cursor.length > 16384)
+      )
         throw new Error("源返回了无效的预览分页游标");
-      if (cursor !== null && cursor === next) throw new Error("源返回了重复的预览分页游标");
-      return { thumbnails: this.thumbnailURLs(ref, raw?.thumbnails), next: cursor };
+      if (cursor !== null && cursor === next)
+        throw new Error("源返回了重复的预览分页游标");
+      return {
+        thumbnails: this.thumbnailURLs(ref, raw?.thumbnails),
+        next: cursor,
+      };
     })().finally(() => this.thumbnailRequests.delete(key));
     this.thumbnailRequests.set(key, result);
     return result;
@@ -1658,28 +1793,54 @@ export class OnlineComicService implements Omit<
   ): Promise<OnlineComicDetails> => {
     refCheck(ref);
     const saved = this.store.get<SavedComic>("comic", comicKey(ref));
-    if (saved && !refresh && (
-      (typeof saved.details.hasChapters === "boolean" && typeof saved.details.hasThumbnailLoader === "boolean") ||
-      !this.sourcesMap.get(ref.sourceId)?.enabled
-    )) return this.decorate(saved);
+    const storedSource = this.sourcesMap.get(ref.sourceId);
+    const needsTranslatedTags =
+      storedSource?.meta.enableTagsTranslate === true &&
+      !saved?.details.tagDisplay;
+    if (
+      saved &&
+      !refresh &&
+      ((typeof saved.details.hasChapters === "boolean" &&
+        typeof saved.details.hasThumbnailLoader === "boolean") ||
+        !this.sourcesMap.get(ref.sourceId)?.enabled) &&
+      !needsTranslatedTags
+    ) {
+      const details = this.decorate(saved);
+      if (storedSource?.meta.enableTagsTranslate === true)
+        details.tagDisplay = await this.tagTranslations.translate(details.tags);
+      return details;
+    }
     try {
       const source = await this.ready(ref.sourceId);
-      const raw = await this.loadComicInfo(
-        source,
-        ref.comicId,
-        refresh,
-      );
+      const raw = await this.loadComicInfo(source, ref.comicId, refresh);
       const card = this.comic(ref.sourceId, { ...raw, id: ref.comicId });
       const details: OnlineComicDetails = {
         ...card,
+        tagDisplay:
+          source.meta.enableTagsTranslate === true
+            ? await this.tagTranslations.translate(raw.tags)
+            : undefined,
+        uploader: raw.uploader,
+        uploadTime: raw.uploadTime,
+        stars: typeof raw.stars === "number" ? raw.stars : undefined,
+        maxPage: typeof raw.maxPage === "number" ? raw.maxPage : undefined,
         chapters: chapters(raw.chapters),
         hasChapters: raw.chapters != null,
         // A broken static thumbnail must not prevent normal reading, or shift
         // the remaining preview page numbers. Invalid entries fail per tile.
         thumbnails: Array.isArray(raw.thumbnails)
-          ? this.thumbnailURLs(ref, raw.thumbnails.map((url: unknown) => typeof url === "string" ? url : ""))
+          ? this.thumbnailURLs(
+              ref,
+              raw.thumbnails.map((url: unknown) =>
+                typeof url === "string" ? url : "",
+              ),
+            )
           : undefined,
-        hasThumbnailLoader: await this.rpc(source, "has", "comic.loadThumbnails"),
+        hasThumbnailLoader: await this.rpc(
+          source,
+          "has",
+          "comic.loadThumbnails",
+        ),
         updateTime: raw.updateTime,
         isFavorite: raw.isFavorite,
         favorite: saved?.favorite || false,
@@ -1696,16 +1857,40 @@ export class OnlineComicService implements Omit<
       if (saved)
         return {
           ...this.decorate(saved),
+          tagDisplay:
+            storedSource?.meta.enableTagsTranslate === true
+              ? await this.tagTranslations.translate(saved.details.tags)
+              : saved.details.tagDisplay,
           offline: true,
           refreshError: String(error).replace(/^Error:\s*/, ""),
         };
       throw error;
     }
   };
+  tagTarget = async (
+    ref: OnlineComicRef,
+    namespace: string,
+    tag: string,
+  ): Promise<ComicTagTarget | null> => {
+    refCheck(ref);
+    const source = await this.ready(ref.sourceId);
+    const callback = (await this.rpc(source, "has", "comic.onClickTag"))
+      ? "comic.onClickTag"
+      : (await this.rpc(source, "has", "onClickTag"))
+        ? "onClickTag"
+        : null;
+    if (!callback) return null;
+    return clean(await this.rpc(source, "call", callback, [namespace, tag]));
+  };
   private decorate(saved: SavedComic): OnlineComicDetails {
     return {
       ...saved.details,
-      hasChapters: saved.details.hasChapters ?? !(saved.details.chapters.length === 1 && saved.details.chapters[0].id === null),
+      hasChapters:
+        saved.details.hasChapters ??
+        !(
+          saved.details.chapters.length === 1 &&
+          saved.details.chapters[0].id === null
+        ),
       hasThumbnailLoader: saved.details.hasThumbnailLoader ?? false,
       favorite: saved.favorite,
       lastChapterId: saved.lastChapterId,
@@ -1747,6 +1932,15 @@ export class OnlineComicService implements Omit<
       )
       .sort((a, b) => (b.opened || 0) - (a.opened || 0))
       .map((c) => c.details);
+  removeHistory = async (ref?: OnlineComicRef) => {
+    for (const record of this.store.all<SavedComic>("comic")) {
+      if (!record.opened) continue;
+      if (ref && comicKey(record.ref) !== comicKey(ref)) continue;
+      delete record.opened;
+      this.store.set("comic", comicKey(record.ref), record);
+    }
+    this.changed();
+  };
   hubList = async (list: ComicHubList): Promise<ComicHubRef[]> => {
     if (!["readLater", "following"].includes(list))
       throw new Error("未知漫画清单");
@@ -1755,11 +1949,7 @@ export class OnlineComicService implements Omit<
       .sort((a, b) => b.addedAt - a.addedAt)
       .map((record) => record.ref);
   };
-  hubSet = async (
-    list: ComicHubList,
-    ref: ComicHubRef,
-    value: boolean,
-  ) => {
+  hubSet = async (list: ComicHubList, ref: ComicHubRef, value: boolean) => {
     if (!["readLater", "following"].includes(list))
       throw new Error("未知漫画清单");
     if (
@@ -1791,7 +1981,8 @@ export class OnlineComicService implements Omit<
       this.store.set("follow", id, {
         ref,
         addedAt: previous?.addedAt ?? Date.now(),
-        baselineChapterIds: saved?.details.chapters.map((c) => c.id ?? "") ?? [],
+        baselineChapterIds:
+          saved?.details.chapters.map((c) => c.id ?? "") ?? [],
         newChapterIds: [],
       });
     }
@@ -1814,7 +2005,11 @@ export class OnlineComicService implements Omit<
         const source = this.sourcesMap.get(state.ref.sourceId);
         if (!source?.enabled) {
           state.error = source ? "漫画源已停用" : "漫画源已卸载";
-          this.store.set("follow", digest(JSON.stringify({ kind: "online", ...state.ref })), state);
+          this.store.set(
+            "follow",
+            digest(JSON.stringify({ kind: "online", ...state.ref })),
+            state,
+          );
           continue;
         }
         this.backgroundSources.add(source.id);
@@ -1822,18 +2017,21 @@ export class OnlineComicService implements Omit<
           const details = await this.details(state.ref, true);
           if (details.offline && details.refreshError)
             throw new Error(details.refreshError);
-          const chapterIds = details.chapters.map((chapter) => chapter.id ?? "");
+          const chapterIds = details.chapters.map(
+            (chapter) => chapter.id ?? "",
+          );
           const unseen = chapterIds.filter(
             (id) => !state.baselineChapterIds.includes(id),
           );
-          state.newChapterIds = [...new Set([...state.newChapterIds, ...unseen])]
-            .filter((id) => {
-              const progress = this.store.get<Progress>(
-                "progress",
-                chapterKey({ ...state.ref, chapterId: id || null }),
-              );
-              return !progress?.completed;
-            });
+          state.newChapterIds = [
+            ...new Set([...state.newChapterIds, ...unseen]),
+          ].filter((id) => {
+            const progress = this.store.get<Progress>(
+              "progress",
+              chapterKey({ ...state.ref, chapterId: id || null }),
+            );
+            return !progress?.completed;
+          });
           state.baselineChapterIds = chapterIds;
           state.checkedAt = Date.now();
           state.error = undefined;
@@ -1842,10 +2040,16 @@ export class OnlineComicService implements Omit<
         } finally {
           this.backgroundSources.delete(source.id);
         }
-        this.store.set("follow", digest(JSON.stringify({ kind: "online", ...state.ref })), state);
+        this.store.set(
+          "follow",
+          digest(JSON.stringify({ kind: "online", ...state.ref })),
+          state,
+        );
       }
     };
-    await Promise.all(Array.from({ length: Math.min(2, queue.length) }, worker));
+    await Promise.all(
+      Array.from({ length: Math.min(2, queue.length) }, worker),
+    );
     this.changed();
     return this.following();
   };
@@ -2227,7 +2431,15 @@ export class OnlineComicService implements Omit<
     }
   }
   private thumbnailOriginalKey(source: Source, url: string) {
-    return digest(JSON.stringify([source.hash, source.id, source.imageEpoch || "", source.state.settings, url]));
+    return digest(
+      JSON.stringify([
+        source.hash,
+        source.id,
+        source.imageEpoch || "",
+        source.state.settings,
+        url,
+      ]),
+    );
   }
   private async loadImage(
     asset: Asset,
@@ -2246,15 +2458,24 @@ export class OnlineComicService implements Omit<
       } catch {
         let pending = this.thumbnailOriginals.get(key);
         if (!pending) {
-          pending = this.loadImage({ ...asset, preview: false, url: parsed.url }, priority, jobId, refresh).then(async (data) => {
+          pending = this.loadImage(
+            { ...asset, preview: false, url: parsed.url },
+            priority,
+            jobId,
+            refresh,
+          ).then(async (data) => {
             await fs.mkdir(path.dirname(file), { recursive: true });
             await fs.writeFile(file, data);
             return data;
           });
           this.thumbnailOriginals.set(key, pending);
         }
-        try { buffer = await pending; }
-        finally { if (this.thumbnailOriginals.get(key) === pending) this.thumbnailOriginals.delete(key); }
+        try {
+          buffer = await pending;
+        } finally {
+          if (this.thumbnailOriginals.get(key) === pending)
+            this.thumbnailOriginals.delete(key);
+        }
       }
       return cropThumbnail(buffer, parsed.crop);
     }
@@ -2323,7 +2544,8 @@ export class OnlineComicService implements Omit<
       if (!asset) throw new Error("资源不存在");
       let buffer: Buffer | undefined;
       const cover =
-        asset.thumbnail && !asset.preview &&
+        asset.thumbnail &&
+        !asset.preview &&
         this.store.get<string>("downloadCover", comicKey(asset));
       if (cover) {
         try {
@@ -2368,13 +2590,24 @@ export class OnlineComicService implements Omit<
         "cache",
         digest(`${token}:${sourceHash}:${asset.url}`),
       );
-      const refreshPreview = !!(asset.preview && source?.enabled && new URL(request.url).searchParams.has("retry"));
+      const refreshPreview = !!(
+        asset.preview &&
+        source?.enabled &&
+        new URL(request.url).searchParams.has("retry")
+      );
       if (refreshPreview && source) {
         // An explicit image retry must refresh both the tile and its original
         // sprite, including bytes a browser decoder previously rejected.
         await fs.rm(cachePath, { force: true });
-        await fs.rm(path.join(this.root, "comic-online", "cache",
-          this.thumbnailOriginalKey(source, parseThumbnail(asset.url).url)), { force: true });
+        await fs.rm(
+          path.join(
+            this.root,
+            "comic-online",
+            "cache",
+            this.thumbnailOriginalKey(source, parseThumbnail(asset.url).url),
+          ),
+          { force: true },
+        );
       }
       if (!buffer) {
         try {
@@ -2382,13 +2615,15 @@ export class OnlineComicService implements Omit<
         } catch {
           let promise = this.resourcePending.get(cachePath);
           if (!promise) {
-            promise = this.loadImage(asset, 0, undefined, refreshPreview).then(async (data) => {
-              await fs.mkdir(path.dirname(cachePath), { recursive: true });
-              await fs.writeFile(cachePath, data);
-              if (++this.cacheWrites % 50 === 0)
-                void this.trimCache().catch(() => {});
-              return data;
-            });
+            promise = this.loadImage(asset, 0, undefined, refreshPreview).then(
+              async (data) => {
+                await fs.mkdir(path.dirname(cachePath), { recursive: true });
+                await fs.writeFile(cachePath, data);
+                if (++this.cacheWrites % 50 === 0)
+                  void this.trimCache().catch(() => {});
+                return data;
+              },
+            );
             this.resourcePending.set(cachePath, promise);
           }
           try {
@@ -2446,6 +2681,16 @@ export class OnlineComicService implements Omit<
     }
     return true;
   }
+  revealDownload = async (id: string) => {
+    const task = this.store.get<Download>("download", id);
+    if (!task) throw new Error("下载任务不存在");
+    // Chapter folders reveal their comic folder; a chapter-less comic is the
+    // comic folder itself.
+    const folder =
+      task.chapterId == null ? task.directory : path.dirname(task.directory);
+    const failure = await shell.openPath(folder);
+    if (failure) throw new Error(failure);
+  };
   downloadDirectory = async (choose = false): Promise<string> => {
     let directory =
       this.store.get<string>("preferences", "downloadDirectory") ||
@@ -2462,11 +2707,113 @@ export class OnlineComicService implements Omit<
     }
     return directory;
   };
+  /** `<download root>/<source name>/<comic title>`, unique per comic. */
+  private comicFolderFor(
+    root: string,
+    ref: OnlineComicRef,
+    comicTitle: string,
+    tasks: Download[],
+  ) {
+    const base = path.join(
+      root,
+      folderName(this.sourcesMap.get(ref.sourceId)?.meta?.name, "未知来源"),
+      folderName(comicTitle, comicKey(ref).slice(0, 8)),
+    );
+    // Two comics of one source may share a title; never merge their pages.
+    let folder = base;
+    for (let index = 2; index < 100; index++) {
+      const clash = tasks.some(
+        (task) =>
+          task.comicId !== ref.comicId && insideFolder(task.directory, folder),
+      );
+      if (!clash) return folder;
+      folder = `${base} (${index})`;
+    }
+    return folder;
+  }
+  /**
+   * Older versions named download folders after hashes, which reads as garbage
+   * in Explorer. Rename existing tasks into the readable layout once.
+   */
+  private async migrateDownloadFolders() {
+    const hashed = /^[0-9a-f]{64}$/;
+    const tasks = this.store.all<Download>("download");
+    const legacy = tasks.filter((task) =>
+      hashed.test(path.basename(path.dirname(task.directory))),
+    );
+    // Chapter-less comics used to get a redundant `<comic>/正文` level.
+    const nested = tasks.filter(
+      (task) =>
+        task.chapterId == null && path.basename(task.directory) === "正文",
+    );
+    if (!legacy.length && !nested.length) return;
+    let root: string;
+    try {
+      root = await this.downloadDirectory();
+    } catch {
+      return;
+    }
+    const taken = new Set(tasks.map((task) => task.directory.toLowerCase()));
+    const folders = new Map<string, string>();
+    let moved = false;
+    for (const task of legacy) {
+      const key = comicKey(task);
+      let folder = folders.get(key);
+      if (!folder) {
+        const base = this.comicFolderFor(root, task, task.comicTitle, tasks);
+        // Tasks are a snapshot, so guard against two comics claiming one name.
+        folder = base;
+        for (let index = 2; [...folders.values()].includes(folder); index++)
+          folder = `${base} (${index})`;
+        folders.set(key, folder);
+      }
+      const target =
+        task.chapterId == null
+          ? claimPath(folder, taken)
+          : claimPath(
+              path.join(folder, folderName(task.title, task.id.slice(0, 8))),
+              taken,
+            );
+      taken.delete(task.directory.toLowerCase());
+      try {
+        await movePath(task.directory, target);
+      } catch {
+        continue;
+      }
+      task.directory = target;
+      this.store.set("download", task.id, task);
+      moved = true;
+    }
+    for (const task of nested) {
+      const target = path.dirname(task.directory);
+      try {
+        const files = await fs.readdir(task.directory);
+        for (const file of files)
+          if (await exists(path.join(target, file)))
+            throw new Error("conflict");
+        for (const file of files)
+          await fs.rename(
+            path.join(task.directory, file),
+            path.join(target, file),
+          );
+        await fs.rmdir(task.directory);
+      } catch {
+        continue;
+      }
+      task.directory = target;
+      this.store.set("download", task.id, task);
+      moved = true;
+    }
+    if (moved) this.changed();
+  }
   enqueue = async (ref: OnlineComicRef, chapterIds: (string | null)[]) => {
     if (!Array.isArray(chapterIds) || chapterIds.length > 20000)
       throw new Error("无效下载章节");
     const details = await this.details(ref);
-    const directory = await this.downloadDirectory();
+    const root = await this.downloadDirectory();
+    const tasks = this.store.all<Download>("download");
+    const comicFolder = this.comicFolderFor(root, ref, details.title, tasks);
+    const taken = new Set(tasks.map((task) => task.directory.toLowerCase()));
     for (const chapterId of chapterIds) {
       const chapter = details.chapters.find((c) => c.id === chapterId);
       if (!chapter) throw new Error("下载章节不存在");
@@ -2488,7 +2835,21 @@ export class OnlineComicService implements Omit<
         done: old?.done || 0,
         total: old?.total || 0,
         createdAt: old?.createdAt || Date.now(),
-        directory: old?.directory || path.join(directory, comicKey(ref), id),
+        // Readable layout: <download root>/<source name>/<comic title>/<chapter>.
+        // A comic without a table of contents has one synthetic "正文" chapter;
+        // its pages belong directly to the comic folder, without a pointless
+        // extra level.
+        directory:
+          old?.directory ||
+          claimPath(
+            chapter.id == null
+              ? comicFolder
+              : path.join(
+                  comicFolder,
+                  folderName(chapter.title, id.slice(0, 8)),
+                ),
+            taken,
+          ),
         pages: old?.pages || [],
       });
     }
@@ -2535,6 +2896,7 @@ export class OnlineComicService implements Omit<
       this.store.set("download", id, task);
       await this.runningJobs.get(id);
       Object.assign(task, this.store.get<Download>("download", id) || task);
+      const root = await this.downloadDirectory().catch(() => "");
       if (
         action === "cancel" &&
         task.done === task.total &&
@@ -2557,10 +2919,15 @@ export class OnlineComicService implements Omit<
           /^\d{6,}\.image(?:\.part)?$/.test(file),
         ))
           await fs.rm(path.join(task.directory, file), { force: true });
+        // An emptied chapter folder goes away; a folder that still holds other
+        // chapters stays put, so a partial delete never removes sibling pages.
         await fs.rmdir(task.directory).catch((e: any) => {
-          if (e.code !== "ENOENT") throw e;
+          if (e.code !== "ENOENT" && e.code !== "ENOTEMPTY") throw e;
         });
         this.store.delete("download", id);
+        await pruneEmptyFolders(path.dirname(task.directory), root).catch(
+          () => {},
+        );
       } catch (error) {
         task.state = "failed";
         task.error = `删除失败：${String(error)}`;
@@ -2670,7 +3037,9 @@ export class OnlineComicService implements Omit<
         task.done = task.pages.filter(Boolean).length;
         if (!active()) return;
         this.store.set("download", task.id, task);
-        this.changed();
+        // Page-level progress only feeds the queue popup; the sender collapses
+        // this into one throttled event so lists are not rebuilt per page.
+        this.changed({ download: true });
       }
       if (!active()) return;
       task.pages = task.pages.slice(0, urls.length);
@@ -2690,6 +3059,7 @@ export class OnlineComicService implements Omit<
   }
   close() {
     this.closed = true;
+    this.change.dispose();
     clearTimeout(this.followStartupTimer);
     for (const controller of this.jobs.values()) controller.abort();
     for (const controller of this.sourceAbort.values()) controller.abort();
@@ -2737,11 +3107,13 @@ export function installOnlineComics(
     "categories",
     "ranking",
     "details",
+    "tagTarget",
     "thumbnails",
     "login",
     "logout",
     "favorite",
     "library",
+    "removeHistory",
     "hubList",
     "hubSet",
     "following",
@@ -2758,6 +3130,7 @@ export function installOnlineComics(
     "enqueue",
     "downloadAction",
     "downloadDirectory",
+    "revealDownload",
     "respondUI",
   ]);
   ipcMain.handle(

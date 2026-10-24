@@ -1,6 +1,6 @@
-import type { MediaItem, Progress } from "./types";
+import type { MediaItem, OnlineChangeEvent, Progress } from "./types";
 
-export type NovelSourceId = "lightnovelshelf" | "bilinovel";
+export type NovelSourceId = string;
 export interface OnlineNovelRef {
   sourceId: NovelSourceId;
   novelId: string;
@@ -16,6 +16,19 @@ export interface NovelSourceInfo {
   logged: boolean;
   apiNode?: string;
   error?: string;
+  version?: string;
+  update?: boolean;
+  settings: Record<string, NovelSetting>;
+  settingValues: Record<string, unknown>;
+  capabilities: { search: boolean; latest: boolean; popular: boolean; login: string[]; exportEpub: boolean };
+}
+export interface NovelSetting {
+  title?: string;
+  type: "input" | "select" | "switch";
+  default?: unknown;
+  options?: unknown[];
+  validator?: string;
+  buttonText?: string;
 }
 export interface OnlineNovel extends OnlineNovelRef {
   title: string;
@@ -86,6 +99,13 @@ export interface NovelExportQuote extends OnlineNovelRef {
 export const NOVEL_API_METHODS = [
   "sources",
   "settings",
+  "repositories",
+  "openAddress",
+  "install",
+  "importFile",
+  "checkUpdates",
+  "update",
+  "uninstall",
   "login",
   "logout",
   "webLogin",
@@ -93,6 +113,7 @@ export const NOVEL_API_METHODS = [
   "discover",
   "details",
   "library",
+  "removeHistory",
   "hubSet",
   "following",
   "checkFollowing",
@@ -104,15 +125,23 @@ export const NOVEL_API_METHODS = [
   "enqueue",
   "downloadAction",
   "downloadDirectory",
+  "revealDownload",
   "exportQuote",
   "exportEpub",
   "clearCache",
 ] as const;
 export interface OnlineNovelsAPI {
   sources(): Promise<NovelSourceInfo[]>;
+  repositories(): Promise<string[]>;
+  openAddress(url: string): Promise<{ kind: "repository"; entries: { name: string; url: string; version?: string; description?: string; id?: string; installedId?: string }[] } | { kind: "source"; source: NovelSourceInfo }>;
+  install(url: string): Promise<NovelSourceInfo>;
+  importFile(): Promise<{ sources: NovelSourceInfo[]; errors: string[] } | null>;
+  checkUpdates(): Promise<NovelSourceInfo[]>;
+  update(id: NovelSourceId): Promise<NovelSourceInfo>;
+  uninstall(id: NovelSourceId): Promise<void>;
   settings(
     id: NovelSourceId,
-    value: { enabled?: boolean; apiNode?: string },
+    value: { enabled?: boolean; apiNode?: string; [key: string]: unknown },
   ): Promise<void>;
   login(id: NovelSourceId, email: string, password: string): Promise<void>;
   logout(id: NovelSourceId): Promise<void>;
@@ -131,6 +160,7 @@ export interface OnlineNovelsAPI {
   library(
     section: NovelHubList | "history" | "downloads",
   ): Promise<OnlineNovel[]>;
+  removeHistory(ref?: OnlineNovelRef): Promise<void>;
   hubSet(
     list: NovelHubList,
     ref: OnlineNovelRef,
@@ -156,8 +186,9 @@ export interface OnlineNovelsAPI {
     action: "pause" | "resume" | "cancel" | "delete",
   ): Promise<void>;
   downloadDirectory(choose?: boolean): Promise<string>;
+  revealDownload(id: string): Promise<void>;
   exportQuote(ref: OnlineNovelRef): Promise<NovelExportQuote>;
   exportEpub(quoteId: string): Promise<string | null>;
   clearCache(): Promise<void>;
-  onChange(callback: () => void): () => void;
+  onChange(callback: (event?: OnlineChangeEvent) => void): () => void;
 }

@@ -1,124 +1,84 @@
 import { describe, expect, it, vi } from "vitest";
-import { webcrypto } from "node:crypto";
-import { gzipSync } from "node:zlib";
 import { unzipSync, strFromU8 } from "fflate";
 import {
   chapterEpub,
   checkResponse,
   safeRemote,
 } from "../../src/main/onlineNovels/content";
-import {
-  parseBiliList,
-  parseBiliDetails,
-  parseBiliCatalog,
-  parseBiliChapter,
-  BilinovelProvider,
-  LightNovelShelfProvider,
-  decodeEnvelope,
-  type ProviderHost,
-} from "../../src/main/onlineNovels/providers";
+import { NovelScriptRuntime, type NovelRuntimeHost } from "../../src/main/onlineNovels/novelRuntime";
 import { NovelStore } from "../../src/main/onlineNovels/store";
 
-const list =
-  '<ul><li><a href="/novel/42.html"><img src="https://img.example.org/42.jpg" alt="测试小说"/></a><h3><a href="/novel/42.html">测试小说</a></h3><span class="author">作者</span></li></ul><a class="next" href="/wenku/0/2.html">下一页</a>';
-const catalog =
-  '<h1>测试小说</h1><h2>第一卷</h2><a href="/novel/42/100.html">序章</a><a href="/novel/42/100.html">重复导航</a><h2>第二卷</h2><a href="/novel/42/101.html">第二章</a>';
-const host = (request: ProviderHost["request"]): ProviderHost => ({
-  request,
-  node: () => "https://api.lightnovel.life",
-  credentials: () => ({}),
-  saveCredentials: () => {},
-});
-describe("哔哩解析", () => {
-  it("从封面和标题链接去重并保留分页", () => {
-    const page = parseBiliList(list, 1);
-    expect(page.novels).toHaveLength(1);
-    expect(page.novels[0]).toMatchObject({
-      novelId: "42",
-      title: "测试小说",
-      author: "作者",
+const fixture = `
+class NovelSourceEntry extends NovelSource {
+  constructor() {
+    super({
+      apiVersion: 1, id: "fixture-source", name: "测试源", version: "1.0.0",
+      url: "https://example.org/",
+      capabilities: { search: true, latest: true, popular: true, login: ["password"], exportEpub: false },
+      settings: { node: { title: "节点", type: "input", default: "https://example.org/api" } },
     });
-    expect(page.hasMore).toBe(true);
+  }
+  async search(keyword, page) {
+    return { novels: [{ sourceId: this.meta.id, novelId: keyword, title: "作品" }], page, hasMore: false };
+  }
+  async discover(kind, page) { return { novels: [], page, hasMore: false }; }
+  async details(novelId) { return { sourceId: this.meta.id, novelId, title: "作品", chapters: [] }; }
+  async chapter() { return { title: "第一章", html: "<p>正文</p>", base: this.meta.url }; }
+  async login() { await this.saveCredentials({ token: "saved" }); }
+  async bytes() {
+    const response = await host.request("https://example.org/file", { responseType: "bytes" });
+    return response.body;
+  }
+}
+`;
+function runtime(host: NovelRuntimeHost = async () => true) {
+  return new NovelScriptRuntime(fixture, { data: {}, settings: {}, credentials: {} }, host);
+}
+
+describe("小说源 QuickJS 运行器", () => {
+  it("校验来源元数据并调用异步源方法", async () => {
+    const source = runtime();
+    try {
+      await expect(source.open()).resolves.toMatchObject({ id: "fixture-source", apiVersion: 1 });
+      await expect(source.call("search", ["关键词", 2])).resolves.toMatchObject({
+        novels: [{ sourceId: "fixture-source", novelId: "关键词", title: "作品" }],
+        page: 2,
+        hasMore: false,
+      });
+      await expect(source.call("login", ["user", "secret"])).resolves.toBeUndefined();
+    } finally {
+      source.dispose();
+    }
   });
-  it("空结果和结构错误可区分", () => {
-    expect(parseBiliList("<p>搜索结果：没有找到</p>", 1).novels).toEqual([]);
-    expect(() => parseBiliList("<p>Unknown gateway</p>", 1)).toThrow("结构");
+  it("在宿主请求与 QuickJS 之间保留二进制正文", async () => {
+    const host = vi.fn(async () => ({ status: 200, body: Uint8Array.from([0, 1, 2, 255]) }));
+    const source = runtime(host);
+    try {
+      await source.open();
+      await expect(source.call("bytes")).resolves.toEqual(Uint8Array.from([0, 1, 2, 255]));
+      expect(host).toHaveBeenCalledWith({
+        op: "request",
+        url: "https://example.org/file",
+        options: { responseType: "bytes" },
+      });
+    } finally {
+      source.dispose();
+    }
   });
-  it("提取详情及按源顺序保留卷和章节", () => {
-    expect(
-      parseBiliDetails(
-        '<h1>测试小说</h1><meta property="og:novel:author" content="作者">',
-        "42",
-      ),
-    ).toMatchObject({ title: "测试小说", author: "作者" });
-    expect(
-      parseBiliCatalog(catalog, "42").map((c) => [c.id, c.volume]),
-    ).toEqual([
-      ["100", "第一卷"],
-      ["101", "第二卷"],
-    ]);
-    expect(
-      parseBiliCatalog(
-        '<a href="vol_9.html">第一卷</a><a href="100.html">序章</a>',
-        "42",
-      )[0],
-    ).toMatchObject({
-      id: "100",
-      volume: "第一卷",
-      url: "https://www.bilinovel.com/novel/42/100.html",
-    });
-  });
-  it("识别同章下一页，排除下一章", () => {
-    expect(
-      parseBiliChapter(
-        '<h1>序章</h1><div id="TextContent"><p>第一页</p></div><a href="100_2.html">下一页</a>',
-        "https://www.bilinovel.com/novel/42/100.html",
-        "100",
-      ).nextPage,
-    ).toContain("100_2.html");
-    expect(
-      parseBiliChapter(
-        '<div id="TextContent">末页</div><a rel="next" href="101.html">下一章</a>',
-        "https://www.bilinovel.com/novel/42/100.html",
-        "100",
-      ).nextPage,
-    ).toBeUndefined();
-  });
-  it("合并多页且保持图片顺序", async () => {
-    const provider = new BilinovelProvider(
-      host(
-        async (_id, url) =>
-          new Response(
-            url.includes("_2")
-              ? '<div id="TextContent"><p>第二页</p><img src="/b.jpg"></div>'
-              : '<div id="TextContent"><p>第一页</p><img src="/a.jpg"></div><a href="100_2.html">下一页</a>',
-          ),
-      ),
+  it("拒绝缺少已声明功能方法的脚本", async () => {
+    const invalid = new NovelScriptRuntime(
+      fixture.replace("async search(keyword, page) {", "async searchMissing(keyword, page) {"),
+      { data: {}, settings: {}, credentials: {} },
+      async () => true,
     );
-    const result = await provider.chapter("42", {
-      id: "100",
-      title: "章",
-      volume: "卷",
-    });
-    expect(result.html.indexOf("a.jpg")).toBeLessThan(
-      result.html.indexOf("b.jpg"),
-    );
-    expect(result.html).toContain("第二页");
-  });
-  it("拒绝循环分页与重复正文", async () => {
-    const provider = new BilinovelProvider(
-      host(
-        async () =>
-          new Response(
-            '<div id="TextContent">相同内容</div><a href="100_2.html">下一页</a>',
-          ),
-      ),
-    );
-    await expect(
-      provider.chapter("42", { id: "100", title: "章", volume: "卷" }),
-    ).rejects.toThrow(/重复|循环/);
+    try {
+      await expect(invalid.open()).rejects.toThrow("缺少对应方法");
+    } finally {
+      invalid.dispose();
+    }
   });
 });
+
 describe("章节 EPUB", () => {
   it("打包插图、字体、注音和脚注，清除活动内容", async () => {
     const urls: string[] = [];
@@ -156,14 +116,8 @@ describe("章节 EPUB", () => {
   it("插图不完整时不生成完成包", async () => {
     await expect(
       chapterEpub(
-        {
-          title: "章",
-          base: "https://example.org",
-          html: '<p>文</p><img src="/missing.jpg">',
-        },
-        async () => {
-          throw new Error("断网");
-        },
+        { title: "章", base: "https://example.org", html: '<p>文</p><img src="/missing.jpg">' },
+        async () => { throw new Error("断网"); },
       ),
     ).rejects.toThrow("断网");
   });
@@ -176,123 +130,23 @@ describe("章节 EPUB", () => {
     ).rejects.toThrow("内容类型");
   });
   it("固定内容生成稳定版本与包内路径", async () => {
-    const content = {
-      title: "章",
-      base: "https://example.org",
-      html: "<p>正文</p>",
-    };
+    const content = { title: "章", base: "https://example.org", html: "<p>正文</p>" };
     const load = async () => ({ data: new Uint8Array(), type: "image/jpeg" });
-    const a = await chapterEpub(content, load),
-      b = await chapterEpub(content, load);
+    const a = await chapterEpub(content, load), b = await chapterEpub(content, load);
     expect(a.version).toBe(b.version);
-    expect(unzipSync(a.data)["OEBPS/chapter.xhtml"]).toEqual(
-      unzipSync(b.data)["OEBPS/chapter.xhtml"],
-    );
-  });
-});
-describe("轻书架登录协议", () => {
-  it.each(["correct horse battery staple", " 空格与中文🔑 ", "a".repeat(64)])(
-    "与官方 Web Crypto 密码摘要一致：用例 %#",
-    async (password) => {
-      const saved = vi.fn();
-      let loginRequest: { url: string; init?: RequestInit } | undefined;
-      const provider = new LightNovelShelfProvider({
-        ...host(async (_source, url, init) => {
-          loginRequest = { url, init };
-          return Response.json({
-            Success: true,
-            Response: { Token: "access-token", RefreshToken: "refresh-token" },
-          });
-        }),
-        saveCredentials: saved,
-      });
-      await provider.login("reader@example.org", password);
-      const expected = Buffer.from(
-        await webcrypto.subtle.digest(
-          "SHA-256",
-          new TextEncoder().encode(password),
-        ),
-      ).toString("hex");
-      expect(loginRequest?.url).toBe(
-        "https://api.lightnovel.life/api/user/login",
-      );
-      expect(loginRequest?.init?.method).toBe("POST");
-      expect(JSON.parse(String(loginRequest?.init?.body))).toEqual({
-        email: "reader@example.org",
-        password: expected,
-      });
-      expect(expected).toMatch(/^[0-9a-f]{64}$/);
-      expect(saved).toHaveBeenCalledWith({
-        token: "access-token",
-        refreshToken: "refresh-token",
-        obtainedAt: expect.any(Number),
-      });
-      expect(JSON.stringify(saved.mock.calls)).not.toContain(password);
-      expect(JSON.stringify(saved.mock.calls)).not.toContain(expected);
-    },
-  );
-  it("错误密码保留服务端错误且不替换已有凭据", async () => {
-    const saved = vi.fn();
-    const provider = new LightNovelShelfProvider({
-      ...host(async () =>
-        Response.json({ Success: false, Status: 401, Msg: "密码错误" }),
-      ),
-      saveCredentials: saved,
-    });
-    await expect(
-      provider.login("reader@example.org", "incorrect-password"),
-    ).rejects.toThrow("[auth-required] 密码错误");
-    expect(saved).not.toHaveBeenCalled();
+    expect(unzipSync(a.data)["OEBPS/chapter.xhtml"]).toEqual(unzipSync(b.data)["OEBPS/chapter.xhtml"]);
   });
 });
 
 describe("响应与身份", () => {
-  it("解码轻书架压缩信封和权限错误", () => {
-    const data = { Data: [{ Id: 42 }], TotalPages: 1 };
-    expect(
-      decodeEnvelope({
-        Success: true,
-        Response: new Uint8Array(gzipSync(JSON.stringify(data))),
-      }),
-    ).toEqual(data);
-    expect(() =>
-      decodeEnvelope({
-        Success: false,
-        Status: 401,
-        Msg: "user is unauthorized",
-      }),
-    ).toThrow("auth-required");
-  });
   it("按阶段区分站点验证、认证、限流", () => {
-    expect(() =>
-      checkResponse(403, "Attention Required! | Cloudflare"),
-    ).toThrow("verification");
+    expect(() => checkResponse(403, "Attention Required! | Cloudflare")).toThrow("verification");
     expect(() => checkResponse(401, "")).toThrow("auth-required");
     expect(() => checkResponse(429, "")).toThrow("rate-limit");
   });
   it("限制资源协议与本机地址", () => {
-    for (const u of [
-      "file:///a",
-      "javascript:alert(1)",
-      "http://127.0.0.1/a",
-      "http://192.168.1.1/a",
-    ])
-      expect(() => safeRemote(u, "https://example.org")).toThrow();
-  });
-  it("轻书架章节 ID 与排序变化不会错误绑定进度", async () => {
-    const provider = new LightNovelShelfProvider(
-      host(async () => new Response()),
-    );
-    provider.invoke = async () =>
-      ({ Chapter: { Id: 101, Content: "正文" } }) as never;
-    await expect(
-      provider.chapter("42", {
-        id: "100",
-        order: 1,
-        title: "章",
-        volume: "卷",
-      }),
-    ).rejects.toThrow("顺序已变化");
+    for (const url of ["file:///a", "javascript:alert(1)", "http://127.0.0.1/a", "http://192.168.1.1/a"])
+      expect(() => safeRemote(url, "https://example.org")).toThrow();
   });
   it("独立数据库保存各源身份，删除不波及进度", () => {
     const db = new NovelStore(":memory:");

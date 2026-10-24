@@ -132,8 +132,11 @@ api.onlineNovels = Object.fromEntries(
     (...args: unknown[]) => ipcRenderer.invoke("novel:call", method, args),
   ]),
 );
-api.onlineNovels.onChange = (callback: () => void) => {
-  const listener = () => callback();
+api.onlineNovels.onChange = (
+  callback: (event?: import("../shared/types").OnlineChangeEvent) => void,
+) => {
+  const listener = (_event: unknown, data: unknown) =>
+    callback(data as import("../shared/types").OnlineChangeEvent | undefined);
   ipcRenderer.on("novel:change", listener);
   return () => ipcRenderer.removeListener("novel:change", listener);
 };
@@ -158,11 +161,13 @@ api.onlineComics = Object.fromEntries(
     "explore",
     "category",
     "details",
+    "tagTarget",
     "thumbnails",
     "login",
     "logout",
     "favorite",
     "library",
+    "removeHistory",
     "hubList",
     "hubSet",
     "following",
@@ -179,22 +184,28 @@ api.onlineComics = Object.fromEntries(
     "enqueue",
     "downloadAction",
     "downloadDirectory",
+    "revealDownload",
     "respondUI",
   ].map((method) => [
     method,
     (...args: unknown[]) => ipcRenderer.invoke("comic:call", method, args),
   ]),
 );
-for (const [method, channel] of [
-  ["onChange", "comic:change"],
-  ["onUI", "comic:ui"],
-]) {
-  api.onlineComics[method] = (callback: (data?: unknown) => void) => {
-    const listener = (_event: unknown, data: unknown) => callback(data);
-    ipcRenderer.on(channel, listener);
-    return () => ipcRenderer.removeListener(channel, listener);
-  };
-}
+type ChangeCallback = (
+  event?: import("../shared/types").OnlineChangeEvent,
+) => void;
+const subscribe = (channel: string) => (callback: ChangeCallback) => {
+  const listener = (_event: unknown, data: unknown) =>
+    callback(data as import("../shared/types").OnlineChangeEvent | undefined);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+};
+api.onlineComics.onChange = subscribe("comic:change");
+api.onlineComics.onUI = (callback: (data?: unknown) => void) => {
+  const listener = (_event: unknown, data: unknown) => callback(data);
+  ipcRenderer.on("comic:ui", listener);
+  return () => ipcRenderer.removeListener("comic:ui", listener);
+};
 api.comicHub = {
   list: (list: import("../shared/onlineComics").ComicHubList) =>
     api.onlineComics.hubList(list),
@@ -206,7 +217,8 @@ api.comicHub = {
   following: () => api.onlineComics.following(),
   checkFollowing: (ref?: import("../shared/onlineComics").OnlineComicRef) =>
     api.onlineComics.checkFollowing(ref),
-  onChange: (callback: () => void) => api.onlineComics.onChange(callback),
+  onChange: (callback: (event?: import("../shared/types").OnlineChangeEvent) => void) =>
+    api.onlineComics.onChange(callback),
 };
 api.appTheme = () => ipcRenderer.invoke("app:theme");
 api.windowState = () => ipcRenderer.invoke("app:window-state");

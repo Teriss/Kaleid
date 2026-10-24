@@ -52,7 +52,10 @@
       "vendor/folia/ADAPTATIONS.md",
       "vendor/wenku8/**/*",
       "vendor/venera/init.js",
+      "vendor/venera/tags.json",
       "vendor/venera/LICENSE",
+      "vendor/venera/TAGS_LICENSE.md",
+      "vendor/venera/TAGS_UPSTREAM.json",
       "vendor/venera/UPSTREAM.json",
       "vendor/venera/ADAPTATIONS.md",
       "LICENSE",
@@ -188,5 +191,5 @@
   "overrides": {
     "@xmldom/xmldom": "0.9.12"
   },
-  "license": "AGPL-3.0"
+  "license": "AGPL-3.0-only"
 }

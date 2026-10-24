@@ -26,6 +26,7 @@ for (const name of [
   "scripts/check-reading-search-app.mjs",
   "scripts/check-novel-covers-app.mjs",
   "tests/unit/onlineNovels.test.ts",
+  "tests/unit/comicTagTranslations.test.ts",
   "tests/unit/readingSearch.test.ts",
   "scripts/merge-comic-source-report.mjs",
   "scripts/comic-sources-baseline.json",

@@ -3,12 +3,11 @@ import type {
   ComicContext,
   ComicPage,
   MediaItem,
+  OnlineChangeEvent,
   Progress,
 } from "./types";
 import type { ComicPreferences } from "./comic";
 
-export const DEFAULT_COMIC_REPOSITORY =
-  "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/index.json";
 export interface OnlineComicRef {
   sourceId: string;
   comicId: string;
@@ -17,8 +16,7 @@ export interface OnlineChapterRef extends OnlineComicRef {
   chapterId: string | null;
 }
 export type ComicHubRef =
-  | { kind: "local"; mediaId: string }
-  | ({ kind: "online" } & OnlineComicRef);
+  { kind: "local"; mediaId: string } | ({ kind: "online" } & OnlineComicRef);
 export type ComicHubList = "readLater" | "following";
 export interface ComicFollowState {
   ref: OnlineComicRef;
@@ -32,7 +30,7 @@ export interface ComicHubAPI {
   set(list: ComicHubList, ref: ComicHubRef, value: boolean): Promise<void>;
   following(): Promise<ComicFollowState[]>;
   checkFollowing(ref?: OnlineComicRef): Promise<ComicFollowState[]>;
-  onChange(callback: () => void): () => void;
+  onChange(callback: (event?: OnlineChangeEvent) => void): () => void;
 }
 export interface SourceOption {
   label: string;
@@ -49,6 +47,7 @@ export interface ComicSourceInfo {
   url: string;
   hash: string;
   logged: boolean;
+  enableTagsTranslate?: boolean;
   error?: string;
   update?: boolean;
   capabilities: {
@@ -93,7 +92,11 @@ export interface OnlineComic extends OnlineComicRef {
   subtitle?: string;
   description?: string;
   tags?: any;
+  tagDisplay?: ComicTagDisplayGroup[];
   favoriteId?: string;
+  maxPage?: number;
+  stars?: number;
+  uploadTime?: string;
 }
 export interface OnlineChapter {
   id: string | null;
@@ -104,6 +107,11 @@ export interface OnlineChapter {
 }
 export interface OnlineComicDetails extends OnlineComic {
   chapters: OnlineChapter[];
+  tagDisplay?: ComicTagDisplayGroup[];
+  uploader?: string;
+  uploadTime?: string;
+  stars?: number;
+  maxPage?: number;
   hasChapters: boolean;
   thumbnails?: string[];
   hasThumbnailLoader: boolean;
@@ -113,6 +121,23 @@ export interface OnlineComicDetails extends OnlineComic {
   lastChapterId?: string | null;
   offline?: boolean;
   refreshError?: string;
+}
+export interface ComicTagDisplayGroup {
+  namespace: string;
+  label: string;
+  tags: { value: string; label: string }[];
+}
+export interface ComicTagTarget {
+  action?: "search" | "category" | string;
+  keyword?: string;
+  param?: string | null;
+  page?: string;
+  attributes?: {
+    keyword?: string;
+    param?: string | null;
+    options?: unknown[];
+    [key: string]: unknown;
+  };
 }
 export interface ComicThumbnailPage {
   thumbnails: string[];
@@ -189,11 +214,20 @@ export interface OnlineComicsAPI {
     next?: string | null,
   ): Promise<ComicSearchPage>;
   details(ref: OnlineComicRef, refresh?: boolean): Promise<OnlineComicDetails>;
-  thumbnails(ref: OnlineComicRef, next?: string | null): Promise<ComicThumbnailPage>;
+  tagTarget(
+    ref: OnlineComicRef,
+    namespace: string,
+    tag: string,
+  ): Promise<ComicTagTarget | null>;
+  thumbnails(
+    ref: OnlineComicRef,
+    next?: string | null,
+  ): Promise<ComicThumbnailPage>;
   login(id: string, kind: string, values: string[]): Promise<void>;
   logout(id: string): Promise<void>;
   favorite(ref: OnlineComicRef, value: boolean): Promise<void>;
   library(section: "shelf" | "history" | "downloads"): Promise<OnlineComic[]>;
+  removeHistory(ref?: OnlineComicRef): Promise<void>;
   hubList(list: ComicHubList): Promise<ComicHubRef[]>;
   hubSet(list: ComicHubList, ref: ComicHubRef, value: boolean): Promise<void>;
   following(): Promise<ComicFollowState[]>;
@@ -216,8 +250,9 @@ export interface OnlineComicsAPI {
     action: "pause" | "resume" | "cancel" | "delete",
   ): Promise<void>;
   downloadDirectory(choose?: boolean): Promise<string>;
+  revealDownload(id: string): Promise<void>;
   respondUI(id: string, value: unknown): Promise<void>;
-  onChange(callback: () => void): () => void;
+  onChange(callback: (event?: OnlineChangeEvent) => void): () => void;
   onUI(callback: (request: ComicUIRequest) => void): () => void;
 }
 

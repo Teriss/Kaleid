@@ -27,11 +27,10 @@ import { normalizeReaderSettings } from "../shared/readerSettings";
 import { installWindowControls } from "./windowControls";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-app.setPath(
-  "userData",
-  process.env.MEDIA_BROWSER_TEST_DATA ||
-    path.join(app.getPath("appData"), "映间"),
-);
+const testUserDataPath = process.env.MEDIA_BROWSER_TEST_DATA;
+const appDataPath = app.getPath("appData");
+const userDataPath = testUserDataPath || path.join(appDataPath, "Kaleid");
+app.setPath("userData", userDataPath);
 const applicationIcon = app.isPackaged
   ? path.join(process.resourcesPath, "kaleid-icon.png")
   : path.resolve(here, "../../build/kaleid-icon.png");
@@ -189,6 +188,14 @@ function validateSettings(input: Settings): Settings {
     theme: input.theme === "light" ? "light" : "dark",
     navigationAutoHide: input.navigationAutoHide !== false,
     videoAutoPictureInPicture: input.videoAutoPictureInPicture === true,
+    comicAutoLanguageFilters: Object.fromEntries(
+      Object.entries(input.comicAutoLanguageFilters || {}).filter(
+        ([sourceId, language]) =>
+          typeof sourceId === "string" &&
+          sourceId.length <= 200 &&
+          ["chinese", "english", "japanese"].includes(String(language)),
+      ),
+    ) as Settings["comicAutoLanguageFilters"],
     reducedMotion: Boolean(input.reducedMotion),
     navigationPosition: ["top", "bottom", "left", "right"].includes(
       input.navigationPosition,

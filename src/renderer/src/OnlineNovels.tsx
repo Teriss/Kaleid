@@ -5,21 +5,28 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import {
   ArrowLeft,
   ArrowRight,
   ArrowDownUp,
+  Bell,
   BookmarkPlus,
+  Check,
   Clock3,
   Compass,
+  Copy,
   FolderDown,
   FolderOpen,
   GripVertical,
   Heart,
   Home,
+  Info,
   LoaderCircle,
   Menu,
+  Plus,
+  Trash2,
   X,
   Download,
   Grid2X2,
@@ -53,6 +60,10 @@ import {
   ReadingPageShell,
   ReadingResults,
   ReadingDetailHero,
+  HubContextMenu,
+  type HubMenuItem,
+  DownloadQueueModal,
+  type DownloadQueueGroup,
 } from "./ReadingHub";
 import {
   useReadingSearchPanel,
@@ -60,7 +71,8 @@ import {
   ReadingSearchHistory,
   ReadingResultControls,
   ReadingPagination,
-  ReadingWaterfallStart, ReadingWaterfallControls,
+  ReadingWaterfallStart,
+  ReadingWaterfallControls,
 } from "./ReadingSearch";
 import {
   emptyReadingSearchPage,
@@ -69,7 +81,8 @@ import {
   loadReadingSearchPage,
   newReadingSearchId,
   searchSourcePool,
-  type ReadingSearchPage, type ReadingLoadOperation,
+  type ReadingSearchPage,
+  type ReadingLoadOperation,
 } from "../../shared/readingSearch";
 import "./onlineComics.css";
 import "./onlineNovels.css";
@@ -86,6 +99,7 @@ const refOf = (n: OnlineNovel): OnlineNovelRef => ({
 });
 const same = (a: OnlineNovelRef, b: OnlineNovelRef) =>
   a.sourceId === b.sourceId && a.novelId === b.novelId;
+type NovelCardItem = OnlineNovel | MediaItem;
 function cardItem(n: OnlineNovel): MediaItem {
   return {
     id: `novel-card:${n.sourceId}:${n.novelId}`,
@@ -135,6 +149,37 @@ function preference<T>(key: string, fallback: T): T {
     return fallback;
   }
 }
+type NovelResultPreference = {
+  layout: "grid" | "archiveShelf" | "carousel";
+  mode: "pagination" | "waterfall";
+};
+function novelSingleResultPreference(): NovelResultPreference {
+  const fallback: NovelResultPreference = {
+    layout: "grid",
+    mode: "pagination",
+  };
+  try {
+    let raw = localStorage.getItem("novel:single-result");
+    if (!raw) {
+      const legacyKeys = Object.keys(localStorage).filter((key) =>
+        key.startsWith("novel:single-result:"),
+      );
+      raw = legacyKeys.length ? localStorage.getItem(legacyKeys[0]) : null;
+      if (raw) localStorage.setItem("novel:single-result", raw);
+    }
+    const stored = JSON.parse(raw || "{}");
+    return {
+      layout: (["grid", "archiveShelf", "carousel"].includes(stored.layout)
+        ? stored.layout
+        : fallback.layout) as typeof fallback.layout,
+      mode: (stored.mode === "waterfall"
+        ? "waterfall"
+        : fallback.mode) as typeof fallback.mode,
+    };
+  } catch {
+    return fallback;
+  }
+}
 const NOVEL_MENU_ITEMS = [
   { section: "home", label: "首页", Icon: Home },
   { section: "discover", label: "发现", Icon: Compass },
@@ -153,13 +198,20 @@ function Results({
   remember,
   open,
   favorite,
-  onReachEnd, onReachStart, change, onViewportAnchorChange,
+  removeHistory,
+  contextMenu,
+  onReachEnd,
+  onReachStart,
+  change,
+  onViewportAnchorChange,
 }: {
   novels: OnlineNovel[];
   memory: BrowseMemory;
   remember(p: Partial<BrowseMemory>): void;
   open(n: OnlineNovel): void;
   favorite(n: OnlineNovel): void;
+  removeHistory?(n: OnlineNovel): void;
+  contextMenu?(n: OnlineNovel, event: ReactMouseEvent): void;
   onReachEnd?(): void;
   onReachStart?(): void;
   change?: ReadingSearchPage<OnlineNovel, NovelSearchPage>["change"];
@@ -177,7 +229,10 @@ function Results({
     "novel",
     items,
     latestMemory.current,
-    change && { ...change, targetId: change.targetId && `novel-card:${change.targetId}` },
+    change && {
+      ...change,
+      targetId: change.targetId && `novel-card:${change.targetId}`,
+    },
   );
   const settings = useApp((s) => s.settings);
   const props: LayoutProps = {
@@ -185,10 +240,21 @@ function Results({
     memory: latestMemory.current,
     remember: rememberResult,
     interactive: true,
-    onReachEnd, onReachStart, onViewportAnchorChange,
+    onReachEnd,
+    onReachStart,
+    onViewportAnchorChange,
     reducedMotion: settings.reducedMotion,
     open: (item) => open(item.remoteData!.novel),
     favorite: (item) => favorite(item.remoteData!.novel),
+    removeRecent: removeHistory
+      ? (item) => removeHistory(item.remoteData!.novel)
+      : undefined,
+    contextMenu: contextMenu
+      ? (item, _index, event) => {
+          const novel = item.remoteData?.novel as OnlineNovel | undefined;
+          if (novel) contextMenu(novel, event);
+        }
+      : undefined,
     select: (item, index) =>
       rememberResult({ focusId: item.id, focusIndex: index }),
     selected: (item) => memory.focusId === item.id,
@@ -233,6 +299,79 @@ export default function OnlineNovels({
   const [lists, setLists] = useState<Record<string, OnlineNovel[]>>({}),
     [tasks, setTasks] = useState<NovelDownloadTask[]>([]),
     [follows, setFollows] = useState<NovelFollowState[]>([]);
+  const [downloadQueueOpen, setDownloadQueueOpen] = useState(false);
+  const downloadQueueGroups = useMemo<DownloadQueueGroup[]>(() => {
+    const groups = new Map<string, NovelDownloadTask[]>();
+    for (const task of tasks) {
+      // Paused tasks stay listed so pausing never looks like a deletion.
+      if (
+        task.state !== "downloading" &&
+        task.state !== "queued" &&
+        task.state !== "paused"
+      )
+        continue;
+      const key = `${task.sourceId}\u0000${task.novelId}`;
+      const group = groups.get(key) || [];
+      group.push(task);
+      groups.set(key, group);
+    }
+    return [...groups].map(([id, entries]) => {
+      const active = entries.filter(
+        (task) => task.state === "downloading" || task.state === "queued",
+      );
+      const paused = entries.filter((task) => task.state === "paused");
+      const downloading = active.filter(
+        (task) => task.state === "downloading",
+      ).length;
+      const queued = active.length - downloading;
+      const pausedOnly = !!paused.length && !active.length;
+      const allNovelTasks = tasks.filter(
+        (task) =>
+          task.sourceId === entries[0].sourceId &&
+          task.novelId === entries[0].novelId,
+      );
+      const completed = allNovelTasks.filter(
+        (task) => task.state === "completed",
+      ).length;
+      const source = sources.find((entry) => entry.id === entries[0].sourceId);
+      return {
+        id,
+        title: entries[0].novelTitle,
+        subtitle: [
+          source?.name,
+          downloading ? `${downloading} 章下载中` : "",
+          queued ? `${queued} 章排队` : "",
+          paused.length ? `${paused.length} 章已暂停` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        taskIds: entries.map((task) => task.id),
+        activeTaskIds: active.map((task) => task.id),
+        pausedTaskIds: paused.map((task) => task.id),
+        downloading,
+        queued,
+        paused: paused.length,
+        progressLabel: `队列已完成 ${completed} / ${allNovelTasks.length} 章 · ${
+          downloading ? "当前章节处理中" : pausedOnly ? "已暂停" : "等待开始"
+        }`,
+      };
+    });
+  }, [tasks, sources]);
+  // Download controls only tell downloaded apart from not downloaded; progress
+  // itself lives in the queue popup.
+  const downloadTasks = useMemo(() => {
+    const map = new Map<string, NovelDownloadTask>();
+    for (const task of tasks)
+      map.set(
+        `${task.sourceId}\u0000${task.novelId}\u0000${task.chapterId ?? ""}`,
+        task,
+      );
+    return map;
+  }, [tasks]);
+  const taskOf = (novel: OnlineNovelRef, chapterId: string) =>
+    downloadTasks.get(
+      `${novel.sourceId}\u0000${novel.novelId}\u0000${chapterId ?? ""}`,
+    );
   const [localItems, setLocalItems] = useState<MediaItem[]>([]),
     [selected, setSelected] = useState<string[]>([]);
   const [keyword, setKeywordValue] = useState(scope.search || "");
@@ -244,22 +383,19 @@ export default function OnlineNovels({
   };
   const searchSource =
     scope.searchMode === "single"
-      ? scope.providerId || "lightnovelshelf"
+      ? scope.providerId ||
+        sources.find((source) => source.enabled && source.capabilities.search)
+          ?.id ||
+        sources.find((source) => source.capabilities.search)?.id ||
+        ""
       : "all";
   type SearchState = ReadingSearchPage<OnlineNovel, NovelSearchPage>;
   const searchPages = useRef(new Map<string, SearchState>());
   const requestIds = useRef(new Map<string, number>());
   const [, setSearchStateRevision] = useState(0);
   const resultRequests = useRef(new Map<string, number>());
-  const [resultPreference, setResultPreference] = useState(() =>
-    preference<{
-      layout: "grid" | "archiveShelf" | "carousel";
-      mode: "pagination" | "waterfall";
-    }>(`single-result:${scope.providerId || "lightnovelshelf"}`, {
-      layout: "grid",
-      mode: "pagination",
-    }),
-  );
+  const [resultPreference, setResultPreference] =
+    useState<NovelResultPreference>(() => novelSingleResultPreference());
   const [loginSource, setLoginSource] = useState<NovelSourceId>(),
     [email, setEmail] = useState(""),
     [password, setPassword] = useState(""),
@@ -291,10 +427,43 @@ export default function OnlineNovels({
     preference("search-history-collapsed", false),
   );
   const [aggregateIds, setAggregateIds] = useState<string[]>(
-    () =>
-      scope.novelSearchSources ||
-      preference("search-sources", ["lightnovelshelf", "bilinovel"]),
+    () => scope.novelSearchSources || preference("search-sources", []),
   );
+  const aggregateSelectionTouched = useRef(false);
+  const aggregateSourceIds = sources
+    .filter((source) => source.capabilities.search)
+    .map((source) => source.id);
+  const previousAggregateSourceIds = useRef<string[]>([]);
+  useEffect(() => {
+    if (!aggregateSourceIds.length) return;
+    const previous = previousAggregateSourceIds.current;
+    setAggregateIds((current) => {
+      if (!previous.length && !aggregateSelectionTouched.current) {
+        const saved = preference<string[] | undefined>(
+          "search-sources",
+          undefined,
+        );
+        return saved?.length
+          ? [
+              ...new Set([
+                ...saved.filter((id) => aggregateSourceIds.includes(id)),
+                ...aggregateSourceIds.filter((id) => !saved.includes(id)),
+              ]),
+            ]
+          : aggregateSourceIds;
+      }
+      const retained = current.filter((id) => aggregateSourceIds.includes(id));
+      const added = aggregateSourceIds.filter((id) => !previous.includes(id));
+      return aggregateSelectionTouched.current
+        ? retained
+        : [...new Set([...retained, ...added])];
+    });
+    previousAggregateSourceIds.current = aggregateSourceIds;
+  }, [sources]);
+  const selectAggregateSources = (ids: string[]) => {
+    aggregateSelectionTouched.current = true;
+    setAggregateIds(ids);
+  };
   const {
     searchPanelVisible,
     setSearchPanelVisible,
@@ -311,6 +480,25 @@ export default function OnlineNovels({
     pageId: scope.novelSearchId,
   });
   const [editingSource, setEditingSource] = useState<NovelSourceId>();
+  const [sourceImportOpen, setSourceImportOpen] = useState(false);
+  const [sourceAddress, setSourceAddress] = useState("");
+  const [sourceRepositories, setSourceRepositories] = useState<string[]>([]);
+  const [sourceEntries, setSourceEntries] = useState<
+    {
+      name: string;
+      url: string;
+      version?: string;
+      description?: string;
+      id?: string;
+      installedId?: string;
+    }[]
+  >([]);
+  const [sourceEntrySelection, setSourceEntrySelection] = useState<Set<string>>(
+    new Set(),
+  );
+  const [sourceSettingsValues, setSourceSettingsValues] = useState<
+    Record<string, unknown>
+  >({});
   const root = useRef<HTMLElement>(null);
   const home = useRef<HTMLDivElement>(null);
   const manager = useRef<HTMLDivElement>(null);
@@ -425,7 +613,8 @@ export default function OnlineNovels({
     readerSerial = useRef(0);
   const sourceId = (scope.providerId ||
     sources.find((s) => s.enabled)?.id ||
-    "lightnovelshelf") as NovelSourceId;
+    sources[0]?.id ||
+    "") as NovelSourceId;
   const ref = useMemo<OnlineNovelRef | undefined>(
     () => (scope.remoteId ? { sourceId, novelId: scope.remoteId } : undefined),
     [sourceId, scope.remoteId],
@@ -494,7 +683,62 @@ export default function OnlineNovels({
       scope.novelChapterId ? "replace" : "push",
     );
   };
-  useEffect(() => api().onChange(() => setRevision((v) => v + 1)), []);
+  // Downloaded novels open straight into the reader, like local novels do.
+  const readDownloaded = async (novel: OnlineNovel) => {
+    try {
+      const value = await api().details(refOf(novel));
+      const chapter =
+        value.chapters.find((entry) => entry.id === value.lastChapterId) ||
+        value.chapters.find((entry) => entry.progress) ||
+        value.chapters[0];
+      if (chapter) {
+        go(
+          {
+            section: "details",
+            providerId: novel.sourceId,
+            remoteId: novel.novelId,
+            remoteKind: "chapter",
+            novelChapterId: chapter.id,
+          },
+          "push",
+        );
+        return;
+      }
+    } catch {
+      const task = tasks.find((entry) => same(entry, novel));
+      if (task) {
+        go(
+          {
+            section: "details",
+            providerId: novel.sourceId,
+            remoteId: novel.novelId,
+            remoteKind: "chapter",
+            novelChapterId: task.chapterId,
+          },
+          "push",
+        );
+        return;
+      }
+    }
+    open(novel);
+  };
+  useEffect(() => {
+    // Chapter transitions arrive in bursts; collapse them into one library pass.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let live = true;
+    const unsubscribe = api().onChange(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (live) setRevision((v) => v + 1);
+      }, 250);
+    });
+    return () => {
+      live = false;
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
   useEffect(() => {
     let live = true;
     void Promise.all([
@@ -526,12 +770,7 @@ export default function OnlineNovels({
   }, [revision, localRevision]);
   useEffect(() => {
     setKeywordValue(drafts.current.get(draftKey) ?? scope.search ?? "");
-    setResultPreference(
-      preference(`single-result:${sourceId}`, {
-        layout: "grid",
-        mode: "pagination",
-      }),
-    );
+    setResultPreference(novelSingleResultPreference());
   }, [scope.novelSearchId, scope.search, scope.searchMode, sourceId]);
   const sourceIdentity = sources
     .filter((s) => s.enabled)
@@ -545,34 +784,43 @@ export default function OnlineNovels({
       scope.search || "",
     ]);
   const activeSearchPage = searchPages.current.get(searchPageKey(sourceId));
-  const resultLayout =
-    activeSearchPage?.resultLayout || resultPreference.layout;
-  const resultMode = activeSearchPage?.resultMode || resultPreference.mode;
+  const resultLayout = resultPreference.layout;
+  const resultMode = resultPreference.mode;
   const saveResultPreference = (patch: Partial<typeof resultPreference>) => {
     if (patch.mode && patch.mode !== resultMode) remember(readingResultStart());
-    const value = { layout: resultLayout, mode: resultMode, ...patch };
-    persist(`single-result:${sourceId}`, value);
+    const value = { ...resultPreference, ...patch };
+    persist("single-result", value);
     setResultPreference(value);
-    const state = searchPages.current.get(searchPageKey(sourceId));
-    if (state) {
-      if (patch.mode && patch.mode !== resultMode && state.busy && state.pageInfo) {
-        requestIds.current.set(searchPageKey(sourceId), (requestIds.current.get(searchPageKey(sourceId)) || 0) + 1);
-        ++resultIntent.current;
-        state.busy = false;
-        state.loadingOperation = undefined;
-        setBusy(false);
+    const nextGroups: Record<string, NovelSearchPage> = {};
+    for (const [key, current] of searchPages.current) {
+      let state: SearchState = { ...current, resultLayout: value.layout };
+      if (patch.mode) {
+        if (state.busy && state.pageInfo) {
+          requestIds.current.set(key, (requestIds.current.get(key) || 0) + 1);
+          ++resultIntent.current;
+          state = { ...state, busy: false, loadingOperation: undefined };
+        }
+        state = {
+          ...state,
+          ...readingResultModePatch(
+            state,
+            value.mode,
+            state.pageInfo?.novels || [],
+          ),
+        };
       }
-      state.resultLayout = value.layout;
-      Object.assign(
-        state,
-        readingResultModePatch(state, value.mode, state.pageInfo?.novels || []),
-      );
-      if (state.pageInfo)
-        setGroups((old) => ({
-          ...old,
-          [sourceId]: { ...state.pageInfo!, novels: state.cards },
-        }));
+      searchPages.current.set(key, state);
+      if (state.pageInfo) {
+        try {
+          const sourceKey = JSON.parse(key)[2] as string;
+          nextGroups[sourceKey] = { ...state.pageInfo, novels: state.cards };
+        } catch {}
+      }
     }
+    if (patch.mode) setBusy(false);
+    if (Object.keys(nextGroups).length)
+      setGroups((old) => ({ ...old, ...nextGroups }));
+    setSearchStateRevision((revision) => revision + 1);
   };
   async function loadOne(
     id: NovelSourceId,
@@ -584,7 +832,11 @@ export default function OnlineNovels({
   ) {
     const key = searchPageKey(id);
     const requestKey = `${key}:${number}`;
-    if ((operation === "append" || operation === "prepend") && searchPages.current.get(key)?.busy) return;
+    if (
+      (operation === "append" || operation === "prepend") &&
+      searchPages.current.get(key)?.busy
+    )
+      return;
     let state =
       searchPages.current.get(key) ||
       emptyReadingSearchPage<OnlineNovel, NovelSearchPage>({
@@ -620,7 +872,9 @@ export default function OnlineNovels({
       await loadReadingSearchPage<OnlineNovel, NovelSearchPage>({
         previous: state,
         number,
-        append, operation, cursorBased: false,
+        append,
+        operation,
+        cursorBased: false,
         fetchPage: (pageNumber) =>
           section === "search"
             ? api().search(id, scope.search || "", pageNumber)
@@ -635,7 +889,9 @@ export default function OnlineNovels({
           maxPage: result.hasMore ? undefined : result.page,
         }),
         identity: (novel) => `${novel.sourceId}:${novel.novelId}`,
-        current: () => requestIds.current.get(key) === requestId && serial === loadSerial.current,
+        current: () =>
+          requestIds.current.get(key) === requestId &&
+          serial === loadSerial.current,
         update: (patch) => {
           state = { ...state, ...patch };
           searchPages.current.set(key, state);
@@ -666,13 +922,15 @@ export default function OnlineNovels({
             .filter(
               (s) =>
                 s.enabled &&
-                (
-                  scope.novelSearchSources || ["lightnovelshelf", "bilinovel"]
-                ).includes(s.id),
+                s.capabilities.search &&
+                (scope.novelSearchSources || aggregateIds).includes(s.id),
             )
             .map((s) => s.id)
         : [sourceId];
-    if (!sources.length) return;
+    if (!sources.length) {
+      setBusy(false);
+      return;
+    }
     const stamp = `${sourceIdentity}:${refresh}`;
     const force = refreshStamp.current !== stamp;
     refreshStamp.current = stamp;
@@ -691,7 +949,11 @@ export default function OnlineNovels({
         ),
       () => serial === loadSerial.current,
     ).finally(() => {
-      if (serial === loadSerial.current && !ids.some(id => searchPages.current.get(searchPageKey(id))?.busy)) setBusy(false);
+      if (
+        serial === loadSerial.current &&
+        !ids.some((id) => searchPages.current.get(searchPageKey(id))?.busy)
+      )
+        setBusy(false);
     });
     return () => {
       ++loadSerial.current;
@@ -708,26 +970,61 @@ export default function OnlineNovels({
     refresh,
   ]);
   const resultIntent = useRef(0);
-  const loadResultPage = async (number: number, append = false, operation: ReadingLoadOperation = append ? "append" : singleSearch && resultMode === "waterfall" ? "jump" : "replace") => {
-    if ((operation === "append" || operation === "prepend") && searchPages.current.get(searchPageKey(sourceId))?.busy) return;
+  const loadResultPage = async (
+    number: number,
+    append = false,
+    operation: ReadingLoadOperation = append
+      ? "append"
+      : singleSearch && resultMode === "waterfall"
+        ? "jump"
+        : "replace",
+  ) => {
+    if (
+      (operation === "append" || operation === "prepend") &&
+      searchPages.current.get(searchPageKey(sourceId))?.busy
+    )
+      return;
     if (operation === "replace") remember(readingResultStart());
-    const intent = ++resultIntent.current, serial = loadSerial.current;
+    const intent = ++resultIntent.current,
+      serial = loadSerial.current;
     setBusy(true);
     try {
       await loadOne(sourceId, serial, number, append, true, operation);
-      if (intent === resultIntent.current && serial === loadSerial.current && !singleSearch) navigate({ ...scope, novelPage: number }, "replace");
+      if (
+        intent === resultIntent.current &&
+        serial === loadSerial.current &&
+        !singleSearch
+      )
+        navigate({ ...scope, novelPage: number }, "replace");
     } finally {
-      if (intent === resultIntent.current && serial === loadSerial.current) setBusy(false);
+      if (intent === resultIntent.current && serial === loadSerial.current)
+        setBusy(false);
     }
   };
   const loadNextWaterfallPage = () => {
     const state = searchPages.current.get(searchPageKey(sourceId));
-    if (!singleSearch || resultMode !== "waterfall" || !state || state.busy || state.afterPaused || !state.pageInfo?.hasMore) return;
+    if (
+      !singleSearch ||
+      resultMode !== "waterfall" ||
+      !state ||
+      state.busy ||
+      state.afterPaused ||
+      !state.pageInfo?.hasMore
+    )
+      return;
     void loadResultPage(state.endPage + 1, true);
   };
   const loadPreviousWaterfallPage = (manual = false) => {
     const state = searchPages.current.get(searchPageKey(sourceId));
-    if (!singleSearch || resultMode !== "waterfall" || !state || state.busy || state.startPage <= 1 || (!manual && state.beforePaused)) return;
+    if (
+      !singleSearch ||
+      resultMode !== "waterfall" ||
+      !state ||
+      state.busy ||
+      state.startPage <= 1 ||
+      (!manual && state.beforePaused)
+    )
+      return;
     void loadResultPage(state.startPage - 1, false, "prepend");
   };
   useEffect(() => {
@@ -806,7 +1103,8 @@ export default function OnlineNovels({
       if (
         event.key === "Escape" &&
         !event.defaultPrevented &&
-        !document.querySelector("dialog[open]")
+        !document.querySelector("dialog[open]") &&
+        !document.querySelector(".media-context-menu")
       ) {
         event.preventDefault();
         event.stopPropagation();
@@ -846,13 +1144,160 @@ export default function OnlineNovels({
   };
   const has = (list: string, novel: OnlineNovel) =>
     Boolean(lists[list]?.some((n) => same(n, novel)));
+  const [hubMenu, setHubMenu] = useState<{
+    x: number;
+    y: number;
+    item: NovelCardItem;
+  }>();
+  const openHubMenu = (item: NovelCardItem, event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setHubMenu({ x: event.clientX, y: event.clientY, item });
+  };
+  const copyTitle = async (title: string) => {
+    try {
+      await navigator.clipboard.writeText(title);
+      useApp.getState().notify("已复制标题");
+    } catch (error) {
+      report(error);
+    }
+  };
+  const isNovel = (item: NovelCardItem): item is OnlineNovel =>
+    "novelId" in item;
+  const novelTasks = (novel: OnlineNovel) =>
+    tasks.filter((task) => same(task, novel));
+  const deleteNovelDownloads = async (novel: OnlineNovel) => {
+    const ids = novelTasks(novel).map((task) => task.id);
+    if (!ids.length) return;
+    try {
+      await Promise.all(ids.map((id) => api().downloadAction(id, "delete")));
+      // Keep shelf and follow; clear the browsing trail and read-later entry.
+      await api().removeHistory(refOf(novel));
+      await api().hubSet("readLater", refOf(novel), false);
+      useApp.getState().notify("已删除下载");
+    } catch (error) {
+      report(error);
+    }
+  };
+  const revealNovelDownloads = async (novel: OnlineNovel) => {
+    const task = novelTasks(novel)[0];
+    if (!task) return;
+    try {
+      await api().revealDownload(task.id);
+    } catch (error) {
+      report(error);
+    }
+  };
+  const downloadWholeNovel = async (novel: OnlineNovel) => {
+    try {
+      const value = await api().details(refOf(novel));
+      if (!value.chapters.length) return;
+      await api().enqueue(
+        refOf(novel),
+        value.chapters.map((chapter) => chapter.id),
+      );
+      useApp.getState().notify("已加入下载队列");
+    } catch (error) {
+      report(error);
+    }
+  };
+  const deleteLocalNovel = async (item: MediaItem) => {
+    try {
+      await window.media.trashFiles([item.id]);
+      await window.media.removeRecent(item.id).catch(() => {});
+      setLocalItems((items) => items.filter((entry) => entry.id !== item.id));
+      useApp.getState().notify("已删除");
+    } catch (error) {
+      report(error);
+    }
+  };
+  const hubMenuItems = (item: NovelCardItem): HubMenuItem[] => {
+    if (!isNovel(item)) {
+      return [
+        {
+          label: "复制标题",
+          Icon: Copy,
+          onSelect: () => void copyTitle(item.title),
+        },
+        {
+          label: item.favorite ? "移出收藏" : "添加到收藏",
+          Icon: Heart,
+          onSelect: () =>
+            void window.media
+              .favorite(item.id, !item.favorite)
+              .then(() => useApp.getState().notify("已更新收藏")),
+        },
+        {
+          label: "打开文件夹",
+          Icon: FolderOpen,
+          onSelect: () => void window.media.reveal(item.id).catch(report),
+        },
+        {
+          label: "删除",
+          Icon: Trash2,
+          danger: true,
+          onSelect: () => void deleteLocalNovel(item),
+        },
+      ];
+    }
+    const downloaded = novelTasks(item).length > 0;
+    return [
+      { label: "详情", Icon: Info, onSelect: () => open(item) },
+      {
+        label: "复制标题",
+        Icon: Copy,
+        onSelect: () => void copyTitle(item.title),
+      },
+      {
+        label: has("shelf", item) ? "移出书架" : "加入书架",
+        Icon: Heart,
+        onSelect: () =>
+          void act(() => updateHub("shelf", item, !has("shelf", item))),
+      },
+      {
+        label: has("readLater", item) ? "移出稍后阅读" : "稍后阅读",
+        Icon: BookmarkPlus,
+        onSelect: () =>
+          void act(() => updateHub("readLater", item, !has("readLater", item))),
+      },
+      {
+        label: has("following", item) ? "取消追更" : "追更",
+        Icon: Bell,
+        onSelect: () =>
+          void act(() => updateHub("following", item, !has("following", item))),
+      },
+      ...(downloaded
+        ? [
+            {
+              label: "打开文件夹",
+              Icon: FolderOpen,
+              onSelect: () => void revealNovelDownloads(item),
+            },
+            {
+              label: "删除下载",
+              Icon: Trash2,
+              danger: true,
+              onSelect: () => void deleteNovelDownloads(item),
+            },
+          ]
+        : [
+            {
+              label: "下载",
+              Icon: Download,
+              onSelect: () => void downloadWholeNovel(item),
+            },
+          ]),
+    ];
+  };
   const submitSearch = (event?: FormEvent, term = keyword) => {
     event?.preventDefault();
     if (
       !term.trim() ||
       (searchSource === "all" &&
         !aggregateIds.some((id) =>
-          sources.some((s) => s.id === id && s.enabled),
+          sources.some(
+            (s) => s.id === id && s.enabled && s.capabilities.search,
+          ),
         ))
     )
       return;
@@ -877,9 +1322,10 @@ export default function OnlineNovels({
     setSearchPanelVisible(false);
     setRefresh((value) => value + 1);
   };
-  const result = ["discover", "popular"].includes(section) || singleSearch
-    ? groups[sourceId]
-    : undefined;
+  const result =
+    ["discover", "popular"].includes(section) || singleSearch
+      ? groups[sourceId]
+      : undefined;
   const librarySection = [
     "shelf",
     "history",
@@ -910,6 +1356,61 @@ export default function OnlineNovels({
       setSourceBusy(false);
     }
   };
+  const readNovelSourceAddress = async () => {
+    if (!sourceAddress.trim()) return;
+    setSourceBusy(true);
+    try {
+      const result = await api().openAddress(sourceAddress.trim());
+      if (result.kind === "repository") {
+        setSourceEntries(result.entries);
+        setSourceRepositories(await api().repositories());
+        setSourceEntrySelection(
+          new Set(
+            result.entries
+              .filter((entry) => !entry.installedId)
+              .map((entry) => entry.url),
+          ),
+        );
+      } else {
+        setSourceEntries([]);
+        setSourceAddress("");
+        setRefresh((value) => value + 1);
+        useApp.getState().notify(`已导入小说源：${result.source.name}`);
+      }
+    } catch (error) {
+      report(error);
+    } finally {
+      setSourceBusy(false);
+    }
+  };
+  const installSelectedNovelSources = async () => {
+    const selectedEntries = sourceEntries.filter((entry) =>
+      sourceEntrySelection.has(entry.url),
+    );
+    if (!selectedEntries.length) return;
+    setSourceBusy(true);
+    try {
+      const results = await Promise.allSettled(
+        selectedEntries.map((entry) => api().install(entry.url)),
+      );
+      const installed = results.filter(
+        (result) => result.status === "fulfilled",
+      ).length;
+      const failed = results.length - installed;
+      setSourceEntries([]);
+      setSourceEntrySelection(new Set());
+      setRefresh((value) => value + 1);
+      useApp
+        .getState()
+        .notify(
+          `已导入 ${installed} 个小说源${failed ? `，${failed} 个失败` : ""}`,
+        );
+      for (const result of results)
+        if (result.status === "rejected") report(result.reason);
+    } finally {
+      setSourceBusy(false);
+    }
+  };
   const rememberScroll = (node: HTMLElement) => {
     if (
       ["home", "sources", "details", "search"].includes(section) &&
@@ -923,7 +1424,8 @@ export default function OnlineNovels({
       identity={(n) => `${n.sourceId}:${n.novelId}`}
       title={(n) => n.title}
       cover={(n) => <Cover item={cardItem(n)} />}
-      open={open}
+      open={key === "downloads" ? (n) => void readDownloaded(n) : open}
+      contextMenu={(n, event) => openHubMenu(n, event)}
       empty="暂无小说"
       toggleLater={(n, value) =>
         void act(() => updateHub("readLater", n, value))
@@ -954,6 +1456,20 @@ export default function OnlineNovels({
               : "查看全部"}
           <ArrowRight size={14} />
         </button>
+        {key === "downloads" && (
+          <button
+            className="text-button download-queue-trigger"
+            onClick={() => setDownloadQueueOpen(true)}
+          >
+            下载中{" "}
+            <span>
+              {downloadQueueGroups.reduce(
+                (count, group) => count + group.taskIds.length,
+                0,
+              )}
+            </span>
+          </button>
+        )}
         {key === "following" && (
           <button
             className="text-button"
@@ -982,6 +1498,7 @@ export default function OnlineNovels({
             title={(n) => n.title}
             cover={(n) => <Cover item={n} />}
             open={openLocal}
+            contextMenu={(item, event) => openHubMenu(item, event)}
             empty="暂无本地小说，进入本地库添加 TXT 或 EPUB"
           />
         ) : (
@@ -1066,18 +1583,34 @@ export default function OnlineNovels({
         <header className="comic-detail-toolbar">
           <button
             className={`text-button comic-detail-back${singleSearch ? " comic-single-search-back" : ""}`}
+            aria-label={`返回${ref ? "小说详情" : "小说首页"}`}
+            title={`返回${ref ? "小说详情" : "小说首页"}`}
             onClick={back}
           >
             <ArrowLeft size={16} />
-            返回
           </button>
-          <span>
+          <strong>
             {ref
               ? sourceName
               : NOVEL_MENU_ITEMS.find((item) => item.section === section)
                   ?.label || "发现"}
-          </span>
+          </strong>
           <span className="spacer" />
+          {section === "downloads" && !ref && (
+            <button
+              className="text-button download-queue-trigger"
+              aria-haspopup="dialog"
+              onClick={() => setDownloadQueueOpen(true)}
+            >
+              下载中{" "}
+              <span>
+                {downloadQueueGroups.reduce(
+                  (count, group) => count + group.taskIds.length,
+                  0,
+                )}
+              </span>
+            </button>
+          )}
           {!ref && section !== "search" && (
             <IconButton label="小说显示方式" onClick={openLayout}>
               <Grid2X2 size={17} />
@@ -1089,6 +1622,14 @@ export default function OnlineNovels({
           >
             <RefreshCw size={17} />
           </IconButton>
+          {section === "history" && !!lists.history?.length && (
+            <button
+              className="text-button"
+              onClick={() => void act(() => api().removeHistory())}
+            >
+              清空历史
+            </button>
+          )}
         </header>
       )}
       {section === "home" && (
@@ -1264,7 +1805,7 @@ export default function OnlineNovels({
           {homeRow("readLater", "稍后阅读")}
           {homeRow("local", "本地小说")}
           {homeRow("following", "追更")}
-          {!!lists.downloads?.length && homeRow("downloads", "已下载")}
+          {homeRow("downloads", "已下载")}
         </div>
       )}
       {section === "sources" && (
@@ -1274,17 +1815,46 @@ export default function OnlineNovels({
           onScroll={(event) => rememberScroll(event.currentTarget)}
         >
           <header className="online-source-manager-heading">
-            <button className="text-button" onClick={back}>
-              <ArrowLeft size={16} />
-              返回小说
+            <button
+              className="text-button comic-detail-back"
+              aria-label="返回小说"
+              title="返回小说"
+              onClick={back}
+            >
+              <ArrowLeft size={17} />
             </button>
             <div>
               <h1>小说源</h1>
-              <p>管理内置源、账号与源设置</p>
             </div>
           </header>
           <div className="online-row">
-            <h3>内置 · {sources.length}</h3>
+            <button
+              className="button primary"
+              disabled={sourceBusy}
+              onClick={() => {
+                setSourceImportOpen(true);
+                void api()
+                  .repositories()
+                  .then(setSourceRepositories)
+                  .catch(report);
+              }}
+            >
+              <Plus size={16} /> 添加小说源
+            </button>
+            <h3>已导入 · {sources.length}</h3>
+            <span className="spacer" />
+            <button
+              className="text-button"
+              disabled={sourceBusy}
+              onClick={() =>
+                void act(async () => {
+                  await api().checkUpdates();
+                  setRefresh((value) => value + 1);
+                })
+              }
+            >
+              <RefreshCw size={14} /> 检查更新
+            </button>
           </div>
           <div className="online-source-list">
             {homeSources.map((source) => (
@@ -1302,16 +1872,22 @@ export default function OnlineNovels({
                   />
                   <span>
                     {source.name}
-                    <small>{source.error || source.url}</small>
+                    <small>
+                      {source.error ||
+                        `${source.version || ""}${source.version ? " · " : ""}${source.url}`}
+                    </small>
                   </span>
                 </label>
                 <button
                   className="text-button"
-                  onClick={() => setEditingSource(source.id)}
+                  onClick={() => {
+                    setEditingSource(source.id);
+                    setSourceSettingsValues({ ...source.settingValues });
+                  }}
                 >
                   源设置
                 </button>
-                {source.id === "lightnovelshelf" && (
+                {source.capabilities.login.includes("password") && (
                   <button
                     className="text-button"
                     onClick={() => {
@@ -1322,12 +1898,14 @@ export default function OnlineNovels({
                     {source.logged ? "账号 · 已登录" : "邮箱密码登录"}
                   </button>
                 )}
-                <button
-                  className="text-button"
-                  onClick={() => void act(() => api().webLogin(source.id))}
-                >
-                  {source.id === "bilinovel" ? "网页登录与验证" : "打开源站"}
-                </button>
+                {source.capabilities.login.includes("webview") && (
+                  <button
+                    className="text-button"
+                    onClick={() => void act(() => api().webLogin(source.id))}
+                  >
+                    网页登录与验证
+                  </button>
+                )}
                 {source.logged && (
                   <button
                     className="text-button"
@@ -1336,8 +1914,46 @@ export default function OnlineNovels({
                     退出账号
                   </button>
                 )}
+                {source.update && (
+                  <button
+                    className="button"
+                    disabled={sourceBusy}
+                    onClick={() =>
+                      void act(async () => {
+                        await api().update(source.id);
+                        setRefresh((value) => value + 1);
+                      })
+                    }
+                  >
+                    更新
+                  </button>
+                )}
+                <button
+                  className="text-button danger"
+                  disabled={sourceBusy}
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        `移除“${source.name}”？书架、阅读进度和已下载章节会保留。`,
+                      )
+                    )
+                      return;
+                    void act(async () => {
+                      await api().uninstall(source.id);
+                      setRefresh((value) => value + 1);
+                    });
+                  }}
+                >
+                  移除
+                </button>
               </div>
             ))}
+            {!sources.length && (
+              <p className="muted">
+                还没有导入来源；选择一个小说源 JS
+                文件，或读取源仓库索引后勾选导入。
+              </p>
+            )}
           </div>
           <section className="online-download-directory">
             <div>
@@ -1377,36 +1993,216 @@ export default function OnlineNovels({
           title={`${sources.find((s) => s.id === editingSource)?.name} · 设置`}
           close={() => setEditingSource(undefined)}
         >
-          {editingSource === "lightnovelshelf" ? (
-            <label className="novel-field">
-              服务器节点
-              <select
-                aria-label="轻书架服务器节点"
-                value={sources.find((s) => s.id === editingSource)?.apiNode}
-                onChange={(event) =>
-                  void act(() =>
-                    api().settings(editingSource, {
-                      apiNode: event.target.value,
-                    }),
-                  )
-                }
-              >
-                <option value="https://api.lightnovel.life">香港节点</option>
-                <option value="https://cf-api.lightnovel.life">
-                  Cloudflare 节点
-                </option>
-              </select>
+          {Object.entries(
+            sources.find((source) => source.id === editingSource)?.settings ||
+              {},
+          ).map(([key, schema]) => (
+            <label className="novel-field" key={key}>
+              {schema.title || key}
+              {schema.type === "select" ? (
+                <select
+                  value={String(
+                    sourceSettingsValues[key] ?? schema.default ?? "",
+                  )}
+                  onChange={(event) =>
+                    setSourceSettingsValues((values) => ({
+                      ...values,
+                      [key]: event.target.value,
+                    }))
+                  }
+                >
+                  {(schema.options || []).map((option: any, index) => (
+                    <option
+                      key={index}
+                      value={typeof option === "string" ? option : option.value}
+                    >
+                      {typeof option === "string"
+                        ? option
+                        : option.label || option.value}
+                    </option>
+                  ))}
+                </select>
+              ) : schema.type === "switch" ? (
+                <input
+                  type="checkbox"
+                  checked={Boolean(sourceSettingsValues[key] ?? schema.default)}
+                  onChange={(event) =>
+                    setSourceSettingsValues((values) => ({
+                      ...values,
+                      [key]: event.target.checked,
+                    }))
+                  }
+                />
+              ) : (
+                <input
+                  value={String(
+                    sourceSettingsValues[key] ?? schema.default ?? "",
+                  )}
+                  onChange={(event) =>
+                    setSourceSettingsValues((values) => ({
+                      ...values,
+                      [key]: event.target.value,
+                    }))
+                  }
+                />
+              )}
             </label>
-          ) : (
-            <div className="novel-login">
-              <p className="muted">登录和站点验证使用独立的持久浏览器会话。</p>
+          ))}
+          {sources
+            .find((source) => source.id === editingSource)
+            ?.capabilities.login.includes("webview") && (
+            <button
+              className="button secondary"
+              onClick={() => void act(() => api().webLogin(editingSource))}
+            >
+              网页登录与验证
+            </button>
+          )}
+          <button
+            className="button primary"
+            disabled={sourceBusy}
+            onClick={() =>
+              void act(async () => {
+                await api().settings(editingSource, sourceSettingsValues);
+                setEditingSource(undefined);
+                setRefresh((value) => value + 1);
+              })
+            }
+          >
+            保存源设置
+          </button>
+        </Modal>
+      )}
+      {sourceImportOpen && (
+        <Modal
+          title="添加小说源"
+          close={() => {
+            setSourceImportOpen(false);
+            setSourceEntries([]);
+          }}
+        >
+          <p className="muted">
+            可导入单个小说源 JS，或选择本地集合 JSON 并读取其中引用的同目录
+            JS；网络仓库 JSON 可预览后勾选安装。
+          </p>
+          <form
+            className="novel-source-url-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void readNovelSourceAddress();
+            }}
+          >
+            <label htmlFor="novel-source-address">
+              小说源 JS 或仓库索引网址
+            </label>
+            <div className="online-row">
+              <input
+                id="novel-source-address"
+                type="url"
+                placeholder="https://example.com/novel-sources.json"
+                value={sourceAddress}
+                onChange={(event) => setSourceAddress(event.target.value)}
+              />
               <button
-                className="button secondary"
-                onClick={() => void act(() => api().webLogin("bilinovel"))}
+                className="button primary"
+                type="submit"
+                disabled={sourceBusy || !sourceAddress.trim()}
               >
-                网页登录与验证
+                读取／导入
               </button>
             </div>
+          </form>
+          {!!sourceRepositories.length && (
+            <div className="online-row novel-source-repositories">
+              <span className="muted">最近仓库</span>
+              {sourceRepositories.map((url) => (
+                <button
+                  key={url}
+                  className="text-button"
+                  type="button"
+                  onClick={() => setSourceAddress(url)}
+                >
+                  {new URL(url).host}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="online-row">
+            <button
+              className="button secondary"
+              disabled={sourceBusy}
+              onClick={() =>
+                void act(async () => {
+                  const result = await api().importFile();
+                  if (result) {
+                    if (result.sources.length) setRefresh((value) => value + 1);
+                    const failed = result.errors.length;
+                    const summary =
+                      result.sources.length === 1 && !failed
+                        ? `已导入小说源：${result.sources[0].name}`
+                        : `本地导入完成：成功 ${result.sources.length} 个${failed ? `，失败 ${failed} 个` : ""}`;
+                    useApp.getState().notify(summary);
+                    if (failed) report(result.errors.join("\n"));
+                  }
+                })
+              }
+            >
+              <Plus size={16} /> 选择本地 JSON／JS
+            </button>
+          </div>
+          {!!sourceEntries.length && (
+            <section className="online-source-list">
+              <div className="online-row">
+                <strong>仓库来源 · {sourceEntries.length}</strong>
+                <button
+                  className="text-button"
+                  onClick={() =>
+                    setSourceEntrySelection(
+                      new Set(
+                        sourceEntries
+                          .filter((entry) => !entry.installedId)
+                          .map((entry) => entry.url),
+                      ),
+                    )
+                  }
+                >
+                  全选未安装
+                </button>
+              </div>
+              {sourceEntries.map((entry) => (
+                <label className="online-source-row" key={entry.url}>
+                  <input
+                    type="checkbox"
+                    disabled={!!entry.installedId || sourceBusy}
+                    checked={sourceEntrySelection.has(entry.url)}
+                    onChange={(event) =>
+                      setSourceEntrySelection((current) => {
+                        const next = new Set(current);
+                        if (event.target.checked) next.add(entry.url);
+                        else next.delete(entry.url);
+                        return next;
+                      })
+                    }
+                  />
+                  <span>
+                    {entry.name}
+                    <small>
+                      {entry.description || entry.version || entry.url}
+                    </small>
+                  </span>
+                  {entry.installedId && <small>已安装</small>}
+                </label>
+              ))}
+              <button
+                className="button primary"
+                disabled={sourceBusy || !sourceEntrySelection.size}
+                onClick={() => void installSelectedNovelSources()}
+              >
+                {sourceBusy
+                  ? "正在导入…"
+                  : `导入所选 · ${sourceEntrySelection.size}`}
+              </button>
+            </section>
           )}
         </Modal>
       )}
@@ -1529,15 +2325,19 @@ export default function OnlineNovels({
             !!keyword.trim() &&
             (scope.searchMode === "single" ||
               aggregateIds.some((id) =>
-                sources.some((s) => s.id === id && s.enabled),
+                sources.some(
+                  (s) => s.id === id && s.enabled && s.capabilities.search,
+                ),
               ))
           }
           visible={searchPanelVisible}
           inputRef={searchInput}
           panelRef={searchPanel}
-          sources={homeSources.filter((source) => source.enabled)}
+          sources={homeSources.filter(
+            (source) => source.enabled && source.capabilities.search,
+          )}
           selected={aggregateIds}
-          select={setAggregateIds}
+          select={selectAggregateSources}
           extra={
             <div className="comic-search-extra-controls">
               {singleSearch && (
@@ -1602,7 +2402,8 @@ export default function OnlineNovels({
       {Object.entries(errors)
         .filter(
           ([id]) =>
-            !emptySearch && !(
+            !emptySearch &&
+            !(
               singleSearch &&
               resultMode === "waterfall" &&
               id === sourceId &&
@@ -1637,63 +2438,70 @@ export default function OnlineNovels({
             )}
           </div>
         ))}
-      {section === "search" && scope.search && scope.searchMode !== "single" && (
-        <div className="comic-aggregate-results novel-aggregate">
-          {homeSources
-            .filter((source) => groups[source.id]?.novels.length)
-            .map((source) => [source.id, groups[source.id]] as const)
-            .map(([id, g]) => (
-              <section className="comic-aggregate-group" key={id}>
-                <div className="comic-aggregate-heading">
-                  <button
-                    className="comic-aggregate-source-link"
-                    onClick={() =>
-                      go({
-                        section: "search",
-                        search: scope.search,
-                        searchMode: "single",
-                        providerId: id,
-                      })
-                    }
-                  >
-                    <strong>{sources.find((s) => s.id === id)?.name}</strong>
-                    <span>{g.novels.length} 条预览</span>
-                    <ArrowRight size={15} />
-                  </button>
-                  <button
-                    className="text-button"
-                    onClick={() =>
-                      go({
-                        section: "search",
-                        search: scope.search,
-                        searchMode: "single",
-                        providerId: id,
-                      })
-                    }
-                  >
-                    查看此源全部结果
-                  </button>
-                </div>
-                <NovelCards novels={g.novels.slice(0, 8)} open={open} />
-              </section>
-            ))}
-          {!busy &&
-            scope.search &&
-            !Object.values(groups).some((g) => g.novels.length) && (
-              <p className="novel-muted">
-                {Object.keys(errors).length ===
-                sources.filter((s) => s.enabled).length
-                  ? "所有源搜索失败，请检查上方错误后重试"
-                  : "未找到小说"}
-              </p>
-            )}
-        </div>
-      )}
+      {section === "search" &&
+        scope.search &&
+        scope.searchMode !== "single" && (
+          <div className="comic-aggregate-results novel-aggregate">
+            {homeSources
+              .filter((source) => groups[source.id]?.novels.length)
+              .map((source) => [source.id, groups[source.id]] as const)
+              .map(([id, g]) => (
+                <section className="comic-aggregate-group" key={id}>
+                  <div className="comic-aggregate-heading">
+                    <button
+                      className="comic-aggregate-source-link"
+                      onClick={() =>
+                        go({
+                          section: "search",
+                          search: scope.search,
+                          searchMode: "single",
+                          providerId: id,
+                        })
+                      }
+                    >
+                      <strong>{sources.find((s) => s.id === id)?.name}</strong>
+                      <span>{g.novels.length} 条预览</span>
+                      <ArrowRight size={15} />
+                    </button>
+                    <button
+                      className="text-button"
+                      onClick={() =>
+                        go({
+                          section: "search",
+                          search: scope.search,
+                          searchMode: "single",
+                          providerId: id,
+                        })
+                      }
+                    >
+                      查看此源全部结果
+                    </button>
+                  </div>
+                  <NovelCards novels={g.novels.slice(0, 8)} open={open} />
+                </section>
+              ))}
+            {!busy &&
+              scope.search &&
+              !Object.values(groups).some((g) => g.novels.length) && (
+                <p className="novel-muted">
+                  {Object.keys(errors).length ===
+                  sources.filter((s) => s.enabled).length
+                    ? "所有源搜索失败，请检查上方错误后重试"
+                    : "未找到小说"}
+                </p>
+              )}
+          </div>
+        )}
       {(["discover", "popular"].includes(section) ||
         (section === "search" && scope.searchMode === "single")) &&
         result && (
           <>
-            {singleSearch && resultMode === "waterfall" && activeSearchPage && <ReadingWaterfallStart state={activeSearchPage} load={() => loadPreviousWaterfallPage(true)} />}
+            {singleSearch && resultMode === "waterfall" && activeSearchPage && (
+              <ReadingWaterfallStart
+                state={activeSearchPage}
+                load={() => loadPreviousWaterfallPage(true)}
+              />
+            )}
             <Results
               key={`${scope.novelSearchId || ""}:${sourceId}:${section}:${resultMode === "waterfall" ? "waterfall" : result.page}:${scope.search || ""}`}
               novels={result.novels}
@@ -1702,14 +2510,21 @@ export default function OnlineNovels({
               }
               remember={remember}
               open={open}
+              contextMenu={openHubMenu}
               favorite={favorites}
               onReachEnd={loadNextWaterfallPage}
-              onReachStart={activeSearchPage && activeSearchPage.startPage > 1 ? () => loadPreviousWaterfallPage() : undefined}
+              onReachStart={
+                activeSearchPage && activeSearchPage.startPage > 1
+                  ? () => loadPreviousWaterfallPage()
+                  : undefined
+              }
               change={activeSearchPage?.change}
               onViewportAnchorChange={(item) => {
                 const state = searchPages.current.get(searchPageKey(sourceId));
                 const novel = item.remoteData?.novel as OnlineNovel | undefined;
-                const page = novel && state?.itemPages[`${novel.sourceId}:${novel.novelId}`];
+                const page =
+                  novel &&
+                  state?.itemPages[`${novel.sourceId}:${novel.novelId}`];
                 if (state && page) state.visiblePage = page;
               }}
             />
@@ -1738,9 +2553,18 @@ export default function OnlineNovels({
               />
             )}
             {singleSearch && resultMode === "waterfall" && activeSearchPage && (
-              <ReadingWaterfallControls state={activeSearchPage} hasMore={result.hasMore}
-                changeJump={value => { activeSearchPage.jumpPage = value; setSearchStateRevision(v => v + 1); }}
-                go={number => void loadResultPage(number)} load={() => void loadResultPage(activeSearchPage.endPage + 1, true)} />
+              <ReadingWaterfallControls
+                state={activeSearchPage}
+                hasMore={result.hasMore}
+                changeJump={(value) => {
+                  activeSearchPage.jumpPage = value;
+                  setSearchStateRevision((v) => v + 1);
+                }}
+                go={(number) => void loadResultPage(number)}
+                load={() =>
+                  void loadResultPage(activeSearchPage.endPage + 1, true)
+                }
+              />
             )}
           </>
         )}
@@ -1778,83 +2602,22 @@ export default function OnlineNovels({
                 ))}
             </>
           )}
-          {section === "downloads" && (
-            <div className="online-tasks novel-downloads">
-              {tasks.map((task) => (
-                <div key={task.id}>
-                  <div>
-                    <strong>{task.novelTitle}</strong>
-                    <p>{task.title}</p>
-                    <small>
-                      {
-                        {
-                          queued: "排队中",
-                          downloading: "下载中",
-                          paused: "已暂停",
-                          completed: "已完成",
-                          failed: "失败",
-                        }[task.state]
-                      }
-                    </small>
-                    {task.error && <p className="novel-error">{task.error}</p>}
-                  </div>
-                  <div className="online-row">
-                    {["queued", "downloading"].includes(task.state) && (
-                      <button
-                        onClick={() =>
-                          void act(() => api().downloadAction(task.id, "pause"))
-                        }
-                      >
-                        暂停
-                      </button>
-                    )}
-                    {["paused", "failed"].includes(task.state) && (
-                      <button
-                        onClick={() =>
-                          void act(() =>
-                            api().downloadAction(task.id, "resume"),
-                          )
-                        }
-                      >
-                        继续／重试
-                      </button>
-                    )}
-                    <button
-                      onClick={() =>
-                        void act(() =>
-                          api().downloadAction(
-                            task.id,
-                            task.state === "completed" ? "delete" : "cancel",
-                          ),
-                        )
-                      }
-                    >
-                      {task.state === "completed" ? "删除下载" : "取消"}
-                    </button>
-                    <button
-                      onClick={() =>
-                        open({
-                          sourceId: task.sourceId,
-                          novelId: task.novelId,
-                          title: task.novelTitle,
-                        })
-                      }
-                    >
-                      查看作品
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
           {!!lists[section]?.length ? (
             <Results
               key={section}
               novels={lists[section]}
               memory={memory}
               remember={remember}
-              open={open}
+              open={
+                section === "downloads" ? (n) => void readDownloaded(n) : open
+              }
+              contextMenu={openHubMenu}
               favorite={favorites}
+              removeHistory={
+                section === "history"
+                  ? (novel) => void act(() => api().removeHistory(refOf(novel)))
+                  : undefined
+              }
             />
           ) : (
             <p className="novel-muted">此栏目暂无小说</p>
@@ -1965,7 +2728,10 @@ export default function OnlineNovels({
               </button>
               <button
                 className="button secondary"
-                disabled={!details.chapters.length}
+                disabled={
+                  !details.chapters.length ||
+                  details.chapters.every((c) => taskOf(details, c.id))
+                }
                 onClick={() =>
                   void act(() =>
                     api().enqueue(
@@ -1975,17 +2741,33 @@ export default function OnlineNovels({
                   )
                 }
               >
-                下载全书
+                {details.chapters.length &&
+                details.chapters.every((c) => taskOf(details, c.id)) ? (
+                  <Check size={15} />
+                ) : (
+                  <Download size={15} />
+                )}
+                {details.chapters.length &&
+                details.chapters.every((c) => taskOf(details, c.id))
+                  ? "已下载"
+                  : "下载全书"}
               </button>
               <button
                 className="button secondary"
-                disabled={!details.chapters.some((c) => !c.progress?.completed)}
+                disabled={
+                  !details.chapters.some(
+                    (c) => !c.progress?.completed && !taskOf(details, c.id),
+                  )
+                }
                 onClick={() =>
                   void act(() =>
                     api().enqueue(
                       details,
                       details.chapters
-                        .filter((c) => !c.progress?.completed)
+                        .filter(
+                          (c) =>
+                            !c.progress?.completed && !taskOf(details, c.id),
+                        )
                         .map((c) => c.id),
                     ),
                   )
@@ -2017,6 +2799,9 @@ export default function OnlineNovels({
                       <h3>{volume.title || "正文"}</h3>
                       <button
                         className="text-button"
+                        disabled={volume.chapters.every((chapter) =>
+                          taskOf(details, chapter.id),
+                        )}
                         onClick={() =>
                           void act(() =>
                             api().enqueue(
@@ -2026,8 +2811,18 @@ export default function OnlineNovels({
                           )
                         }
                       >
-                        <Download size={14} />
-                        下载整卷
+                        {volume.chapters.every((chapter) =>
+                          taskOf(details, chapter.id),
+                        ) ? (
+                          <Check size={14} />
+                        ) : (
+                          <Download size={14} />
+                        )}
+                        {volume.chapters.every((chapter) =>
+                          taskOf(details, chapter.id),
+                        )
+                          ? "已下载"
+                          : "下载整卷"}
                       </button>
                     </div>
                     <div className="online-chapters">
@@ -2053,12 +2848,7 @@ export default function OnlineNovels({
                           >
                             <span>{chapter.title}</span>
                             <small>
-                              {tasks.some(
-                                (task) =>
-                                  same(task, details) &&
-                                  task.chapterId === chapter.id &&
-                                  task.state === "completed",
-                              )
+                              {taskOf(details, chapter.id)
                                 ? "已下载"
                                 : chapter.progress?.completed
                                   ? "已读"
@@ -2068,14 +2858,23 @@ export default function OnlineNovels({
                             </small>
                           </button>
                           <IconButton
-                            label={`下载 ${chapter.title}`}
+                            label={
+                              taskOf(details, chapter.id)
+                                ? `${chapter.title} 已下载`
+                                : `下载 ${chapter.title}`
+                            }
+                            disabled={!!taskOf(details, chapter.id)}
                             onClick={() =>
                               void act(() =>
                                 api().enqueue(details, [chapter.id]),
                               )
                             }
                           >
-                            <Download size={14} />
+                            {taskOf(details, chapter.id) ? (
+                              <Check size={14} />
+                            ) : (
+                              <Download size={14} />
+                            )}
                           </IconButton>
                         </div>
                       ))}
@@ -2127,6 +2926,40 @@ export default function OnlineNovels({
             </div>
           )}
         </div>
+      )}
+      {hubMenu && (
+        <HubContextMenu
+          items={hubMenuItems(hubMenu.item)}
+          point={hubMenu}
+          close={() => setHubMenu(undefined)}
+        />
+      )}
+      {downloadQueueOpen && (
+        <DownloadQueueModal
+          groups={downloadQueueGroups}
+          close={() => setDownloadQueueOpen(false)}
+          pause={(taskIds) =>
+            void act(() =>
+              Promise.all(
+                taskIds.map((id) => api().downloadAction(id, "pause")),
+              ),
+            )
+          }
+          resume={(taskIds) =>
+            void act(() =>
+              Promise.all(
+                taskIds.map((id) => api().downloadAction(id, "resume")),
+              ),
+            )
+          }
+          cancel={(taskIds) =>
+            void act(() =>
+              Promise.all(
+                taskIds.map((id) => api().downloadAction(id, "cancel")),
+              ),
+            )
+          }
+        />
       )}
     </ReadingPageShell>
   );
