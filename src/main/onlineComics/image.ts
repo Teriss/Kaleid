@@ -16,6 +16,7 @@ export async function sourceImage(runtime: SourceRuntime, input: any) {
           url: config.url || input.url,
           http_method: config.method || "GET",
           headers: config.headers || {},
+          extra: input.refresh ? { cacheTime: "no" } : undefined,
           data: config.data,
           bytes: true,
           priority: input.priority,

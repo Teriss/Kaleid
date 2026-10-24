@@ -158,6 +158,7 @@ api.onlineComics = Object.fromEntries(
     "explore",
     "category",
     "details",
+    "thumbnails",
     "login",
     "logout",
     "favorite",
@@ -208,6 +209,21 @@ api.comicHub = {
   onChange: (callback: () => void) => api.onlineComics.onChange(callback),
 };
 api.appTheme = () => ipcRenderer.invoke("app:theme");
+api.windowState = () => ipcRenderer.invoke("app:window-state");
+api.windowCommand = (command: Parameters<AppAPI["windowCommand"]>[0]) => ipcRenderer.invoke("app:window-command", command);
+api.windowDrag = (value: Parameters<AppAPI["windowDrag"]>[0]) => ipcRenderer.invoke("app:window-drag", value);
+api.onWindowState = (callback: Parameters<AppAPI["onWindowState"]>[0]) => {
+  const listener = (_event: unknown, state: Parameters<typeof callback>[0]) => callback(state);
+  ipcRenderer.on("app:window-state", listener);
+  return () => ipcRenderer.removeListener("app:window-state", listener);
+};
+api.onWindowChromePointer = (callback: Parameters<AppAPI["onWindowChromePointer"]>[0]) => {
+  let active = true;
+  const listener = (_event: unknown, state: Parameters<typeof callback>[0]) => { if (active) callback(state); };
+  ipcRenderer.on("app:window-chrome-pointer", listener);
+  void ipcRenderer.invoke("app:window-chrome-pointer").then((state) => { if (active) callback(state); }).catch(() => {});
+  return () => { active = false; ipcRenderer.removeListener("app:window-chrome-pointer", listener); };
+};
 api.onTheme = (callback: (theme: "dark" | "light") => void) => {
   const listener = (_event: unknown, theme: "dark" | "light") =>
     callback(theme);

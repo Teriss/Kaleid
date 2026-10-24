@@ -90,6 +90,7 @@ export class OnlineNovelService {
   private logins = new Map<NovelSourceId, BrowserWindow>();
   private jobs = new Map<string, AbortController>();
   private builds = new Map<string, Promise<BundleRecord>>();
+  private detailRequests = new Map<string, Promise<SavedNovel>>();
   private closed = false;
   private credentialsMemory:
     ReturnType<ProviderHost["credentials"]> | undefined;
@@ -453,6 +454,37 @@ export class OnlineNovelService {
   private cacheSummary(novel: OnlineNovel) {
     this.store.set("summary", bookKey(novel), novel);
   }
+  private fetchDetails(ref: OnlineNovelRef): Promise<SavedNovel> {
+    const key = bookKey(ref);
+    const pending = this.detailRequests.get(key);
+    if (pending) return pending;
+    // A cold reader can request the same book as the detail view. Share the
+    // network work, then let each caller decorate the saved data independently.
+    const request = (async () => {
+      const fetched = await this.provider(ref.sourceId).details(ref.novelId);
+      if (this.closed) throw new Error("服务已关闭");
+      const saved = this.store.get<SavedNovel>("book", key);
+      for (const chapter of fetched.chapters) {
+        const old = saved?.chapters.find((c) => c.id === chapter.id);
+        if (
+          old &&
+          ((old.revision &&
+            chapter.revision &&
+            old.revision !== chapter.revision) ||
+            (saved?.updatedAt &&
+              fetched.updatedAt &&
+              saved.updatedAt !== fetched.updatedAt))
+        )
+          this.store.delete("cache", chapterKey({ ...ref, chapterId: chapter.id }));
+      }
+      const record = { ...saved, ...fetched };
+      this.store.set("book", key, record);
+      this.cacheSummary(record);
+      return record;
+    })().finally(() => this.detailRequests.delete(key));
+    this.detailRequests.set(key, request);
+    return request;
+  }
   async details(
     ref: OnlineNovelRef,
     refresh = false,
@@ -463,26 +495,7 @@ export class OnlineNovelService {
     let refreshError: string | undefined;
     if (!saved || refresh) {
       try {
-        const fetched = await this.provider(ref.sourceId).details(ref.novelId);
-        for (const chapter of fetched.chapters) {
-          const old = saved?.chapters.find((c) => c.id === chapter.id);
-          if (
-            old &&
-            ((old.revision &&
-              chapter.revision &&
-              old.revision !== chapter.revision) ||
-              (saved?.updatedAt &&
-                fetched.updatedAt &&
-                saved.updatedAt !== fetched.updatedAt))
-          )
-            this.store.delete(
-              "cache",
-              chapterKey({ ...ref, chapterId: chapter.id }),
-            );
-        }
-        saved = { ...saved, ...fetched };
-        this.store.set("book", bookKey(ref), saved);
-        this.cacheSummary(saved);
+        saved = await this.fetchDetails(ref);
       } catch (error) {
         if (!saved) throw error;
         offline = true;

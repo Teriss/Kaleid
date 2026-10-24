@@ -7,6 +7,7 @@ import DefaultManager from "epubjs/src/managers/default/index.js";
 import {
   ReaderNavigation,
   ReaderWheelSequence,
+  ReaderBoundaryWheel,
   epubProgress,
   pageScrollTarget,
 } from "../../shared/readerNavigation";
@@ -176,25 +177,15 @@ export class EpubReaderSession {
   private scrollFrame = 0;
   private scrolling = false;
   private boundaryPending = false;
-  private boundaryWheelHold = false;
-  private lastBoundaryWheel = 0;
+  private boundaryWheel = new ReaderBoundaryWheel();
   private scrollBoundaryAllowed = true;
-  private boundaryGestureDirection = 0;
-  private boundaryGestureDistance = 0;
-  private boundaryGestureAt = 0;
   private entryBoundary?: "start" | "end";
-  holdBoundaryWheel() {
-    this.boundaryWheelHold = true;
-    this.lastBoundaryWheel = performance.now();
+  holdBoundaryWheel(direction = 0) {
+    this.boundaryWheel.hold(performance.now(), direction);
     this.scrollBoundaryAllowed = false;
   }
-  private acceptWheelBoundary() {
-    const now = performance.now();
-    const allowed =
-      !this.boundaryWheelHold || now - this.lastBoundaryWheel >= 500;
-    if (allowed) this.boundaryWheelHold = false;
-    this.lastBoundaryWheel = now;
-    return allowed;
+  private acceptWheelBoundary(direction: number) {
+    return this.boundaryWheel.accept(performance.now(), direction);
   }
   private progressUpdates = new ReaderProgressUpdates<EpubLocationSnapshot>(
     (location) => {
@@ -470,30 +461,6 @@ export class EpubReaderSession {
     );
   }
 
-  private shouldCrossScrollBoundary(delta: number) {
-    const direction = Math.sign(delta);
-    const now = performance.now();
-    if (
-      this.boundaryGestureDirection !== direction ||
-      now - this.boundaryGestureAt > 800
-    ) {
-      this.boundaryGestureDirection = direction;
-      this.boundaryGestureDistance = 0;
-    }
-    this.boundaryGestureAt = now;
-    this.boundaryGestureDistance += Math.abs(delta);
-    return (
-      this.boundaryGestureDistance >=
-      Math.max(320, Math.min(480, this.host.clientHeight * 0.48))
-    );
-  }
-
-  private clearBoundaryGesture() {
-    this.boundaryGestureDirection = 0;
-    this.boundaryGestureDistance = 0;
-    this.boundaryGestureAt = 0;
-  }
-
   page(
     direction: number,
     source: "wheel" | "other" = "other",
@@ -548,7 +515,7 @@ export class EpubReaderSession {
   }
 
   wheelPage(direction: number) {
-    const allowed = this.acceptWheelBoundary();
+    const allowed = this.acceptWheelBoundary(direction);
     if (this.wheel.accept(performance.now(), direction))
       this.page(direction, "wheel", allowed);
   }
@@ -557,7 +524,7 @@ export class EpubReaderSession {
     if (!this.ready || this.closed || this.failed || this.mode !== "scroll")
       return;
     this.scrollBoundaryAllowed =
-      source !== "wheel" || this.acceptWheelBoundary();
+      source !== "wheel" || this.acceptWheelBoundary(Math.sign(y));
     if (y && Math.sign(y) !== this.scrollDirection) {
       this.scrollDirection = Math.sign(y);
       this.scrollIntent++;
@@ -595,16 +562,11 @@ export class EpubReaderSession {
       (boundaryDelta > 0 ? boundary?.atEnd : boundary?.atStart)
     ) {
       this.scrollX = this.scrollY = 0;
-      if (
-        this.scrollBoundaryAllowed &&
-        this.shouldCrossScrollBoundary(boundaryDelta)
-      ) {
-        this.clearBoundaryGesture();
+      if (this.scrollBoundaryAllowed) {
         this.crossBoundary(boundaryDelta);
       }
       return;
     }
-    this.clearBoundaryGesture();
     const revision = this.revision;
     this.scrolling = true;
     try {
@@ -676,7 +638,7 @@ export class EpubReaderSession {
     if (!this.indexed || !this.book) return Promise.resolve(false);
     // An explicit seek starts a new reading intent rather than continuing the
     // wheel inertia that crossed into this chapter.
-    this.boundaryWheelHold = false;
+    this.boundaryWheel.clear();
     if (fraction <= 0) {
       return this.display(this.book.spine.first().href);
     }

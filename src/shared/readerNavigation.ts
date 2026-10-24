@@ -81,6 +81,31 @@ export class ReaderWheelSequence {
   }
 }
 
+/** Suppress the inertia that entered a chapter, but accept a new gesture. */
+export class ReaderBoundaryWheel {
+  private held = false;
+  private lastAt = -Infinity;
+  private direction = 0;
+  hold(now: number, direction = 0) {
+    this.held = true;
+    this.lastAt = now;
+    this.direction = direction;
+  }
+  clear() {
+    this.held = false;
+  }
+  accept(now: number, direction: number) {
+    const allowed =
+      !this.held ||
+      now - this.lastAt >= 160 ||
+      (this.direction !== 0 && direction !== this.direction);
+    if (allowed) this.held = false;
+    this.lastAt = now;
+    this.direction = direction;
+    return allowed;
+  }
+}
+
 export function epubProgress(
   location: {
     atStart?: boolean;

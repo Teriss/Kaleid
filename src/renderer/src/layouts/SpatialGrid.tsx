@@ -35,6 +35,8 @@ export default function SpatialGrid({
   interactive,
   forceCarousel = false,
   onReachEnd,
+  onReachStart,
+  onViewportAnchorChange,
 }: LayoutProps & { forceCarousel?: boolean }) {
   const { ref, width, height } = useViewport();
   const scene = forceCarousel
@@ -94,7 +96,8 @@ export default function SpatialGrid({
     reducedMotion,
     (value) => {
       setIndex(value);
-      if (value >= source.total - 3) reachEndRef.current?.();
+      if (source.total > 0 && value >= source.total - 3)
+        reachEndRef.current?.();
       remember({
         carouselPosition: value,
         focusIndex: value,
@@ -105,8 +108,17 @@ export default function SpatialGrid({
   );
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
+  const restored = useRef<
+    { source: typeof source; request?: number } | undefined
+  >(undefined);
   useLayoutEffect(() => {
     if (!source.getSnapshot().ready) return;
+    if (
+      restored.current?.source === source &&
+      restored.current.request === memory.focusRequest
+    )
+      return;
+    restored.current = { source, request: memory.focusRequest };
     flow.cancel();
     cancelAnimationFrame(motion.current);
     const next = resolveFocusIndex(source, memory),
@@ -134,6 +146,46 @@ export default function SpatialGrid({
     motion = useRef(0);
   const [moving, setMoving] = useState(false);
   const item = source.peek(index);
+  const visibleId = useRef<string | undefined>(undefined);
+  const consumedExternal = useRef<number | undefined>(undefined);
+  const change = source.getSnapshot().externalChange;
+  useLayoutEffect(() => {
+    if (!change || consumedExternal.current === change.serial) return;
+    if (consumedExternal.current !== undefined || !memory.focusId) {
+      const id =
+        change.kind === "jump"
+          ? change.targetId
+          : change.kind === "prepend"
+            ? visibleId.current
+            : undefined;
+      const next = id ? source.indexOfId(id) : change.kind === "jump" ? 0 : -1;
+      if (next >= 0) {
+        const fraction =
+          change.kind === "prepend"
+            ? flow.current.current - Math.round(flow.current.current)
+            : 0;
+        flow.cancel();
+        drag.current = null;
+        setMoving(false);
+        flow.move(next + fraction);
+        setIndex(next);
+        remember({
+          carouselPosition: next + fraction,
+          focusIndex: next,
+          focusId: id,
+        });
+      }
+    }
+    consumedExternal.current = change.serial;
+  }, [change?.serial]);
+  useLayoutEffect(() => {
+    const at = carousel ? Math.round(flow.current.current) : index,
+      entry = source.peek(at);
+    if (entry) {
+      visibleId.current = entry.id;
+      onViewportAnchorChange?.(entry, at);
+    }
+  }, [index, change?.serial, source.total]);
   const visible = carousel
     ? coords.slice(Math.max(0, index - 5), Math.min(source.total, index + 6))
     : coords
@@ -157,6 +209,8 @@ export default function SpatialGrid({
     }
   }, [index, item?.id, camera.x, camera.y, scene]);
   function snap(next: number) {
+    if (next < 0) onReachStart?.();
+    if (source.total === 0 && next >= 0) onReachEnd?.();
     next = Math.max(0, Math.min(source.total - 1, next));
     setIndex(next);
     if (carousel) {
@@ -388,7 +442,9 @@ export default function SpatialGrid({
         }
         if (d.moved) {
           if (carousel) {
-            flow.move(d.startIndex + (d.x - e.clientX) / (cw + 65));
+            const next = d.startIndex + (d.x - e.clientX) / (cw + 65);
+            if (next < 0) onReachStart?.();
+            flow.move(next);
             setIndex(Math.round(flow.current.current));
           } else {
             const c = {
@@ -412,8 +468,10 @@ export default function SpatialGrid({
             const c = cameraRef.current;
             snap(nearest(c.x, c.y).index);
           }
-          setTimeout(() => (suppress.current = false), 0);
         }
+        // Prepending can finish and clear the drag before pointer-up arrives.
+        // Still release click suppression after the corresponding click.
+        setTimeout(() => (suppress.current = false), 0);
       }}
       onPointerCancel={() => {
         suppress.current = false;

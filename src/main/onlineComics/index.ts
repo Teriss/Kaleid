@@ -23,6 +23,7 @@ import {
   type OnlineComic,
   type OnlineComicDetails,
   type ComicSearchPage,
+  type ComicThumbnailPage,
   type ComicDownloadTask,
   type OnlineComicsAPI,
   type ComicHubList,
@@ -34,6 +35,7 @@ import type { RuntimeState } from "./runtime";
 import { OnlineComicStore, digest, comicKey, chapterKey } from "./store";
 import { comicSections } from "./normalize";
 import { prepareSourceRequest, sourceResponseCacheKey } from "./network";
+import { parseThumbnail, cropThumbnail } from "./thumbnails";
 
 interface Source {
   imageEpoch?: string;
@@ -72,6 +74,7 @@ interface Asset extends OnlineChapterRef {
   url: string;
   index: number;
   thumbnail: boolean;
+  preview?: boolean;
 }
 const pairs = (value: any): [string, any][] =>
   value?.$map || Object.entries(value || {});
@@ -180,6 +183,10 @@ export class OnlineComicService implements Omit<
   private loading = new Map<string, Promise<Source>>();
   private initialized = new Set<string>();
   private initializing = new Map<string, Promise<void>>();
+  private comicInfo = new WeakMap<
+    Source,
+    { token: string; comicId: string; pending: boolean; result: Promise<any> }
+  >();
   private chapterTails = new Map<string, Promise<unknown>>();
   private sourceAbort = new Map<string, AbortController>();
   private jobs = new Map<string, AbortController>();
@@ -204,6 +211,8 @@ export class OnlineComicService implements Omit<
   private cacheWrites = 0;
   private resourcePending = new Map<string, Promise<Buffer>>();
   private requestTails = new Map<string, Promise<unknown>>();
+  private thumbnailRequests = new Map<string, Promise<ComicThumbnailPage>>();
+  private thumbnailOriginals = new Map<string, Promise<Buffer>>();
   private sourceResponseCache = new Map<
     string,
     { sourceId: string; time: number; status: number; headers: Record<string, string>; body: Uint8Array }
@@ -580,6 +589,7 @@ export class OnlineComicService implements Omit<
       }
   }
   private async unload(source: Source) {
+    this.comicInfo.delete(source);
     this.sourceAbort.get(source.id)?.abort();
     this.dismissSourceUI(source);
     if (source.token) {
@@ -1423,6 +1433,41 @@ export class OnlineComicService implements Omit<
   private async invoke(id: string, method: string, args: any[] = []) {
     return this.rpc(await this.ready(id), "call", method, args);
   }
+  private loadComicInfo(source: Source, comicId: string, refresh = false) {
+    const previous = this.comicInfo.get(source);
+    if (
+      previous &&
+      previous.token === source.token &&
+      previous.comicId === comicId &&
+      (!refresh || previous.pending)
+    )
+      return previous.result;
+
+    // Some sources populate instance fields in loadInfo (e.g. Hitomi's gallery
+    // cache). Prime those once per current comic/runtime, and share an in-flight
+    // detail request with the reader instead of requesting it again per chapter.
+    const entry = {
+      token: source.token!,
+      comicId,
+      pending: true,
+      result: this.rpc(source, "call", "comic.loadInfo", [comicId]),
+    };
+    this.comicInfo.set(source, entry);
+    entry.result = entry.result.then(
+      (raw) => {
+        entry.pending = false;
+        // Concurrent detail views can finish out of order. The last completed
+        // loadInfo owns the source's mutable comic context.
+        if (source.token === entry.token) this.comicInfo.set(source, entry);
+        return raw;
+      },
+      (error) => {
+        if (this.comicInfo.get(source) === entry) this.comicInfo.delete(source);
+        throw error;
+      },
+    );
+    return entry.result;
+  }
   private async paged(
     id: string,
     base: string,
@@ -1537,6 +1582,7 @@ export class OnlineComicService implements Omit<
         asset.chapterId,
         asset.index,
         asset.thumbnail ? asset.url : "page",
+        ...(asset.preview ? ["preview"] : []),
       ]),
     );
     this.store.set("asset", token, asset);
@@ -1578,21 +1624,62 @@ export class OnlineComicService implements Omit<
       next: raw?.next,
     };
   }
+  private thumbnailURLs(ref: OnlineComicRef, urls: unknown): string[] {
+    if (!Array.isArray(urls) || urls.some((url) => typeof url !== "string"))
+      throw new Error("源返回了无效的预览图片列表");
+    // Keep opaque image keys intact: onThumbnailLoad may resolve them to URLs.
+    return urls.map((url) => this.assetURL({ ...ref, chapterId: null, index: 0, url, thumbnail: true, preview: true }));
+  }
+  thumbnails = async (ref: OnlineComicRef, next: string | null = null): Promise<ComicThumbnailPage> => {
+    refCheck(ref);
+    if (next !== null && (typeof next !== "string" || next.length > 16384))
+      throw new Error("无效预览分页游标");
+    const source = await this.ready(ref.sourceId);
+    const token = source.token;
+    const key = JSON.stringify([token, comicKey(ref), next]);
+    const pending = this.thumbnailRequests.get(key);
+    if (pending) return pending;
+    const result = (async () => {
+      await this.loadComicInfo(source, ref.comicId);
+      const raw = await this.rpc(source, "call", "comic.loadThumbnails", [ref.comicId, next]);
+      if (source.token !== token) throw new Error("漫画源实例已失效");
+      const cursor = raw?.next ?? null;
+      if (cursor !== null && (typeof cursor !== "string" || cursor.length > 16384))
+        throw new Error("源返回了无效的预览分页游标");
+      if (cursor !== null && cursor === next) throw new Error("源返回了重复的预览分页游标");
+      return { thumbnails: this.thumbnailURLs(ref, raw?.thumbnails), next: cursor };
+    })().finally(() => this.thumbnailRequests.delete(key));
+    this.thumbnailRequests.set(key, result);
+    return result;
+  };
   details = async (
     ref: OnlineComicRef,
     refresh = false,
   ): Promise<OnlineComicDetails> => {
     refCheck(ref);
     const saved = this.store.get<SavedComic>("comic", comicKey(ref));
-    if (saved && !refresh) return this.decorate(saved);
+    if (saved && !refresh && (
+      (typeof saved.details.hasChapters === "boolean" && typeof saved.details.hasThumbnailLoader === "boolean") ||
+      !this.sourcesMap.get(ref.sourceId)?.enabled
+    )) return this.decorate(saved);
     try {
-      const raw = await this.invoke(ref.sourceId, "comic.loadInfo", [
+      const source = await this.ready(ref.sourceId);
+      const raw = await this.loadComicInfo(
+        source,
         ref.comicId,
-      ]);
+        refresh,
+      );
       const card = this.comic(ref.sourceId, { ...raw, id: ref.comicId });
       const details: OnlineComicDetails = {
         ...card,
         chapters: chapters(raw.chapters),
+        hasChapters: raw.chapters != null,
+        // A broken static thumbnail must not prevent normal reading, or shift
+        // the remaining preview page numbers. Invalid entries fail per tile.
+        thumbnails: Array.isArray(raw.thumbnails)
+          ? this.thumbnailURLs(ref, raw.thumbnails.map((url: unknown) => typeof url === "string" ? url : ""))
+          : undefined,
+        hasThumbnailLoader: await this.rpc(source, "has", "comic.loadThumbnails"),
         updateTime: raw.updateTime,
         isFavorite: raw.isFavorite,
         favorite: saved?.favorite || false,
@@ -1618,6 +1705,8 @@ export class OnlineComicService implements Omit<
   private decorate(saved: SavedComic): OnlineComicDetails {
     return {
       ...saved.details,
+      hasChapters: saved.details.hasChapters ?? !(saved.details.chapters.length === 1 && saved.details.chapters[0].id === null),
+      hasThumbnailLoader: saved.details.hasThumbnailLoader ?? false,
       favorite: saved.favorite,
       lastChapterId: saved.lastChapterId,
       chapters: saved.details.chapters.map((c) => ({
@@ -2000,7 +2089,7 @@ export class OnlineComicService implements Omit<
           );
         }
         try {
-          await this.rpc(s, "call", "comic.loadInfo", [ref.comicId]);
+          await this.loadComicInfo(s, ref.comicId);
         } catch (error) {
           throw new Error(
             `加载作品信息失败：${String(error).replace(/^(?:Error:\s*)+/, "")}`,
@@ -2137,11 +2226,38 @@ export class OnlineComicService implements Omit<
         });
     }
   }
+  private thumbnailOriginalKey(source: Source, url: string) {
+    return digest(JSON.stringify([source.hash, source.id, source.imageEpoch || "", source.state.settings, url]));
+  }
   private async loadImage(
     asset: Asset,
     priority: number,
     jobId?: string,
+    refresh = false,
   ): Promise<Buffer> {
+    if (asset.preview) {
+      const parsed = parseThumbnail(asset.url);
+      const source = await this.ready(asset.sourceId);
+      const key = this.thumbnailOriginalKey(source, parsed.url);
+      const file = path.join(this.root, "comic-online", "cache", key);
+      let buffer: Buffer;
+      try {
+        buffer = await fs.readFile(file);
+      } catch {
+        let pending = this.thumbnailOriginals.get(key);
+        if (!pending) {
+          pending = this.loadImage({ ...asset, preview: false, url: parsed.url }, priority, jobId, refresh).then(async (data) => {
+            await fs.mkdir(path.dirname(file), { recursive: true });
+            await fs.writeFile(file, data);
+            return data;
+          });
+          this.thumbnailOriginals.set(key, pending);
+        }
+        try { buffer = await pending; }
+        finally { if (this.thumbnailOriginals.get(key) === pending) this.thumbnailOriginals.delete(key); }
+      }
+      return cropThumbnail(buffer, parsed.crop);
+    }
     return this.schedule(asset.sourceId, priority, async () => {
       if (jobId && this.jobs.get(jobId)?.signal.aborted)
         throw new Error("下载已暂停");
@@ -2150,6 +2266,7 @@ export class OnlineComicService implements Omit<
         ...asset,
         priority,
         jobId,
+        refresh,
       });
       const buffer = Buffer.from(result);
       await sharp(buffer, {
@@ -2206,7 +2323,7 @@ export class OnlineComicService implements Omit<
       if (!asset) throw new Error("资源不存在");
       let buffer: Buffer | undefined;
       const cover =
-        asset.thumbnail &&
+        asset.thumbnail && !asset.preview &&
         this.store.get<string>("downloadCover", comicKey(asset));
       if (cover) {
         try {
@@ -2251,13 +2368,21 @@ export class OnlineComicService implements Omit<
         "cache",
         digest(`${token}:${sourceHash}:${asset.url}`),
       );
+      const refreshPreview = !!(asset.preview && source?.enabled && new URL(request.url).searchParams.has("retry"));
+      if (refreshPreview && source) {
+        // An explicit image retry must refresh both the tile and its original
+        // sprite, including bytes a browser decoder previously rejected.
+        await fs.rm(cachePath, { force: true });
+        await fs.rm(path.join(this.root, "comic-online", "cache",
+          this.thumbnailOriginalKey(source, parseThumbnail(asset.url).url)), { force: true });
+      }
       if (!buffer) {
         try {
           buffer = await fs.readFile(cachePath);
         } catch {
           let promise = this.resourcePending.get(cachePath);
           if (!promise) {
-            promise = this.loadImage(asset, 0).then(async (data) => {
+            promise = this.loadImage(asset, 0, undefined, refreshPreview).then(async (data) => {
               await fs.mkdir(path.dirname(cachePath), { recursive: true });
               await fs.writeFile(cachePath, data);
               if (++this.cacheWrites % 50 === 0)
@@ -2612,6 +2737,7 @@ export function installOnlineComics(
     "categories",
     "ranking",
     "details",
+    "thumbnails",
     "login",
     "logout",
     "favorite",

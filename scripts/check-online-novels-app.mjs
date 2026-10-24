@@ -654,7 +654,7 @@ try {
   await page.getByLabel("阅读进度文本", { exact: true }).waitFor();
   await page.mouse.move(650, 5);
   assert.equal(await page.locator(".reader-bottom-panel").count(), 0);
-  await page.keyboard.press("Escape");
+  await page.locator(".epub-host").click();
   await page.getByRole("dialog", { name: "阅读菜单", exact: true }).waitFor();
   await page.getByRole("button", { name: "添加书签", exact: true }).click();
   await page.getByRole("button", { name: "目录与书签", exact: true }).click();
@@ -777,7 +777,7 @@ try {
       .querySelector(".reader-corner-progress")
       ?.textContent?.startsWith("2/"),
   );
-  await page.keyboard.press("Escape");
+  await page.locator(".epub-host").click();
   await page.waitForFunction(
     () =>
       document.querySelector(".epub-host")?.dataset.readerIndexed === "true" &&
@@ -826,7 +826,7 @@ try {
     () => document.querySelector(".epub-host")?.dataset.readerMode === "scroll",
   );
   await page.mouse.move(700, 400);
-  await page.mouse.wheel(0, 500);
+  await page.mouse.wheel(0, 40);
   await page.waitForFunction(() =>
     document
       .querySelector(".reader-corner-progress")
@@ -840,7 +840,7 @@ try {
   // cross its far boundary as well, even with very large deltas.
   for (let index = 0; index < 6; index++) await page.mouse.wheel(0, 50000);
   assert.equal(await page.getByText("— 本书完 —", { exact: true }).count(), 0);
-  await page.keyboard.press("Escape");
+  await page.locator(".epub-host").click();
   await page
     .getByRole("spinbutton", { name: "阅读进度百分比", exact: true })
     .fill("100");
@@ -856,13 +856,13 @@ try {
     () => document.querySelector(".epub-host")?.dataset.readerMode === "scroll",
   );
   await page.mouse.move(700, 400);
-  await page.mouse.wheel(0, 500);
+  await page.mouse.wheel(0, 40);
   await page.getByText("— 本书完 —", { exact: true }).waitFor();
   await page.screenshot({
     animations: "disabled",
     path: path.join(artifacts, "reader-immersive.png"),
   });
-  await page.keyboard.press("Escape");
+  await page.locator(".epub-host").click();
   await page.setViewportSize({ width: 760, height: 780 });
   await page.waitForFunction(() => {
     const host = document.querySelector(".epub-host");
@@ -910,7 +910,7 @@ try {
   results.push(
     "automatic paged/scroll chapter boundaries, reverse entry, resource failure retry and final chapter",
   );
-  await page.keyboard.press("Escape");
+  await page.locator(".epub-host").click();
   await page.getByRole("button", { name: "返回媒体库", exact: true }).click();
   await page
     .getByRole("heading", { name: "测试轻小说", exact: true })

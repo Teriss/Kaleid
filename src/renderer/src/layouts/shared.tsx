@@ -53,6 +53,8 @@ export interface LayoutProps {
   contextMenu?(item: MediaItem, index: number, event: ReactMouseEvent): void;
   removeRecent?(item: MediaItem): void | Promise<void>;
   onReachEnd?(): void;
+  onReachStart?(): void;
+  onViewportAnchorChange?(item: MediaItem, index: number): void;
   minimumCellWidth?: number;
 }
 export function resolveFocusIndex(

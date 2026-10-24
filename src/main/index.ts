@@ -24,6 +24,7 @@ import { installVideo } from "./video";
 import { installVideoOverlay } from "./videoOverlay";
 import type { MediaQuery, Settings } from "../shared/types";
 import { normalizeReaderSettings } from "../shared/readerSettings";
+import { installWindowControls } from "./windowControls";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 app.setPath(
@@ -61,6 +62,7 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 let window: BrowserWindow | null = null;
+const bindWindowControls = installWindowControls(() => window);
 let appTheme: Settings["theme"] = "dark";
 function synchronizeTheme(theme: Settings["theme"]) {
   appTheme = theme === "light" ? "light" : "dark";
@@ -68,11 +70,6 @@ function synchronizeTheme(theme: Settings["theme"]) {
     if (win.isDestroyed()) continue;
     if (win === window) {
       win.setBackgroundColor(appTheme === "light" ? "#eeefec" : "#141414");
-      win.setTitleBarOverlay({
-        color: appTheme === "light" ? "#eeefec" : "#141414",
-        symbolColor: appTheme === "light" ? "#303630" : "#dedede",
-        height: 36,
-      });
     } else if (win.webContents.getURL().endsWith("#music-mini")) {
       win.setBackgroundColor(appTheme === "light" ? "#eeefec" : "#141414");
     }
@@ -586,12 +583,9 @@ void app
         title: "Kaleid",
         icon: applicationIcon,
         autoHideMenuBar: true,
+        frame: false,
         titleBarStyle: "hidden",
-        titleBarOverlay: {
-          color: appTheme === "light" ? "#eeefec" : "#141414",
-          symbolColor: appTheme === "light" ? "#303630" : "#dedede",
-          height: 36,
-        },
+        titleBarOverlay: false,
         webPreferences: {
           preload: path.join(here, "../preload/index.cjs"),
           contextIsolation: true,
@@ -601,6 +595,7 @@ void app
       });
       // The app has no native menu bar; keep Alt from revealing an empty menu strip.
       window.setMenu(null);
+      bindWindowControls(window);
       videoOverlay.bindWindow(window);
       videoService.bindWindow(window);
       window.webContents.on("will-navigate", (event) => event.preventDefault());

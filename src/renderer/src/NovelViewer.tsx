@@ -695,7 +695,7 @@ export default function NovelViewer({
         );
         if (!live) return;
         entryApplied.current = item.id;
-        session.holdBoundaryWheel();
+        session.holdBoundaryWheel(item.remoteData.novelEntry === "start" ? 1 : -1);
       }
       if (item.onlineNovelRef && !initialCfi && item.progress?.textOffset) {
         const contents = session.rendition?.getContents?.()[0];

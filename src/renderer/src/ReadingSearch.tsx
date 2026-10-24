@@ -414,3 +414,119 @@ export function ReadingPagination({
     </footer>
   );
 }
+
+type WaterfallState = {
+  startPage: number;
+  endPage: number;
+  cards: unknown[];
+  maxPage?: number;
+  busy: boolean;
+  jumpPage: string;
+  loadingOperation?: string;
+  error: string;
+  beforeError: string;
+  afterError: string;
+  beforePaused: boolean;
+  afterPaused: boolean;
+  jumpError: string;
+  failedPage?: number;
+};
+export function ReadingWaterfallStart({
+  state,
+  load,
+}: {
+  state: WaterfallState;
+  load(): void;
+}) {
+  return (
+    <div className="comic-waterfall-start" role="status">
+      {state.startPage > 1 && (
+        <>
+          {state.loadingOperation === "prepend" ? (
+            <span>正在加载上一页…</span>
+          ) : (
+            (state.beforeError || state.beforePaused) && (
+              <button
+                className="text-button"
+                disabled={state.busy}
+                onClick={load}
+              >
+                {state.beforeError
+                  ? "重试加载上一页"
+                  : "上一页无新增结果，继续向前加载"}
+              </button>
+            )
+          )}
+          {state.beforeError && <span role="alert">{state.beforeError}</span>}
+        </>
+      )}
+    </div>
+  );
+}
+export function ReadingWaterfallControls({
+  state,
+  hasMore,
+  changeJump,
+  go,
+  load,
+}: {
+  state: WaterfallState;
+  hasMore: boolean;
+  changeJump(value: string): void;
+  go(page: number): void;
+  load(): void;
+}) {
+  const locating = state.loadingOperation === "jump";
+  return (
+    <div className="comic-waterfall-status" role="status">
+      <span>{`已加载第 ${state.startPage}–${state.endPage} 页${state.maxPage != null ? ` / ${state.maxPage}` : "（总页数未知）"}，共 ${state.cards.length} 条${!hasMore ? (state.startPage === 1 ? " · 已加载全部结果" : " · 已到末页") : ""}`}</span>
+      {state.busy && <span>{locating ? "正在定位…" : "正在加载…"}</span>}
+      {state.afterError && (
+        <span role="alert" title={state.afterError}>
+          {state.afterError}
+        </span>
+      )}
+      {hasMore && (state.afterError || state.afterPaused) && (
+        <button className="text-button" disabled={state.busy} onClick={load}>
+          {state.afterError ? "重试加载" : "本页无新增结果，继续加载"}
+        </button>
+      )}
+      <form
+        className="comic-page-jump"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const page = Math.max(1, Math.floor(Number(state.jumpPage) || 1));
+          go(state.maxPage ? Math.min(page, state.maxPage) : page);
+        }}
+      >
+        <label>
+          跳至{" "}
+          <input
+            type="number"
+            min="1"
+            max={state.maxPage}
+            value={state.jumpPage}
+            aria-label="跳转到搜索结果页"
+            onChange={(event) => changeJump(event.target.value)}
+          />{" "}
+          页
+        </label>
+        <button className="button secondary" disabled={!state.jumpPage}>
+          跳转
+        </button>
+      </form>
+      {state.jumpError && (
+        <>
+          <span role="alert">{state.jumpError}</span>
+          <button
+            className="text-button"
+            disabled={state.busy}
+            onClick={() => go(state.failedPage ?? Number(state.jumpPage))}
+          >
+            重试定位
+          </button>
+        </>
+      )}
+    </div>
+  );
+}

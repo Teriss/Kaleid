@@ -27,6 +27,8 @@ export interface BrowseLocation {
   novelSearchId?: string;
   novelSearchSources?: string[];
   comicChapterId?: string | null;
+  /** One-shot reader entry, zero-based; independent of saved reading progress. */
+  comicInitialPage?: number;
   searchMode?: "aggregate" | "single";
   /** Distinguishes independent comic search result pages in the parent stack. */
   comicSearchId?: string;

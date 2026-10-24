@@ -46,7 +46,7 @@ function formatReaderError(error: unknown) {
     .trim();
   const stage = message.match(/^(.*?(?:失败|错误)[：:]\s*)/)?.[1] || "";
   if (/Invalid status code:\s*210|图片请求失败\s*\(210\)/.test(message))
-    return `${stage}漫画源返回 HTTP 210（请求受限）。请按源站提示等待后重试；再次请求可能延长限制时间。`;
+    return `${stage}漫画源返回 HTTP 210（请求受限）。请检查该源的 API 地址、客户端或设备限制提示，稍后重试。`;
   if (message.includes("Invalid status code: 403"))
     return `${stage}漫画源拒绝了章节请求（403），可能需要登录或该源暂时无法访问。`;
   return message || "章节加载失败，请重试。";
@@ -133,10 +133,12 @@ export default function ComicViewer({
   item,
   close,
   switchItem,
+  initialPage,
 }: {
   item: MediaItem;
   close(): void;
   switchItem(item: MediaItem): void;
+  initialPage?: number;
 }) {
   const settings = useApp((s) => s.settings);
   const adapter = comicReaderAdapter(item);
@@ -161,6 +163,7 @@ export default function ComicViewer({
   const [size, setSize] = useState({ width: 1000, height: 700 });
   const [scrollTop, setScrollTop] = useState(0);
   const position = useRef<Progress>({ ...item.progress });
+  const entryPage = useRef(initialPage);
   const ready = useRef(false),
     switching = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined),
@@ -238,14 +241,17 @@ export default function ComicViewer({
       .then((result) => {
         if (!live) return;
         if (!result.length) throw new Error("漫画源没有返回此章节的图片");
-        const index = restoredComicPage(result, position.current);
+        const explicitPage = entryPage.current;
+        const hasExplicitPage = typeof explicitPage === "number" && Number.isFinite(explicitPage);
+        const index = restoredComicPage(result, hasExplicitPage ? { page: explicitPage } : position.current);
+        entryPage.current = undefined;
         setPages(result);
         setPage(index);
         position.current = {
           ...position.current,
           page: index,
           comicPageId: result[index]?.id,
-          comicOffset: position.current.comicOffset ?? 0,
+          comicOffset: hasExplicitPage ? 0 : position.current.comicOffset ?? 0,
         };
         ready.current = result.length > 0;
         setLoading(false);

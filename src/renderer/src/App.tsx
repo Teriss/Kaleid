@@ -97,6 +97,7 @@ import ScreeningRoom from "./layouts/ScreeningRoom";
 import PhotoLightbox from "./layouts/PhotoLightbox";
 import Player from "./Player";
 import AutoHideNavigation from "./components/AutoHideNavigation";
+import WindowTitleBar from "./components/WindowTitleBar";
 import { ContentNavigationContext } from "./layouts/ContentNavigation";
 import MusicQuickPanel from "./music/MusicQuickPanel";
 import useMusicWallFilter from "./music/useMusicWallFilter";
@@ -1905,9 +1906,11 @@ export default function App() {
       >
         <Search size={17} />
       </IconButton>
-      <IconButton label="显示方式" onClick={() => setOverlay("layout")}>
-        <Grid2X2 size={17} />
-      </IconButton>
+      {!((scope.view === "comic" || scope.view === "novel") && scope.section === "search") && (
+        <IconButton label="显示方式" onClick={() => setOverlay("layout")}>
+          <Grid2X2 size={17} />
+        </IconButton>
+      )}
       <IconButton label="设置" onClick={() => setOverlay("settings")}>
         <Settings size={17} />
       </IconButton>
@@ -2220,7 +2223,7 @@ export default function App() {
       className={`browser-shell layout-${memory.layout} ${currentType === "music" && !["favorites", "recent"].includes(scope.view) ? "music-browse" : ""} ${playingTrack ? "has-player" : ""}`}
       data-navigation={settings.navigationPosition}
     >
-      <div className="window-drag" aria-hidden="true" />
+      <WindowTitleBar />
       <div className="browser-content" inert={blocked}>
         {booted && scope.view === "novel" ? (
           <OnlineNovels

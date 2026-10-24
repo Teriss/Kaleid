@@ -104,12 +104,19 @@ export interface OnlineChapter {
 }
 export interface OnlineComicDetails extends OnlineComic {
   chapters: OnlineChapter[];
+  hasChapters: boolean;
+  thumbnails?: string[];
+  hasThumbnailLoader: boolean;
   updateTime?: string;
   isFavorite?: boolean;
   favorite: boolean;
   lastChapterId?: string | null;
   offline?: boolean;
   refreshError?: string;
+}
+export interface ComicThumbnailPage {
+  thumbnails: string[];
+  next: string | null;
 }
 export interface ComicSearchPage {
   comics: OnlineComic[];
@@ -182,6 +189,7 @@ export interface OnlineComicsAPI {
     next?: string | null,
   ): Promise<ComicSearchPage>;
   details(ref: OnlineComicRef, refresh?: boolean): Promise<OnlineComicDetails>;
+  thumbnails(ref: OnlineComicRef, next?: string | null): Promise<ComicThumbnailPage>;
   login(id: string, kind: string, values: string[]): Promise<void>;
   logout(id: string): Promise<void>;
   favorite(ref: OnlineComicRef, value: boolean): Promise<void>;

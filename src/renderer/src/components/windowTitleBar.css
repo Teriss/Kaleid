@@ -1,0 +1,79 @@
+.window-titlebar-edge {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 8px;
+  z-index: 10001;
+  -webkit-app-region: no-drag;
+}
+.window-titlebar {
+  --window-bg: var(--app-bg);
+  --window-fg: var(--app-text);
+  --window-hover: var(--app-line);
+  position: fixed;
+  inset: 0 0 auto;
+  height: 36px;
+  display: flex;
+  align-items: stretch;
+  z-index: 10002;
+  color: var(--window-fg);
+  background: var(--window-bg);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 120ms,
+    visibility 120ms;
+}
+.window-titlebar.is-visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+.window-titlebar-drag {
+  flex: 1;
+  min-width: 30px;
+  -webkit-app-region: no-drag;
+  user-select: none;
+}
+.window-titlebar.is-visible .window-titlebar-drag {
+  -webkit-app-region: drag;
+}
+.window-titlebar.is-video-overlay .window-titlebar-drag {
+  -webkit-app-region: no-drag;
+  touch-action: none;
+}
+.window-titlebar button {
+  -webkit-app-region: no-drag;
+  width: 46px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: inherit;
+  border-radius: 0;
+}
+.window-titlebar button:hover {
+  background: var(--window-hover);
+}
+.window-titlebar button:active {
+  background: color-mix(in srgb, var(--window-fg) 22%, var(--window-bg));
+}
+.window-titlebar button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -4px;
+}
+.window-titlebar .window-titlebar-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+.window-titlebar .window-titlebar-close:active {
+  background: #a92316;
+  color: #fff;
+}
+.window-titlebar[data-reduced-motion="true"] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .window-titlebar {
+    transition: none;
+  }
+}

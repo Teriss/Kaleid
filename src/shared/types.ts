@@ -250,6 +250,11 @@ export const DEFAULT_SETTINGS: Settings = {
   lyricsPresentation: "split",
 };
 export interface AppAPI {
+  windowState(): Promise<import("./windowControls").MainWindowState>;
+  windowCommand(command: import("./windowControls").MainWindowCommand): Promise<void>;
+  windowDrag(value: import("./windowControls").MainWindowDrag): Promise<void>;
+  onWindowState(callback: (state: import("./windowControls").MainWindowState) => void): () => void;
+  onWindowChromePointer(callback: (state: import("./windowControls").MainWindowChromePointer) => void): () => void;
   onlineNovels: import("./onlineNovels").OnlineNovelsAPI;
   onlineComics: import("./onlineComics").OnlineComicsAPI;
   comicHub: import("./onlineComics").ComicHubAPI;

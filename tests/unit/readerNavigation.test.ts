@@ -1,6 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { epubProgress, ReaderNavigation, ReaderWheelSequence, pageScrollTarget } from "../../src/shared/readerNavigation";
 import { archivePath } from "../../src/renderer/src/epubResources";
+import { ReaderBoundaryWheel } from "../../src/shared/readerNavigation";
+
+describe("chapter boundary wheel input", () => {
+  it("accepts a small next wheel without a distance threshold", () => {
+    const wheel = new ReaderBoundaryWheel();
+    expect(wheel.accept(10, 1)).toBe(true);
+    expect(wheel.accept(20, 1)).toBe(true);
+  });
+  it("holds one inertia burst and resumes after 160ms idle", () => {
+    const wheel = new ReaderBoundaryWheel();
+    wheel.hold(1000, 1);
+    for (let now = 1020; now < 1500; now += 20) expect(wheel.accept(now, 1)).toBe(false);
+    expect(wheel.accept(1640, 1)).toBe(true);
+  });
+  it("allows immediate reversal and explicit seeking", () => {
+    const wheel = new ReaderBoundaryWheel();
+    wheel.hold(1000, 1);
+    expect(wheel.accept(1010, -1)).toBe(true);
+    wheel.hold(1020, -1);
+    wheel.clear();
+    expect(wheel.accept(1030, -1)).toBe(true);
+  });
+});
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
 

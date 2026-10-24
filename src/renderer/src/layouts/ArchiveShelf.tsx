@@ -113,14 +113,20 @@ export default function ArchiveShelf({
     entrance.current = 1;
     paintRef.current();
   }
-  function move(next: number) {
+  const visibleId = useRef<string | undefined>(undefined);
+  function move(next: number, notify = true) {
+    if (notify && !loopRef.current && next < 0) latest.current.onReachStart?.();
     position.current = boundShelfPosition(next, source.total, loopRef.current);
     const rounded = Math.round(position.current);
     if (rounded !== laneRef.current) {
       laneRef.current = rounded;
       setLane(rounded);
     }
-    if (bookIndex(position.current, source.total) >= source.total - 3)
+    if (
+      notify &&
+      source.total > 0 &&
+      bookIndex(position.current, source.total) >= source.total - 3
+    )
       latest.current.onReachEnd?.();
     paintRef.current();
   }
@@ -166,6 +172,7 @@ export default function ArchiveShelf({
     frame.current = requestAnimationFrame(tick);
   }
   function centre(next: number) {
+    if (next < 0 && !loopRef.current) latest.current.onReachStart?.();
     const from = position.current;
     const target = boundShelfPosition(
       Math.round(next),
@@ -191,7 +198,11 @@ export default function ArchiveShelf({
     centre((targetLane.current ?? Math.round(position.current)) + delta);
   }
   function changeMode(next: "finite" | "infinite") {
-    if (!interactive || (!allowInfinite && next === "infinite") || next === mode)
+    if (
+      !interactive ||
+      (!allowInfinite && next === "infinite") ||
+      next === mode
+    )
       return;
     cancel();
     finishEntrance();
@@ -247,6 +258,41 @@ export default function ArchiveShelf({
     if (latest.current.memory.revealFocus)
       latest.current.remember({ revealFocus: false });
   }, [source, snapshot.ready, snapshot.refreshSerial, memory.focusRequest]);
+
+  const consumedExternal = useRef<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    const change = snapshot.externalChange;
+    if (!change || consumedExternal.current === change.serial) return;
+    if (consumedExternal.current !== undefined || !memory.focusId) {
+      const id =
+        change.kind === "jump"
+          ? change.targetId
+          : change.kind === "prepend"
+            ? visibleId.current
+            : undefined;
+      const next = id ? source.indexOfId(id) : change.kind === "jump" ? 0 : -1;
+      if (next >= 0) {
+        const fraction =
+          change.kind === "prepend"
+            ? position.current - Math.round(position.current)
+            : 0;
+        cancel();
+        drag.current = null;
+        move(next + fraction, false);
+        setMoving(false);
+        rememberPosition();
+      }
+    }
+    consumedExternal.current = change.serial;
+  }, [snapshot.externalChange?.serial]);
+  useLayoutEffect(() => {
+    const at = bookIndex(position.current, source.total),
+      entry = source.peek(at);
+    if (entry) {
+      visibleId.current = entry.id;
+      latest.current.onViewportAnchorChange?.(entry, at);
+    }
+  }, [lane, snapshot.externalChange?.serial, source.total]);
 
   // Metadata and selection update only when crossing a lane, never every frame.
   const wanted = [
@@ -305,8 +351,22 @@ export default function ArchiveShelf({
 
   const wheelHandler = useRef<(event: WheelEvent) => void>(() => {});
   wheelHandler.current = (event) => {
-    if (!interactive || source.total < 2 || event.ctrlKey || event.metaKey)
+    if (!interactive || event.ctrlKey || event.metaKey) return;
+    const direction =
+      Math.abs(event.deltaX) > Math.abs(event.deltaY)
+        ? event.deltaX
+        : event.deltaY;
+    if (source.total < 2) {
+      if (direction < 0 && props.onReachStart) {
+        event.preventDefault();
+        props.onReachStart();
+      }
+      if (direction > 0 && props.onReachEnd) {
+        event.preventDefault();
+        props.onReachEnd();
+      }
       return;
+    }
     event.preventDefault();
     cancel();
     finishEntrance();
@@ -608,7 +668,9 @@ export default function ArchiveShelf({
           <IconButton
             label="上一份档案"
             disabled={
-              source.total < 2 || !interactive || (!loop && index === 0)
+              !interactive ||
+              (!props.onReachStart &&
+                (source.total < 2 || (!loop && index === 0)))
             }
             onClick={() => step(-1)}
           >

@@ -155,23 +155,6 @@ svg {
 .browser-shell {
   background: var(--ui-141414);
 }
-.window-drag {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 36px;
-  /* Keep the drag hit target above the full-window content layer. */
-  z-index: 2;
-  -webkit-app-region: drag;
-}
-.window-drag:after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(var(--ui-0002), transparent);
-  pointer-events: none;
-}
 button,
 input,
 select {

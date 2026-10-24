@@ -215,7 +215,7 @@ async function showReaderMenu() {
   if (await page.locator(".reader-bottom-panel").count()) return;
   if (await page.locator(".reader-selecting").count())
     await page.keyboard.press("Escape");
-  await page.keyboard.press("Escape");
+  await page.locator(".epub-host,.text-scroll").click();
   await expect(
     page.getByRole("dialog", { name: "阅读菜单", exact: true }),
   ).toBeVisible();

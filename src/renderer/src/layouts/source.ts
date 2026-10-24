@@ -1,5 +1,11 @@
 import { queryFailure, type QueryErrorCode } from "./queryFailure";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import type {
   IndexChange,
   MediaItem,
@@ -8,6 +14,11 @@ import type {
 } from "../../../shared/types";
 
 export const PAGE_SIZE = 100;
+export interface ExternalResultChange {
+  serial: number;
+  kind: "replace" | "jump" | "prepend" | "append";
+  targetId?: string;
+}
 type FetchPage = (query: MediaQuery) => Promise<QueryResult>;
 export class PagedMediaSource {
   private pages = new Map<number, MediaItem[]>();
@@ -33,6 +44,7 @@ export class PagedMediaSource {
     indexVersion: 0,
     refreshSerial: 0,
     metricsVersion: 0,
+    externalChange: undefined as ExternalResultChange | undefined,
   };
   private wanted = new Set<number>();
   constructor(
@@ -80,7 +92,41 @@ export class PagedMediaSource {
       .sort(([a], [b]) => a - b)
       .flatMap(([, items]) => items);
   }
+  /** Publish an in-memory result set without resetting layout or scroll state. */
+  replaceExternalItems(
+    items: MediaItem[],
+    anchorId?: string,
+    index = 0,
+    change?: ExternalResultChange,
+  ) {
+    if (!this.external)
+      throw new Error("Only external sources accept result items");
+    if (this.disposed) return;
+    this.generation++;
+    this.jobs.clear();
+    this.pages = new Map();
+    for (let offset = 0; offset < items.length; offset += PAGE_SIZE)
+      this.pages.set(
+        offset / PAGE_SIZE,
+        items.slice(offset, offset + PAGE_SIZE),
+      );
+    this.failed.clear();
+    const found = anchorId
+      ? items.findIndex((item) => item.id === anchorId)
+      : -1;
+    this.emit({
+      ready: true,
+      total: items.length,
+      anchorIndex: this.snapshot.ready
+        ? this.snapshot.anchorIndex
+        : Math.max(0, Math.min(items.length - 1, found < 0 ? index : found)),
+      error: "",
+      errorCode: "unknown",
+      externalChange: change,
+    });
+  }
   async initialize(anchorId?: string, index = 0) {
+    const generation = this.generation;
     try {
       const first = await this.fetchPage({
         ...this.query,
@@ -88,7 +134,7 @@ export class PagedMediaSource {
         limit: PAGE_SIZE,
         anchorId,
       });
-      if (this.disposed) return;
+      if (this.disposed || generation !== this.generation) return;
       this.pages.set(0, first.items);
       const anchorIndex = Math.max(
         0,
@@ -108,8 +154,10 @@ export class PagedMediaSource {
         indexVersion: first.version ?? 0,
       });
       await this.loadPage(Math.floor(anchorIndex / PAGE_SIZE));
+      if (this.disposed || generation !== this.generation) return;
       this.emit({ ready: true });
     } catch (error) {
+      if (this.disposed || generation !== this.generation) return;
       this.emit({
         ready: true,
         error: queryFailure(error).message,
@@ -159,13 +207,14 @@ export class PagedMediaSource {
             this.emit({ total: result.total });
           }
         } catch (error) {
+          if (this.disposed || generation !== this.generation) return;
           this.failed.add(page);
           this.emit({
             error: queryFailure(error).message,
             errorCode: queryFailure(error).code,
           });
         } finally {
-          this.jobs.delete(page);
+          if (this.jobs.get(page) === job) this.jobs.delete(page);
           resolve();
         }
       });
@@ -332,6 +381,49 @@ export class PagedMediaSource {
     this.listeners.clear();
   }
 }
+/** Identity changes only for a new result session, never for appended pages. */
+export function useExternalMediaSource(
+  key: string,
+  type: MediaQuery["type"],
+  items: MediaItem[],
+  anchor: { focusId?: string; focusIndex?: number } = {},
+  change?: ExternalResultChange,
+) {
+  const current = useRef(items);
+  current.current = items;
+  const source = useMemo(() => {
+    const result = new PagedMediaSource(
+      { type, sort: "name" },
+      async (query) => ({
+        items: current.current.slice(
+          query.offset ?? 0,
+          (query.offset ?? 0) + (query.limit ?? PAGE_SIZE),
+        ),
+        total: current.current.length,
+      }),
+      true,
+    );
+    // A newly mounted layout must never observe an empty placeholder extent.
+    result.replaceExternalItems(
+      current.current,
+      anchor.focusId,
+      anchor.focusIndex,
+    );
+    return result;
+  }, [key, type]);
+  useLayoutEffect(() => {
+    source.replaceExternalItems(
+      items,
+      anchor.focusId,
+      anchor.focusIndex,
+      change,
+    );
+  }, [source, items, change?.serial]);
+  useEffect(() => () => source.dispose(), [source]);
+  useSyncExternalStore(source.subscribe, source.getSnapshot);
+  return source;
+}
+
 export function useMediaSource(
   query: MediaQuery,
   revision: number,

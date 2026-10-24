@@ -43,13 +43,15 @@ import { formatOnlineComicError as formatComicError } from "../../shared/onlineC
 import { IconButton, Modal } from "./components";
 import { report, useApp } from "./store";
 import ComicViewer from "./ComicViewer";
+import ComicPreviews from "./ComicPreviews";
+import { ComicPreviewSession } from "./comicPreviewSession";
 import BravaisWall from "./layouts/BravaisWall";
 import { Cover } from "./components";
 import { ContentNavigationContext } from "./layouts/ContentNavigation";
-import { PagedMediaSource } from "./layouts/source";
+import { useExternalMediaSource } from "./layouts/source";
 import { ReadingHubCards, ReadingHubMenu, ReadingPageShell, ReadingResults, ReadingDetailHero, ReadingDetailSkeleton as ComicDetailSkeleton, HomeSectionToggle } from "./ReadingHub";
-import { useReadingSearchPanel, ReadingSearchPanel, ReadingSearchHistory, ReadingResultControls, ReadingPagination } from "./ReadingSearch";
-import { emptyReadingSearchPage, readingResultModePatch, loadReadingSearchPage, searchSourcePool, type ReadingSearchPage } from "../../shared/readingSearch";
+import { useReadingSearchPanel, ReadingSearchPanel, ReadingSearchHistory, ReadingResultControls, ReadingPagination, ReadingWaterfallStart, ReadingWaterfallControls } from "./ReadingSearch";
+import { emptyReadingSearchPage, readingResultModePatch, readingResultStart, loadReadingSearchPage, searchSourcePool, type ReadingSearchPage, type ReadingLoadOperation } from "../../shared/readingSearch";
 import "./onlineComics.css";
 
 const api = () => window.media.onlineComics;
@@ -57,6 +59,7 @@ const hub = () => window.media.comicHub;
 const COMIC_SEARCH_HISTORY_KEY = "comic:search-history";
 const COMIC_SEARCH_HISTORY_COLLAPSED_KEY = "comic:search-history-collapsed";
 const MAX_COMIC_SEARCH_HISTORY = 30;
+const EMPTY_COMICS: OnlineComic[] = [];
 const optionValue = (o: any) =>
   typeof o === "string"
     ? o.slice(0, o.lastIndexOf("-") < 0 ? o.length : o.lastIndexOf("-"))
@@ -904,6 +907,21 @@ export default function OnlineComics({
   const [aggregateRetrying, setAggregateRetrying] = useState<Set<string>>(new Set());
   const [detailRecord, setDetailRecord] = useState<ComicDetailRecord>(),
     [reader, setReader] = useState<MediaItem>();
+  const previewSessions = useRef(new Map<string, ComicPreviewSession>());
+  const detailScroll = useRef(new Map<string, number>());
+  useEffect(() => () => { for (const session of previewSessions.current.values()) session.dispose(); }, []);
+  function previewSession(value: OnlineComicDetails) {
+    const key = `${value.sourceId}\u0000${value.comicId}`;
+    const signature = JSON.stringify([value.thumbnails || [], value.hasThumbnailLoader]);
+    let session = previewSessions.current.get(key);
+    if (!session || session.signature !== signature) {
+      session?.dispose();
+      session = new ComicPreviewSession(value.thumbnails || [], value.hasThumbnailLoader
+        ? (next) => api().thumbnails(refOf(value), next) : undefined);
+      previewSessions.current.set(key, session);
+    }
+    return session;
+  }
   const [tasks, setTasks] = useState<ComicDownloadTask[]>([]);
   const [laterRefs, setLaterRefs] = useState<ComicHubRef[]>([]),
     [laterItems, setLaterItems] = useState<HubCardItem[]>([]);
@@ -1234,6 +1252,7 @@ export default function OnlineComics({
         remoteId: undefined,
         remoteKind: undefined,
         comicChapterId: undefined,
+        comicInitialPage: undefined,
         ...((patch.section && patch.section !== section) ||
         (patch.providerId && patch.providerId !== sourceId)
           ? { search: undefined }
@@ -1342,7 +1361,12 @@ export default function OnlineComics({
     section === "search" && searchMode !== "single" && Boolean(scope.search);
   const isSingleSearchRoute = section === "search" && searchMode === "single";
   const isSingleSearchPage = isSingleSearchRoute && Boolean(scope.search);
-  const singleSearchPageKey = scope.comicSearchId || "legacy-single-search";
+  const emptySearch = section === "search" && !scope.search;
+  const categoryPageKey = JSON.stringify(["category", sourceId, scope.comicCategory, scope.comicCategoryParam, options]);
+  const singleSearchPageKey = section === "categoryResults" ? categoryPageKey : scope.comicSearchId || "legacy-single-search";
+  const resultStates = useRef(singleSearchPages);
+  resultStates.current = singleSearchPages;
+  const categoryPageLoaderRef = useRef<(number: number, append: boolean, operation?: ReadingLoadOperation) => Promise<void>>(async () => {});
   const defaultSingleSearchPage = singleSearchPages[singleSearchPageKey] ||
     singleSearchPageDefaults(
       sourceId,
@@ -1350,6 +1374,7 @@ export default function OnlineComics({
       (current?.searchOptions || []).map(sourceOptionDefault),
     );
   const singleSearchPage = defaultSingleSearchPage;
+  const resultRequests = useRef(new Map<string, number>());
   const singleSearchRequestKey = makeSingleSearchRequestKey(
     singleSearchPageKey,
     sourceId || "",
@@ -1409,24 +1434,31 @@ export default function OnlineComics({
   const displaySearchOptions = isSingleSearchRoute ? singleSearchPage.options : options;
   const displayResultLayout = isSingleSearchPage ? singleSearchPage.resultLayout : resultLayout;
   const displayResultMode = isSingleSearchPage ? singleSearchPage.resultMode : resultMode;
-  const displayCards = isSingleSearchPage ? singleSearchPage.cards : cards;
-  const displayPageInfo = isSingleSearchPage ? singleSearchPage.pageInfo : pageInfo;
-  const displayPage = isSingleSearchPage ? singleSearchPage.page : page.current;
-  const displayJumpPage = isSingleSearchPage ? singleSearchPage.jumpPage : jumpPage;
-  const displayBusy = isAggregateSearchPage
+  // Search never falls back to the shared discovery/library list, including
+  // the empty form before the first submission and after clearing a query.
+  const displayCards = singleResultPage
+    ? singleSearchPage.cards
+    : section === "search" ? EMPTY_COMICS : cards;
+  const displayPageInfo = singleResultPage
+    ? singleSearchPage.pageInfo
+    : section === "search" ? undefined : pageInfo;
+  const displayPage = singleResultPage ? singleSearchPage.page : page.current;
+  const displayJumpPage = singleResultPage ? singleSearchPage.jumpPage : jumpPage;
+  const displayBusy = emptySearch ? false : isAggregateSearchPage
     ? aggregateBusy
-    : isSingleSearchPage
+    : singleResultPage
       ? singleSearchPage.busy || singleSearchPending
       : busy;
-  const displayError = isAggregateSearchPage
+  const displayError = emptySearch ? "" : isAggregateSearchPage
     ? aggregateError
-    : isSingleSearchPage
+    : singleResultPage
       ? singleSearchPage.error
       : error;
   const canSearch = searchMode === "aggregate"
     ? aggregateIds.some((id) => sources.some((source) => source.id === id && source.enabled && source.capabilities.search))
     : Boolean(current?.capabilities.search);
   const submitSearch = (rawQuery: string) => {
+    remember(readingResultStart());
     clearSearchPanelHideTimer();
     setSearchPanelVisible(false);
     const submittedQuery = rawQuery.trim();
@@ -1485,6 +1517,13 @@ export default function OnlineComics({
     key: "layout" | "mode",
     value: "grid" | "archiveShelf" | "carousel" | "pagination" | "waterfall",
   ) {
+    if (value === "pagination" || value === "waterfall") remember(readingResultStart());
+    if (key === "mode" && value !== displayResultMode && singleSearchPage.busy && singleSearchPage.pageInfo) {
+      singleSearchRequestIds.current.set(singleSearchPageKey, (singleSearchRequestIds.current.get(singleSearchPageKey) || 0) + 1);
+      const next = { ...singleSearchPage, busy: false, loadingOperation: undefined };
+      resultStates.current = { ...resultStates.current, [singleSearchPageKey]: next };
+      updateSingleSearchPage({ busy: false, loadingOperation: undefined });
+    }
     if (isSingleSearchPage) {
       updateSingleSearchPage(
         key === "layout"
@@ -1493,6 +1532,7 @@ export default function OnlineComics({
       );
       return;
     }
+    if (section === "categoryResults" && key === "mode") updateSingleSearchPage(readingResultModePatch(singleSearchPage, value as SingleSearchPageState["resultMode"], singleSearchPage.pageInfo?.comics || []));
     if (!sourceId) return;
     const storageKey = `comic:single-result:${sourceId}`;
     let stored: Record<string, unknown> = {};
@@ -1531,6 +1571,7 @@ export default function OnlineComics({
     : 0;
   const loadPage = useCallback(
     async (number: number, append = false) => {
+      if (section === "categoryResults") return categoryPageLoaderRef.current(number, append);
       const aggregateRequest =
         section === "search" && searchMode !== "single" && Boolean(scope.search);
       const token = aggregateRequest
@@ -1761,38 +1802,59 @@ export default function OnlineComics({
     number: number,
     append = false,
     defaults = singleSearchPageDefaults(searchSourceId, keyword, searchOptions),
+    operation: ReadingLoadOperation = append ? "append" : "replace",
+    fetchPage?: (page: number, cursor?: string | null) => Promise<ComicSearchPage>,
   ) {
     const key = pageId;
+    const requestKey = JSON.stringify([key, searchSourceId, keyword, searchOptions, number]);
+    if ((operation === "append" || operation === "prepend") && resultStates.current[key]?.busy) return;
     const requestId = (singleSearchRequestIds.current.get(key) || 0) + 1;
     singleSearchRequestIds.current.set(key, requestId);
+    resultRequests.current.set(requestKey, requestId);
     const isCurrentRequest = () => mounted.current && singleSearchRequestIds.current.get(key) === requestId;
-    await loadReadingSearchPage<OnlineComic, ComicSearchPage>({
-      previous: singleSearchPages[key] || defaults, number, append,
-      fetchPage: (page, cursor) => api().search(searchSourceId, keyword, searchOptions, page, cursor),
-      unpack: result => ({ items:result.comics, next:result.next, maxPage:result.maxPage }),
-      identity: comic => `${comic.sourceId}:${comic.comicId}`, current:isCurrentRequest,
-      update: patch => setSingleSearchPages(pages => !isCurrentRequest() ? pages : ({ ...pages, [key]: { ...(pages[key] || defaults), ...patch } })),
-      formatError: formatComicError,
-    });
+    try {
+      await loadReadingSearchPage<OnlineComic, ComicSearchPage>({
+        previous: resultStates.current[key] || defaults, number, append, operation,
+        fetchPage: fetchPage ?? ((page, cursor) => api().search(searchSourceId, keyword, searchOptions, page, cursor)),
+        unpack: result => ({ items:result.comics, next:result.next, maxPage:result.maxPage }),
+        identity: comic => `${comic.sourceId}:${comic.comicId}`, current:isCurrentRequest,
+        update: patch => {
+          if (!isCurrentRequest()) return;
+          const next = { ...(resultStates.current[key] || defaults), ...patch };
+          resultStates.current = { ...resultStates.current, [key]: next };
+          setSingleSearchPages(pages => ({ ...pages, [key]: next }));
+        },
+        formatError: formatComicError,
+      });
+    } finally {
+      if (resultRequests.current.get(requestKey) === requestId)
+        resultRequests.current.delete(requestKey);
+    }
   }
 
+  categoryPageLoaderRef.current = async (number, append, operation = append ? "append" : "replace") => {
+    if (!sourceId) return;
+    const cached = resultStates.current[categoryPageKey];
+    // Entering a detail page and returning reuses the complete displayed range.
+    if (operation === "replace" && (cached?.pageInfo || cached?.busy)) return;
+    await loadSingleSearchPage(categoryPageKey, sourceId, "", options, number, append,
+      emptyReadingSearchPage({ resultLayout, resultMode }), operation,
+      (number, cursor) => scope.comicCategory === "__ranking"
+        ? api().ranking(sourceId, String(scope.comicCategoryParam || ""), number, cursor)
+        : api().category(sourceId, scope.comicCategory || "", scope.comicCategoryParam, options, number, cursor));
+  };
   const singleSearchPageLoaderRef = useRef(loadSingleSearchPage);
   singleSearchPageLoaderRef.current = loadSingleSearchPage;
   const loadVisiblePage = useCallback(
-    (number: number, append = false) => {
+    (number: number, append = false, operation: ReadingLoadOperation = append ? "append" : singleResultPage && displayResultMode === "waterfall" ? "jump" : "replace") => {
+      if (operation === "replace") remember(readingResultStart());
+      if (section === "categoryResults") return categoryPageLoaderRef.current(number, append, operation === "replace" ? "jump" : operation);
       if (isSingleSearchPage && sourceId && scope.search)
-        return singleSearchPageLoaderRef.current(
-          singleSearchPageKey,
-          sourceId,
-          scope.search,
-          singleSearchPage.submittedOptions,
-          number,
-          append,
-          singleSearchPage,
-        );
+        return singleSearchPageLoaderRef.current(singleSearchPageKey, sourceId, scope.search,
+          singleSearchPage.submittedOptions, number, append, singleSearchPage, operation);
       return loadPage(number, append);
     },
-    [isSingleSearchPage, singleSearchPageKey, sourceId, scope.search, singleSearchPage, loadPage],
+    [section, singleResultPage, displayResultMode, isSingleSearchPage, singleSearchPageKey, sourceId, scope.search, singleSearchPage, loadPage],
   );
   const retryAggregateSource = async (source: ComicSourceInfo) => {
     if (!scope.search || aggregateRetrying.has(source.id)) return;
@@ -1821,17 +1883,15 @@ export default function OnlineComics({
     }
   };
   const loadNextWaterfallPage = useCallback(() => {
-    if (!singleResultPage || displayResultMode !== "waterfall" || displayBusy || loadingMore.current || !displayPageInfo?.comics.length)
-      return;
-    const hasMore = displayPageInfo.maxPage != null
-      ? displayPage < displayPageInfo.maxPage
-      : displayPageInfo.next !== null;
-    if (!hasMore) return;
-    loadingMore.current = true;
-    void loadVisiblePage(displayPage + 1, true).finally(() => {
-      loadingMore.current = false;
-    });
-  }, [singleResultPage, displayResultMode, displayBusy, displayPageInfo, displayPage, loadVisiblePage]);
+    const state = resultStates.current[singleSearchPageKey];
+    if (!singleResultPage || displayResultMode !== "waterfall" || !state || state.busy || state.afterPaused || (state.maxPage != null ? state.endPage >= state.maxPage : state.pageInfo?.next === null)) return;
+    void loadVisiblePage(state.endPage + 1, true);
+  }, [singleResultPage, displayResultMode, singleSearchPageKey, loadVisiblePage]);
+  const loadPreviousWaterfallPage = (manual = false) => {
+    const state = resultStates.current[singleSearchPageKey];
+    if (!singleResultPage || displayResultMode !== "waterfall" || !state || state.busy || state.startPage <= 1 || (!manual && state.beforePaused)) return;
+    void loadVisiblePage(state.startPage - 1, false, "prepend");
+  };
   const loadPageRef = useRef(loadPage);
   loadPageRef.current = loadPage;
   useEffect(() => {
@@ -1979,6 +2039,8 @@ export default function OnlineComics({
     try {
       const value = await api().details({ sourceId: scope.providerId, comicId: scope.remoteId }, true);
       if (detailKeyRef.current === key) {
+        previewSessions.current.get(key)?.dispose();
+        previewSessions.current.delete(key);
         setDetails(value);
         finishDetailSkeleton(key);
       }
@@ -2056,6 +2118,10 @@ export default function OnlineComics({
     }, "push");
   }
   const detailPage = !!scope.remoteId && scope.remoteKind !== "chapter";
+  useLayoutEffect(() => {
+    if (detailPage && details && comicRoot.current)
+      comicRoot.current.scrollTop = detailScroll.current.get(detailKey) || 0;
+  }, [detailPage, detailKey, !!details]);
   const detailIdentity = scope.providerId && scope.remoteId
     ? `comic-online-card:${scope.providerId}:${scope.remoteId}`
     : "";
@@ -2281,22 +2347,11 @@ export default function OnlineComics({
       })),
     [displayCards, sources],
   );
-  const source = useMemo(
-    () =>
-      new PagedMediaSource(
-        { type: "comic", sort: "name" },
-        async (q) => ({
-          items: items.slice(q.offset || 0, (q.offset || 0) + (q.limit || 100)),
-          total: items.length,
-        }),
-        true,
-      ),
-    [items],
+  const source = useExternalMediaSource(
+    JSON.stringify([section, section === "categoryResults" ? categoryPageKey : scope.comicSearchId, sourceId, scope.search, singleSearchPage.submittedOptions, displayResultMode, displayResultMode === "waterfall" ? 0 : displayPage]),
+    "comic", items, memory,
+    singleSearchPage.change && { ...singleSearchPage.change, targetId: singleSearchPage.change.targetId && `comic-online-card:${singleSearchPage.change.targetId}` },
   );
-  useEffect(() => {
-    void source.initialize();
-    return () => source.dispose();
-  }, [source]);
   const props = {
     source,
     scope,
@@ -2311,6 +2366,13 @@ export default function OnlineComics({
       void run(() => api().favorite(item.remoteData!.comicRef, true));
     },
     onReachEnd: loadNextWaterfallPage,
+    onReachStart: singleResultPage && displayResultMode === "waterfall" && singleSearchPage.startPage > 1 ? () => loadPreviousWaterfallPage() : undefined,
+    onViewportAnchorChange: (item: MediaItem) => {
+      const comic = item.remoteData?.comic as OnlineComic | undefined;
+      const state = resultStates.current[singleSearchPageKey];
+      const page = comic && state?.itemPages[`${comic.sourceId}:${comic.comicId}`];
+      if (state && page) state.visiblePage = page;
+    },
     minimumCellWidth: singleResultPage ? 280 : 230,
   };
   const parts =
@@ -2396,6 +2458,9 @@ export default function OnlineComics({
       ref={comicRoot}
       className={`${detailPage ? " is-detail-page" : ""}${detailFallbackFade ? " is-detail-fallback-fade" : ""}`}
       aria-label="在线漫画"
+      onScroll={(event) => {
+        if (detailPage && details) detailScroll.current.set(detailKey, event.currentTarget.scrollTop);
+      }}
       onMouseMove={(event) => {
         const onBackButton =
           event.target instanceof Element &&
@@ -2438,7 +2503,7 @@ export default function OnlineComics({
               <label>布局<select aria-label="单源结果布局" value={resultLayout} onChange={(event) => saveResultPreference("layout", event.target.value as "grid" | "archiveShelf" | "carousel")}>
                 <option value="grid">标准网格</option><option value="archiveShelf">立体书架</option><option value="carousel">封面流</option>
               </select></label>
-              <label>结果<select aria-label="结果加载方式" value={resultMode} onChange={(event) => { saveResultPreference("mode", event.target.value as "pagination" | "waterfall"); page.current = 1; cursors.current = [null]; void loadPage(1); }}>
+              <label>结果<select aria-label="结果加载方式" value={resultMode} onChange={(event) => saveResultPreference("mode", event.target.value as "pagination" | "waterfall")}>
                 <option value="pagination">分页</option><option value="waterfall">瀑布流</option>
               </select></label>
             </div>
@@ -2614,7 +2679,12 @@ export default function OnlineComics({
               label="刷新漫画详情"
               disabled={busy}
               onClick={() => void run(async () => {
-                setDetails(await api().details({ sourceId: scope.providerId!, comicId: scope.remoteId! }, true));
+                const key = detailKey;
+                const value = await api().details({ sourceId: scope.providerId!, comicId: scope.remoteId! }, true);
+                if (detailKeyRef.current !== key) return;
+                previewSessions.current.get(key)?.dispose();
+                previewSessions.current.delete(key);
+                setDetails(value);
               })}
             ><RefreshCw size={16} /></IconButton>
           )}
@@ -2626,7 +2696,7 @@ export default function OnlineComics({
           {!scope.search && <ReadingSearchHistory terms={searchHistory} collapsed={searchHistoryCollapsed} toggle={() => setSearchHistoryCollapsedPersisted(!searchHistoryCollapsed)} clear={clearSearchHistory} remove={removeSearchHistoryItem} submit={submitSearch} disabled={!canSearch}/>}
         </ReadingSearchPanel>
       )}
-      {displayError && !scope.remoteId && (
+      {displayError && !scope.remoteId && !(singleResultPage && displayResultMode === "waterfall" && displayCards.length) && (
         <div className="online-error" role="alert">
           {displayError}
           <button
@@ -2676,7 +2746,8 @@ export default function OnlineComics({
                     if (c) go({ remoteId: details.comicId, providerId: details.sourceId, remoteKind: "chapter", comicChapterId: c.id }, "push");
                   }}
                   disabled={!details.chapters.length}
-                ><BookOpen size={16} />{details.lastChapterId ? "继续阅读" : "开始阅读"}</button>
+                ><BookOpen size={16} />{details.lastChapterId || details.chapters.some((chapter) => chapter.progress?.page != null) ? "继续阅读" : "开始阅读"}</button>
+                {!details.hasChapters && <button className="button secondary" onClick={() => void run(() => api().enqueue(refOf(details), [null]))}><Download size={16} />下载全本</button>}
                 <button className="button secondary" onClick={() => void run(() => api().favorite(refOf(details), !details.favorite), true)}>
                   <Heart size={16} />{details.favorite ? "移出本地收藏" : "加入本地收藏"}
                 </button>
@@ -2709,12 +2780,12 @@ export default function OnlineComics({
               })}
             </section>
           )}
-          <section className="comic-detail-section comic-detail-chapter-section">
+          {details.hasChapters && <section className="comic-detail-section comic-detail-chapter-section">
             <div className="comic-detail-section-heading">
               <div><h2>章节</h2><span>{details.chapters.length} 话</span></div>
               <div className="comic-detail-chapter-tools">
                 <button className="text-button" onClick={() => setChapterOrderReversed((value) => !value)}>{chapterOrderReversed ? "正序" : "倒序"}</button>
-                <button className="text-button" onClick={() => void run(() => api().enqueue(refOf(details), details.chapters.map((chapter) => chapter.id)))}><Download size={14} />下载全部</button>
+                <button className="text-button" disabled={!details.chapters.length} onClick={() => void run(() => api().enqueue(refOf(details), details.chapters.map((chapter) => chapter.id)))}><Download size={14} />下载全部</button>
                 <button className="text-button" disabled={!details.chapters.length} onClick={() => setSelected(selected.length === details.chapters.length && details.chapters.length > 0 ? [] : details.chapters.map((chapter) => chapter.id))}>{selected.length === details.chapters.length && details.chapters.length > 0 ? "取消全选" : "全选"}</button>
                 <button className="text-button" disabled={!details.chapters.some((chapter) => !chapter.progress?.completed)} onClick={() => void run(() => api().enqueue(refOf(details), details.chapters.filter((chapter) => !chapter.progress?.completed).map((chapter) => chapter.id)))}><Download size={14} />下载未读</button>
               </div>
@@ -2733,8 +2804,17 @@ export default function OnlineComics({
                   <IconButton label={`下载 ${chapter.title}`} onClick={() => void run(() => api().enqueue(refOf(details), [chapter.id]))}><Download size={14} /></IconButton>
                 </div>
               ))}
-            </div> : <p className="muted">这个漫画源暂未提供章节列表。</p>}
-          </section>
+            </div> : <p className="muted">暂无章节。</p>}
+          </section>}
+          {(details.thumbnails !== undefined || details.hasThumbnailLoader) && <ComicPreviews
+            key={detailKey} session={previewSession(details)} canRead={!!details.chapters.length}
+            read={(index) => {
+              const chapter = details.chapters[0];
+              if (!chapter) return;
+              detailScroll.current.set(detailKey, comicRoot.current?.scrollTop || 0);
+              go({ providerId: details.sourceId, remoteId: details.comicId, remoteKind: "chapter", comicChapterId: chapter.id, comicInitialPage: index }, "push");
+            }}
+          />}
         </main>
         {skeletonExitIdentity === detailKey && (
           <ComicDetailSkeleton
@@ -3076,6 +3156,7 @@ export default function OnlineComics({
               )}
             </div>
           )}
+            {singleResultPage && displayResultMode === "waterfall" && <ReadingWaterfallStart state={singleSearchPage} load={() => loadPreviousWaterfallPage(true)} />}
           {section === "discover" && displayCards.length > 0 && displayPageInfo?.sections?.some((part) => part.title) ? (
             <div className="comic-explore-sections">
               {displayPageInfo.sections.map((part, index) => (
@@ -3085,10 +3166,10 @@ export default function OnlineComics({
                 </section>
               ))}
             </div>
-          ) : displayCards.length > 0 && section !== "favorites" && !isAggregateSearchPage && (
+          ) : (displayCards.length > 0 || (singleResultPage && displayResultMode === "waterfall" && displayPageInfo)) && section !== "favorites" && !isAggregateSearchPage && (
             <div
               className={`online-layout ${singleResultPage ? "is-single-result" : ""}`}
-              key={`${section}:${scope.comicSearchId || ""}:${singleResultPage && displayResultMode === "waterfall" ? "waterfall" : displayPage}:${scope.search || ""}:${displayResultLayout}`}
+              key={`${section}:${section === "categoryResults" ? categoryPageKey : scope.comicSearchId || ""}:${singleResultPage && displayResultMode === "waterfall" ? "waterfall" : displayPage}:${scope.search || ""}:${displayResultLayout}`}
             >
               <ReadingResults props={props} layout={singleResultPage ? displayResultLayout : memory.layout} single={singleResultPage} alternate={!singleResultPage && memory.layout === "bravais" ? <ContentNavigationContext.Provider value={wallNavigation}><BravaisWall {...props}/></ContentNavigationContext.Provider> : undefined}/>
 
@@ -3098,20 +3179,23 @@ export default function OnlineComics({
             !["favorites", "readLater", "following", "downloads"].includes(section) &&
             !(section === "discover" && activeExploreTab?.type === "singlePageWithMultiPart") &&
             !(singleResultPage && displayResultMode === "waterfall") && (
-              <ReadingPagination page={displayPage} maxPage={displayPageInfo?.maxPage} busy={displayBusy} hasMore={displayPageInfo?.maxPage != null ? displayPage < displayPageInfo.maxPage : displayPageInfo?.next !== null} jump={displayJumpPage} changeJump={singleResultPage ? value => isSingleSearchPage ? updateSingleSearchPage({jumpPage:value}) : setJumpPage(value) : undefined} go={number=>void loadVisiblePage(number)}/>
+              <ReadingPagination page={displayPage} maxPage={displayPageInfo?.maxPage} busy={displayBusy} hasMore={displayPageInfo?.maxPage != null ? displayPage < displayPageInfo.maxPage : displayPageInfo?.next !== null} jump={displayJumpPage} changeJump={singleResultPage ? value => updateSingleSearchPage({jumpPage:value}) : undefined} go={number=>void loadVisiblePage(number)}/>
 
             )}
-          {displayCards.length > 0 && singleResultPage && displayResultMode === "waterfall" && (
-            <div className="comic-waterfall-status" role="status">
-              {displayBusy ? "正在加载下一页…" : `已加载第 ${displayPage} 页，继续滚动以加载更多`}
-            </div>
+          {singleResultPage && displayResultMode === "waterfall" && (
+            <ReadingWaterfallControls state={singleSearchPage}
+              hasMore={singleSearchPage.maxPage != null ? singleSearchPage.endPage < singleSearchPage.maxPage : displayPageInfo?.next !== null}
+              changeJump={value => updateSingleSearchPage({jumpPage:value})}
+              go={number => void loadVisiblePage(number)}
+              load={() => void loadVisiblePage(singleSearchPage.endPage + 1, true)} />
           )}
         </>
       )}
       {scope.remoteKind === "chapter" && reader && (
         <ComicViewer
-          key={reader.id}
+          key={`${reader.id}:${scope.comicInitialPage ?? "resume"}`}
           item={reader}
+          initialPage={scope.comicInitialPage}
           close={() => {
             if (!onBack())
               go({

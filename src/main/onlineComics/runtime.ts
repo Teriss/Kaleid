@@ -158,7 +158,7 @@ export class SourceRuntime {
     this.sync(
       `
       var appVersion = '1.18.0';
-      var __refs = new Map(), __refId = 0;
+      var __refs = new Map(), __refId = 0, __initializationRequests = null;
       function __pack(v) {
         if (v === undefined) return null;
         if (typeof v === 'function') { let id=++__refId; __refs.set(id,v); return {$fn:id}; }
@@ -184,7 +184,16 @@ export class SourceRuntime {
         if(v && typeof v==='object') return '{'+Object.keys(v).filter(k=>v[k]!==undefined).map(k=>__quoteJSON(k)+':'+__serialize(v[k])).join(',')+'}';
         return JSON.stringify(v) ?? 'null';
       }
-      function sendMessage(v) { let r=__host(__serialize(__pack(v))); return r && typeof r.then==='function' ? r.then(__unpack) : __unpack(r); }
+      function sendMessage(v) {
+        let r=__host(__serialize(__pack(v)));
+        let result=r && typeof r.then==='function' ? r.then(__unpack) : __unpack(r);
+        if(__initializationRequests && v.method==='http' && result && typeof result.then==='function') {
+          const requests=__initializationRequests;
+          requests.add(result);
+          result.then(()=>requests.delete(result),()=>requests.delete(result));
+        }
+        return result;
+      }
       function __wire(v) { return __serialize(__pack(v)); }
       // Native construction avoids large mixed-width JSON bridge allocations.
       const __originalJSONParse = JSON.parse;
@@ -338,11 +347,10 @@ export class SourceRuntime {
       this.waiters.clear();
     }
   }
-  async evaluate(expression: string): Promise<any> {
+  async evaluate(expression: string, expires = Date.now() + 180000): Promise<any> {
     if (this.closed) throw new Error("漫画源已释放");
     const handle = this.sync(expression);
     this.handles.add(handle);
-    const expires = Date.now() + 180000;
     try {
       while (true) {
         if (this.closed) throw new Error("漫画源已释放");
@@ -427,8 +435,25 @@ export class SourceRuntime {
     return meta;
   }
   async initialize() {
-    if (await this.evaluate(`typeof __source.init==='function'`))
-      await this.call("init");
+    if (!(await this.evaluate(`typeof __source.init==='function'`))) return;
+    // CopyManga starts API discovery without returning its promise from init.
+    // Check after evaluate pumps the VM's jobs, so follow-up requests and the
+    // response handlers that update the API URL finish before exposing the
+    // instance. All iterations share the normal operation deadline.
+    const expires = Date.now() + 180000;
+    try {
+      await this.evaluate(`(async()=>{
+        __initializationRequests=new Set();
+        await __source.init();
+      })()`, expires);
+      while (await this.evaluate("__initializationRequests.size", expires))
+        await this.evaluate(
+          "Promise.allSettled(Array.from(__initializationRequests)).then(()=>null)",
+          expires,
+        );
+    } finally {
+      if (!this.closed) this.sync("__initializationRequests=null").dispose();
+    }
   }
   has(path: string) {
     return this.evaluate(`typeof __source.${path}==='function'`);

@@ -5,9 +5,6 @@
 .viewer-novel > .viewer-header {
   display: none;
 }
-.window-drag:has(~ .viewer-novel) {
-  pointer-events: none;
-}
 .viewer-novel > .reader {
   flex: 1;
   min-height: 0;

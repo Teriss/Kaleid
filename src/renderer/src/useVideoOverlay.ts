@@ -105,7 +105,7 @@ export function useVideoOverlay(
               ]
             : [
                 ...target.querySelectorAll<HTMLElement>(
-                  ".video-header:not([inert]),.video-controls:not([inert]),.video-panel,.video-message,.card-video-controls,.music-unified-dock > *",
+                  ".video-header:not([inert]),.video-controls:not([inert]),.video-panel,.video-message,.card-video-controls,.music-unified-dock > *,.window-titlebar.is-visible,.window-titlebar-edge",
                 ),
               ]
                 .filter(

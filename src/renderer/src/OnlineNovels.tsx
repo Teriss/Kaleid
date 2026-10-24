@@ -4,7 +4,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type FormEvent,
 } from "react";
 import {
@@ -44,7 +43,7 @@ import type {
 import { Cover, IconButton, Modal } from "./components";
 import { act, report, useApp } from "./store";
 import NovelViewer from "./NovelViewer";
-import { PagedMediaSource } from "./layouts/source";
+import { useExternalMediaSource } from "./layouts/source";
 import type { LayoutProps } from "./layouts/shared";
 import {
   ReadingHubCards,
@@ -61,14 +60,16 @@ import {
   ReadingSearchHistory,
   ReadingResultControls,
   ReadingPagination,
+  ReadingWaterfallStart, ReadingWaterfallControls,
 } from "./ReadingSearch";
 import {
   emptyReadingSearchPage,
   readingResultModePatch,
+  readingResultStart,
   loadReadingSearchPage,
   newReadingSearchId,
   searchSourcePool,
-  type ReadingSearchPage,
+  type ReadingSearchPage, type ReadingLoadOperation,
 } from "../../shared/readingSearch";
 import "./onlineComics.css";
 import "./onlineNovels.css";
@@ -152,12 +153,17 @@ function Results({
   remember,
   open,
   favorite,
+  onReachEnd, onReachStart, change, onViewportAnchorChange,
 }: {
   novels: OnlineNovel[];
   memory: BrowseMemory;
   remember(p: Partial<BrowseMemory>): void;
   open(n: OnlineNovel): void;
   favorite(n: OnlineNovel): void;
+  onReachEnd?(): void;
+  onReachStart?(): void;
+  change?: ReadingSearchPage<OnlineNovel, NovelSearchPage>["change"];
+  onViewportAnchorChange?(item: MediaItem, index: number): void;
 }) {
   const latestMemory = useRef(memory);
   latestMemory.current = { ...latestMemory.current, layout: memory.layout };
@@ -165,34 +171,21 @@ function Results({
     latestMemory.current = { ...latestMemory.current, ...patch };
     remember(patch);
   };
-  const source = useMemo(
-    () =>
-      new PagedMediaSource(
-        { type: "novel", sort: "name" },
-        async (q) => ({
-          items: novels
-            .slice(q.offset || 0, (q.offset || 0) + (q.limit || 100))
-            .map(cardItem),
-          total: novels.length,
-        }),
-        true,
-      ),
-    [novels],
+  const items = useMemo(() => novels.map(cardItem), [novels]);
+  const source = useExternalMediaSource(
+    "results",
+    "novel",
+    items,
+    latestMemory.current,
+    change && { ...change, targetId: change.targetId && `novel-card:${change.targetId}` },
   );
-  useSyncExternalStore(source.subscribe, source.getSnapshot);
-  useEffect(() => {
-    void source.initialize(
-      latestMemory.current.focusId,
-      latestMemory.current.focusIndex,
-    );
-    return () => source.dispose();
-  }, [source]);
   const settings = useApp((s) => s.settings);
   const props: LayoutProps = {
     source,
     memory: latestMemory.current,
     remember: rememberResult,
     interactive: true,
+    onReachEnd, onReachStart, onViewportAnchorChange,
     reducedMotion: settings.reducedMotion,
     open: (item) => open(item.remoteData!.novel),
     favorite: (item) => favorite(item.remoteData!.novel),
@@ -256,8 +249,8 @@ export default function OnlineNovels({
   type SearchState = ReadingSearchPage<OnlineNovel, NovelSearchPage>;
   const searchPages = useRef(new Map<string, SearchState>());
   const requestIds = useRef(new Map<string, number>());
-  const [searchStateRevision, setSearchStateRevision] = useState(0);
-  const sentinel = useRef<HTMLDivElement>(null);
+  const [, setSearchStateRevision] = useState(0);
+  const resultRequests = useRef(new Map<string, number>());
   const [resultPreference, setResultPreference] = useState(() =>
     preference<{
       layout: "grid" | "archiveShelf" | "carousel";
@@ -340,6 +333,7 @@ export default function OnlineNovels({
   ]);
   const singleSearch =
     section === "search" && scope.searchMode === "single" && !!scope.search;
+  const emptySearch = section === "search" && !scope.search;
   const homeSources = useMemo(() => {
     const ordered = [...sources];
     if (sourceSort === "name-asc" || sourceSort === "name-desc")
@@ -555,11 +549,19 @@ export default function OnlineNovels({
     activeSearchPage?.resultLayout || resultPreference.layout;
   const resultMode = activeSearchPage?.resultMode || resultPreference.mode;
   const saveResultPreference = (patch: Partial<typeof resultPreference>) => {
+    if (patch.mode && patch.mode !== resultMode) remember(readingResultStart());
     const value = { layout: resultLayout, mode: resultMode, ...patch };
     persist(`single-result:${sourceId}`, value);
     setResultPreference(value);
     const state = searchPages.current.get(searchPageKey(sourceId));
     if (state) {
+      if (patch.mode && patch.mode !== resultMode && state.busy && state.pageInfo) {
+        requestIds.current.set(searchPageKey(sourceId), (requestIds.current.get(searchPageKey(sourceId)) || 0) + 1);
+        ++resultIntent.current;
+        state.busy = false;
+        state.loadingOperation = undefined;
+        setBusy(false);
+      }
       state.resultLayout = value.layout;
       Object.assign(
         state,
@@ -578,8 +580,11 @@ export default function OnlineNovels({
     number = page,
     append = false,
     force = false,
+    operation: ReadingLoadOperation = append ? "append" : "replace",
   ) {
     const key = searchPageKey(id);
+    const requestKey = `${key}:${number}`;
+    if ((operation === "append" || operation === "prepend") && searchPages.current.get(key)?.busy) return;
     let state =
       searchPages.current.get(key) ||
       emptyReadingSearchPage<OnlineNovel, NovelSearchPage>({
@@ -603,37 +608,45 @@ export default function OnlineNovels({
       setSearchStateRevision((value) => value + 1);
     };
     if (!force && state.pageInfo && state.page === number && !state.error) {
+      state = { ...state, busy: false, loadingOperation: undefined };
+      searchPages.current.set(key, state);
       apply();
       return;
     }
     const requestId = (requestIds.current.get(key) || 0) + 1;
     requestIds.current.set(key, requestId);
-    await loadReadingSearchPage<OnlineNovel, NovelSearchPage>({
-      previous: state,
-      number,
-      append,
-      fetchPage: (pageNumber) =>
-        section === "search"
-          ? api().search(id, scope.search || "", pageNumber)
-          : api().discover(
-              id,
-              section === "popular" ? "popular" : "latest",
-              pageNumber,
-            ),
-      unpack: (result) => ({
-        items: result.novels,
-        next: result.hasMore ? String(result.page + 1) : null,
-        maxPage: result.hasMore ? undefined : result.page,
-      }),
-      identity: (novel) => `${novel.sourceId}:${novel.novelId}`,
-      current: () => requestIds.current.get(key) === requestId,
-      update: (patch) => {
-        state = { ...state, ...patch };
-        searchPages.current.set(key, state);
-        apply();
-      },
-      formatError: errorText,
-    });
+    resultRequests.current.set(requestKey, requestId);
+    try {
+      await loadReadingSearchPage<OnlineNovel, NovelSearchPage>({
+        previous: state,
+        number,
+        append, operation, cursorBased: false,
+        fetchPage: (pageNumber) =>
+          section === "search"
+            ? api().search(id, scope.search || "", pageNumber)
+            : api().discover(
+                id,
+                section === "popular" ? "popular" : "latest",
+                pageNumber,
+              ),
+        unpack: (result) => ({
+          items: result.novels,
+          next: result.hasMore ? String(result.page + 1) : null,
+          maxPage: result.hasMore ? undefined : result.page,
+        }),
+        identity: (novel) => `${novel.sourceId}:${novel.novelId}`,
+        current: () => requestIds.current.get(key) === requestId && serial === loadSerial.current,
+        update: (patch) => {
+          state = { ...state, ...patch };
+          searchPages.current.set(key, state);
+          apply();
+        },
+        formatError: errorText,
+      });
+    } finally {
+      if (resultRequests.current.get(requestKey) === requestId)
+        resultRequests.current.delete(requestKey);
+    }
   }
   const refreshStamp = useRef("");
   useEffect(() => {
@@ -678,7 +691,7 @@ export default function OnlineNovels({
         ),
       () => serial === loadSerial.current,
     ).finally(() => {
-      if (serial === loadSerial.current) setBusy(false);
+      if (serial === loadSerial.current && !ids.some(id => searchPages.current.get(searchPageKey(id))?.busy)) setBusy(false);
     });
     return () => {
       ++loadSerial.current;
@@ -694,35 +707,29 @@ export default function OnlineNovels({
     JSON.stringify(scope.novelSearchSources),
     refresh,
   ]);
-  const loadResultPage = async (number: number, append = false) => {
-    if (activeSearchPage?.busy) return;
+  const resultIntent = useRef(0);
+  const loadResultPage = async (number: number, append = false, operation: ReadingLoadOperation = append ? "append" : singleSearch && resultMode === "waterfall" ? "jump" : "replace") => {
+    if ((operation === "append" || operation === "prepend") && searchPages.current.get(searchPageKey(sourceId))?.busy) return;
+    if (operation === "replace") remember(readingResultStart());
+    const intent = ++resultIntent.current, serial = loadSerial.current;
     setBusy(true);
     try {
-      await loadOne(sourceId, loadSerial.current, number, append, true);
-      if (!singleSearch) navigate({ ...scope, novelPage: number }, "replace");
+      await loadOne(sourceId, serial, number, append, true, operation);
+      if (intent === resultIntent.current && serial === loadSerial.current && !singleSearch) navigate({ ...scope, novelPage: number }, "replace");
     } finally {
-      setBusy(false);
+      if (intent === resultIntent.current && serial === loadSerial.current) setBusy(false);
     }
   };
-  useEffect(() => {
-    if (
-      !singleSearch ||
-      resultMode !== "waterfall" ||
-      busy ||
-      !activeSearchPage?.pageInfo?.hasMore ||
-      !sentinel.current
-    )
-      return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting))
-          void loadResultPage((activeSearchPage?.page || 1) + 1, true);
-      },
-      { rootMargin: "180px" },
-    );
-    observer.observe(sentinel.current);
-    return () => observer.disconnect();
-  }, [singleSearch, resultMode, busy, searchStateRevision]);
+  const loadNextWaterfallPage = () => {
+    const state = searchPages.current.get(searchPageKey(sourceId));
+    if (!singleSearch || resultMode !== "waterfall" || !state || state.busy || state.afterPaused || !state.pageInfo?.hasMore) return;
+    void loadResultPage(state.endPage + 1, true);
+  };
+  const loadPreviousWaterfallPage = (manual = false) => {
+    const state = searchPages.current.get(searchPageKey(sourceId));
+    if (!singleSearch || resultMode !== "waterfall" || !state || state.busy || state.startPage <= 1 || (!manual && state.beforePaused)) return;
+    void loadResultPage(state.startPage - 1, false, "prepend");
+  };
   useEffect(() => {
     const serial = ++detailSerial.current;
     setDetails(undefined);
@@ -853,6 +860,7 @@ export default function OnlineNovels({
       term.trim(),
       ...searchHistory.filter((value) => value !== term.trim()),
     ].slice(0, 30);
+    remember(readingResultStart());
     setSearchHistory(history);
     persist("search-history", history);
     persist("search-sources", aggregateIds);
@@ -869,7 +877,9 @@ export default function OnlineNovels({
     setSearchPanelVisible(false);
     setRefresh((value) => value + 1);
   };
-  const result = groups[sourceId];
+  const result = ["discover", "popular"].includes(section) || singleSearch
+    ? groups[sourceId]
+    : undefined;
   const librarySection = [
     "shelf",
     "history",
@@ -1530,12 +1540,14 @@ export default function OnlineNovels({
           select={setAggregateIds}
           extra={
             <div className="comic-search-extra-controls">
-              <ReadingResultControls
-                layout={resultLayout}
-                mode={resultMode}
-                changeLayout={(layout) => saveResultPreference({ layout })}
-                changeMode={(mode) => saveResultPreference({ mode })}
-              />
+              {singleSearch && (
+                <ReadingResultControls
+                  layout={resultLayout}
+                  mode={resultMode}
+                  changeLayout={(layout) => saveResultPreference({ layout })}
+                  changeMode={(mode) => saveResultPreference({ mode })}
+                />
+              )}
             </div>
           }
         >
@@ -1576,12 +1588,9 @@ export default function OnlineNovels({
             <Search size={16} />
             修改搜索
           </button>
-          <IconButton label="小说显示方式" onClick={openLayout}>
-            <Grid2X2 size={17} />
-          </IconButton>
         </div>
       )}
-      {busy && !scope.novelChapterId && !ref && (
+      {busy && !emptySearch && !scope.novelChapterId && !ref && (
         <div className="online-loading" role="status">
           <LoaderCircle className="spin" size={20} />
           正在加载…
@@ -1590,35 +1599,45 @@ export default function OnlineNovels({
       {ref && !scope.novelChapterId && !details && !detailError && (
         <ReadingDetailSkeleton kind="小说" sourceName={sourceName} />
       )}
-      {Object.entries(errors).map(([id, error]) => (
-        <div className="novel-error" role="alert" key={id}>
-          <strong>{sources.find((s) => s.id === id)?.name}</strong>
-          <p>{error}</p>
-          <button
-            onClick={() =>
-              void loadOne(
-                id as NovelSourceId,
-                loadSerial.current,
-                page,
-                false,
-                true,
-              )
-            }
-          >
-            重试此源
-          </button>
-          {/verification|auth-required|permission/.test(error) && (
+      {Object.entries(errors)
+        .filter(
+          ([id]) =>
+            !emptySearch && !(
+              singleSearch &&
+              resultMode === "waterfall" &&
+              id === sourceId &&
+              result?.novels.length
+            ),
+        )
+        .map(([id, error]) => (
+          <div className="novel-error" role="alert" key={id}>
+            <strong>{sources.find((s) => s.id === id)?.name}</strong>
+            <p>{error}</p>
             <button
               onClick={() =>
-                void act(() => api().webLogin(id as NovelSourceId))
+                void loadOne(
+                  id as NovelSourceId,
+                  loadSerial.current,
+                  page,
+                  false,
+                  true,
+                )
               }
             >
-              打开源站登录与验证
+              重试此源
             </button>
-          )}
-        </div>
-      ))}
-      {section === "search" && scope.searchMode !== "single" && (
+            {/verification|auth-required|permission/.test(error) && (
+              <button
+                onClick={() =>
+                  void act(() => api().webLogin(id as NovelSourceId))
+                }
+              >
+                打开源站登录与验证
+              </button>
+            )}
+          </div>
+        ))}
+      {section === "search" && scope.search && scope.searchMode !== "single" && (
         <div className="comic-aggregate-results novel-aggregate">
           {homeSources
             .filter((source) => groups[source.id]?.novels.length)
@@ -1674,6 +1693,7 @@ export default function OnlineNovels({
         (section === "search" && scope.searchMode === "single")) &&
         result && (
           <>
+            {singleSearch && resultMode === "waterfall" && activeSearchPage && <ReadingWaterfallStart state={activeSearchPage} load={() => loadPreviousWaterfallPage(true)} />}
             <Results
               key={`${scope.novelSearchId || ""}:${sourceId}:${section}:${resultMode === "waterfall" ? "waterfall" : result.page}:${scope.search || ""}`}
               novels={result.novels}
@@ -1683,6 +1703,15 @@ export default function OnlineNovels({
               remember={remember}
               open={open}
               favorite={favorites}
+              onReachEnd={loadNextWaterfallPage}
+              onReachStart={activeSearchPage && activeSearchPage.startPage > 1 ? () => loadPreviousWaterfallPage() : undefined}
+              change={activeSearchPage?.change}
+              onViewportAnchorChange={(item) => {
+                const state = searchPages.current.get(searchPageKey(sourceId));
+                const novel = item.remoteData?.novel as OnlineNovel | undefined;
+                const page = novel && state?.itemPages[`${novel.sourceId}:${novel.novelId}`];
+                if (state && page) state.visiblePage = page;
+              }}
             />
             {!result.novels.length && <p className="novel-muted">未找到小说</p>}
             {(!singleSearch || resultMode === "pagination") && (
@@ -1708,21 +1737,10 @@ export default function OnlineNovels({
                 go={(number) => void loadResultPage(number)}
               />
             )}
-            {singleSearch && resultMode === "waterfall" && (
-              <div ref={sentinel} className="comic-waterfall-status">
-                {busy ? (
-                  "正在加载…"
-                ) : result.hasMore ? (
-                  <button
-                    className="text-button"
-                    onClick={() => void loadResultPage(result.page + 1, true)}
-                  >
-                    加载更多
-                  </button>
-                ) : (
-                  "已加载全部结果"
-                )}
-              </div>
+            {singleSearch && resultMode === "waterfall" && activeSearchPage && (
+              <ReadingWaterfallControls state={activeSearchPage} hasMore={result.hasMore}
+                changeJump={value => { activeSearchPage.jumpPage = value; setSearchStateRevision(v => v + 1); }}
+                go={number => void loadResultPage(number)} load={() => void loadResultPage(activeSearchPage.endPage + 1, true)} />
             )}
           </>
         )}

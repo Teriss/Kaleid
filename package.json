@@ -9,6 +9,7 @@
   "scripts": {
     "test:novels": "vitest run tests/unit/onlineNovels.test.ts tests/unit/readingSearch.test.ts",
     "test:reading:search": "node scripts/check-reading-search-app.mjs",
+    "test:window:app": "node scripts/check-window-chrome-app.mjs",
     "test:novels:covers": "node scripts/check-novel-covers-app.mjs",
     "test:novels:app": "node scripts/check-online-novels-app.mjs",
     "audit:novels:sources": "node scripts/audit-novel-sources-app.mjs",

@@ -2,9 +2,6 @@
   background: #111;
   color: #ededed;
 }
-.window-drag:has(~ .comic-viewer) {
-  pointer-events: none;
-}
 .comic-chrome {
   position: absolute;
   left: 0;
