@@ -18,7 +18,14 @@ import { act, useApp } from "./store";
 import ReaderPreferences from "./ReaderPreferences";
 import type { ComicSourceInfo } from "../../shared/onlineComics";
 import type { AppUpdateState } from "../../shared/types";
+import type { UpdatePackage } from "../../shared/types";
 import NetworkProxySettingsPanel from "./NetworkProxySettings";
+
+function formatUpdatePackageSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "大小未知";
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function SettingsPanel({
   close,
@@ -35,15 +42,42 @@ export default function SettingsPanel({
   const [confirm, setConfirm] = useState(false);
   const [comicSources, setComicSources] = useState<ComicSourceInfo[]>([]);
   const [updateState, setUpdateState] = useState<AppUpdateState>();
+  const [updatePackages, setUpdatePackages] = useState<UpdatePackage[]>([]);
+  const [packagesLoading, setPackagesLoading] = useState(true);
+  const [packageError, setPackageError] = useState("");
+  const [deletingPackage, setDeletingPackage] = useState<string>();
+  const refreshUpdatePackages = async () => {
+    setPackagesLoading(true);
+    setPackageError("");
+    try {
+      setUpdatePackages(await window.media.listUpdatePackages());
+    } catch (error) {
+      setPackageError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPackagesLoading(false);
+    }
+  };
   useEffect(() => {
     let live = true;
     const unsubscribeUpdate = window.media.onUpdateState((state) => {
-      if (live) setUpdateState(state);
+      if (live) {
+        setUpdateState(state);
+        if (state.status === "downloaded")
+          void window.media.listUpdatePackages()
+            .then((packages) => { if (live) setUpdatePackages(packages); })
+            .catch(() => {});
+      }
     });
     void window.media
       .updateState()
       .then((state) => { if (live) setUpdateState(state); })
       .catch(() => {});
+    void window.media.listUpdatePackages()
+      .then((packages) => { if (live) setUpdatePackages(packages); })
+      .catch((error) => {
+        if (live) setPackageError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => { if (live) setPackagesLoading(false); });
     void window.media.onlineComics.sources()
       .then((sources) => { if (live) setComicSources(sources); })
       .catch(() => { if (live) setComicSources([]); });
@@ -186,6 +220,50 @@ export default function SettingsPanel({
               </p>
             )}
           </div>
+        )}
+        {active === "updates" && (
+          <section className="settings-update-packages">
+            <div className="settings-update-packages-heading">
+              <div>
+                <h3>已下载的安装包</h3>
+                <p>查看自动更新下载和保留的安装包，可删除不需要的文件。</p>
+              </div>
+              <button className="button secondary" onClick={() => void refreshUpdatePackages()} disabled={packagesLoading}>
+                <RefreshCw size={14} />刷新
+              </button>
+            </div>
+            {packageError && <p className="settings-update-unavailable" role="alert">{packageError}</p>}
+            {packagesLoading && !updatePackages.length ? (
+              <p className="settings-update-packages-empty" role="status">正在读取安装包…</p>
+            ) : updatePackages.length ? (
+              <ul className="settings-update-package-list">
+                {updatePackages.map((file) => (
+                  <li key={file.id}>
+                    <span className="settings-update-package-info">
+                      <strong title={file.name}>{file.name}</strong>
+                      <small>{formatUpdatePackageSize(file.size)} · {new Date(file.modifiedAt).toLocaleString()}</small>
+                    </span>
+                    <button
+                      className="button secondary"
+                      disabled={!file.canDelete || deletingPackage === file.id}
+                      title={file.canDelete ? "删除安装包" : "正在下载或用于当前更新，暂时无法删除"}
+                      onClick={() => {
+                        setDeletingPackage(file.id);
+                        void window.media.deleteUpdatePackage(file.id)
+                          .then(refreshUpdatePackages)
+                          .catch((error) => setPackageError(error instanceof Error ? error.message : String(error)))
+                          .finally(() => setDeletingPackage(undefined));
+                      }}
+                    >
+                      {deletingPackage === file.id ? "删除中…" : "删除"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="settings-update-packages-empty">没有已下载的安装包</p>
+            )}
+          </section>
         )}
         {active === "appearance" && (
           <>

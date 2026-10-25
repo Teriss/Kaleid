@@ -223,6 +223,9 @@ export interface Settings {
   readerPadding: number;
   comicMode: "single" | "double" | "scroll";
   comicRtl: boolean;
+  comicFit: "window" | "width" | "original";
+  comicCoverAlone: boolean;
+  comicPairingOffset: boolean;
   equalizerEnabled: boolean;
   equalizerPreset: string;
   equalizerBands: number[];
@@ -252,6 +255,9 @@ export const DEFAULT_SETTINGS: Settings = {
   readerPadding: 6,
   comicMode: "single",
   comicRtl: false,
+  comicFit: "window",
+  comicCoverAlone: true,
+  comicPairingOffset: false,
   equalizerEnabled: false,
   equalizerPreset: "flat",
   equalizerBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -269,6 +275,8 @@ export interface OnlineChangeEvent {
   download?: boolean;
 }
 export interface AppAPI {
+  listUpdatePackages(): Promise<UpdatePackage[]>;
+  deleteUpdatePackage(id: string): Promise<void>;
   updateState(): Promise<AppUpdateState>;
   checkForUpdates(): Promise<AppUpdateState>;
   downloadUpdate(): Promise<AppUpdateState>;
@@ -367,6 +375,13 @@ export interface AppAPI {
   onHistoryChange(callback: () => void): () => void;
   onIndexChange(callback: (change: IndexChange) => void): () => void;
   onScan(callback: (status: ScanStatus) => void): () => void;
+}
+export interface UpdatePackage {
+  id: string;
+  name: string;
+  size: number;
+  modifiedAt: number;
+  canDelete: boolean;
 }
 export interface AppUpdateState {
   supported: boolean;

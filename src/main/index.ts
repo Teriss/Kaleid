@@ -69,6 +69,25 @@ let window: BrowserWindow | null = null;
 const bindWindowControls = installWindowControls(() => window);
 let appTheme: Settings["theme"] = "dark";
 const updatesSupported = app.isPackaged && process.platform === "win32";
+const updateCacheBase =
+  process.env.LOCALAPPDATA || path.join(app.getPath("home"), "AppData", "Local");
+const updateCacheDirectories = async () => {
+  let cacheName = app.getName();
+  try {
+    const config = await fs.readFile(
+      path.join(process.resourcesPath, "app-update.yml"),
+      "utf8",
+    );
+    const configured = config.match(/^updaterCacheDirName:\s*([^\r\n#]+)/m)?.[1]
+      ?.trim()
+      .replace(/^(?:"(.*)"|'(.*)')$/, (_match, doubleQuoted, singleQuoted) => doubleQuoted ?? singleQuoted);
+    if (configured && path.basename(configured) === configured) cacheName = configured;
+  } catch {
+    // Unpackaged builds have no updater config; use electron-updater's app-name fallback.
+  }
+  const root = path.join(updateCacheBase, cacheName);
+  return { root, pending: path.join(root, "pending") };
+};
 let ignoredUpdateVersion: string | undefined;
 let updateCheckPending = false;
 let autoUpdateDelay: ReturnType<typeof setTimeout> | undefined;
@@ -195,6 +214,40 @@ function configureAutomaticUpdates(enabled: boolean) {
   autoUpdateInterval.unref?.();
 }
 const networkProxy = new NetworkProxyManager(DEFAULT_SETTINGS.networkProxy);
+async function listCachedUpdatePackages() {
+  const { root, pending } = await updateCacheDirectories();
+  const helper = (autoUpdater as any).downloadedUpdateHelper;
+  const activeFile = typeof helper?.file === "string" ? path.resolve(helper.file) : "";
+  const files: {
+    id: string;
+    name: string;
+    size: number;
+    modifiedAt: number;
+    canDelete: boolean;
+  }[] = [];
+  for (const [directory, prefix] of [[root, ""], [pending, "pending/"]] as const) {
+    let entries;
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !/\.(?:exe|msi)$/i.test(entry.name)) continue;
+      const fullPath = path.join(directory, entry.name);
+      const info = await fs.stat(fullPath);
+      files.push({
+        id: `${prefix}${entry.name}`,
+        name: entry.name,
+        size: info.size,
+        modifiedAt: info.mtimeMs,
+        canDelete: updateState.status !== "downloading" && path.resolve(fullPath) !== activeFile,
+      });
+    }
+  }
+  return files.sort((a, b) => b.modifiedAt - a.modifiedAt);
+}
 function synchronizeTheme(theme: Settings["theme"]) {
   appTheme = theme === "light" ? "light" : "dark";
   for (const win of BrowserWindow.getAllWindows()) {
@@ -352,6 +405,11 @@ function validateSettings(input: Settings): Settings {
       ? input.comicMode
       : "single",
     comicRtl: Boolean(input.comicRtl),
+    comicFit: ["window", "width", "original"].includes(input.comicFit)
+      ? input.comicFit
+      : "window",
+    comicCoverAlone: input.comicCoverAlone !== false,
+    comicPairingOffset: input.comicPairingOffset === true,
     equalizerEnabled: Boolean(input.equalizerEnabled),
     equalizerPreset:
       typeof input.equalizerPreset === "string"
@@ -808,6 +866,28 @@ void app
     ipcMain.handle("app:update-state", (event) => {
       assertAppUpdateSender(event);
       return updateState;
+    });
+    ipcMain.handle("app:update-packages", async (event) => {
+      assertAppUpdateSender(event);
+      return listCachedUpdatePackages();
+    });
+    ipcMain.handle("app:update-package-delete", async (event, id: unknown) => {
+      assertAppUpdateSender(event);
+      if (typeof id !== "string" || !/^(?:pending\/)?[^\\/]+\.(?:exe|msi)$/i.test(id))
+        throw new Error("无效的安装包标识");
+      if (updateState.status === "downloading")
+        throw new Error("更新下载期间无法删除安装包");
+      const pending = id.startsWith("pending/");
+      const name = pending ? id.slice("pending/".length) : id;
+      if (path.basename(name) !== name) throw new Error("无效的安装包标识");
+      const directories = await updateCacheDirectories();
+      const fullPath = path.resolve(pending ? directories.pending : directories.root, name);
+      const activeFile = (autoUpdater as any).downloadedUpdateHelper?.file;
+      if (typeof activeFile === "string" && path.resolve(activeFile) === fullPath)
+        throw new Error("此安装包正在用于安装更新，暂时无法删除");
+      const info = await fs.lstat(fullPath);
+      if (!info.isFile()) throw new Error("目标不是安装包文件");
+      await fs.unlink(fullPath);
     });
     ipcMain.handle("app:update-check", async (event) => {
       assertAppUpdateSender(event);

@@ -189,7 +189,6 @@ export default function ComicViewer({
   const wheelAt = useRef(0),
     restoring = useRef(false),
     scrollFrame = useRef(0);
-  const prefsSave = useRef(Promise.resolve());
   const [panelTop, setPanelTop] = useState(0);
   const imageCache = useMemo(
     () =>
@@ -283,7 +282,7 @@ export default function ComicViewer({
       .then((ctx) => {
         if (!live) return;
         setContext(ctx);
-        setPrefs(comicPreferences(settings, ctx.preferences));
+        setPrefs(comicPreferences(useApp.getState().settings));
       })
       .catch((e) => {
         if (live)
@@ -386,14 +385,18 @@ export default function ComicViewer({
   function updatePreferences(changes: Partial<ComicPreferences>) {
     const next = { ...prefs, ...changes };
     setPrefs(next);
-    prefsSave.current = prefsSave.current
-      .then(() => adapter.preferences(item, next))
+    const current = useApp.getState().settings;
+    void useApp
+      .getState()
+      .setSettings({
+        ...current,
+        comicMode: next.mode,
+        comicRtl: next.rtl,
+        comicFit: next.fit,
+        comicCoverAlone: next.coverAlone,
+        comicPairingOffset: next.pairingOffset,
+      })
       .catch(report);
-    if (changes.mode || changes.rtl !== undefined)
-      void useApp
-        .getState()
-        .setSettings({ ...settings, comicMode: next.mode, comicRtl: next.rtl })
-        .catch(report);
   }
   function jump(index: number, offset = 0) {
     if (!pages.length) return;
@@ -1033,8 +1036,7 @@ export default function ComicViewer({
                 </>
               )}
               <p>
-                设置自动保存到{context?.work ? "这部作品" : "这本漫画"}
-                。横向跨页图单独显示。
+                设置自动保存并应用于所有漫画。横向跨页图单独显示。
               </p>
               <p>
                 方向键／滚轮翻页，Ctrl＋滚轮缩放，双击放大，放大后拖动。F

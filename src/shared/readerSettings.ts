@@ -57,6 +57,21 @@ export function normalizeStoredSettings(input: unknown): Settings {
     ...DEFAULT_SETTINGS,
     ...current,
     ...normalizeReaderSettings(stored),
+    comicMode: typeof stored.comicMode === "string" && ["single", "double", "scroll"].includes(stored.comicMode)
+      ? stored.comicMode
+      : DEFAULT_SETTINGS.comicMode,
+    comicRtl: typeof stored.comicRtl === "boolean" ? stored.comicRtl : false,
+    comicFit: typeof stored.comicFit === "string" && ["window", "width", "original"].includes(stored.comicFit)
+      ? stored.comicFit
+      : DEFAULT_SETTINGS.comicFit,
+    comicCoverAlone:
+      typeof stored.comicCoverAlone === "boolean"
+        ? stored.comicCoverAlone
+        : DEFAULT_SETTINGS.comicCoverAlone,
+    comicPairingOffset:
+      typeof stored.comicPairingOffset === "boolean"
+        ? stored.comicPairingOffset
+        : DEFAULT_SETTINGS.comicPairingOffset,
     networkProxy: normalizeNetworkProxy(stored.networkProxy),
     theme: stored.theme === "light" ? "light" : "dark",
   } as Settings;

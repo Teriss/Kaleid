@@ -43,16 +43,20 @@ export function comicPreferences(
   return {
     mode: ["single", "double", "scroll"].includes(value.mode ?? "")
       ? value.mode!
-      : ["single", "double", "scroll"].includes(settings.comicMode)
-        ? settings.comicMode
-        : "single",
+      : settings.comicMode,
     rtl:
-      typeof value.rtl === "boolean" ? value.rtl : settings.comicRtl === true,
+      typeof value.rtl === "boolean" ? value.rtl : settings.comicRtl,
     fit: ["window", "width", "original"].includes(value.fit ?? "")
       ? value.fit!
-      : "window",
-    coverAlone: value.coverAlone !== false,
-    pairingOffset: value.pairingOffset === true,
+      : settings.comicFit,
+    coverAlone:
+      typeof value.coverAlone === "boolean"
+        ? value.coverAlone
+        : settings.comicCoverAlone,
+    pairingOffset:
+      typeof value.pairingOffset === "boolean"
+        ? value.pairingOffset
+        : settings.comicPairingOffset,
   };
 }
 export function comicSpreads(

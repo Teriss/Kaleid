@@ -222,6 +222,9 @@ api.comicHub = {
 };
 api.appTheme = () => ipcRenderer.invoke("app:theme");
 api.updateState = () => ipcRenderer.invoke("app:update-state");
+api.listUpdatePackages = () => ipcRenderer.invoke("app:update-packages");
+api.deleteUpdatePackage = (id: string) =>
+  ipcRenderer.invoke("app:update-package-delete", id);
 api.checkForUpdates = () => ipcRenderer.invoke("app:update-check");
 api.downloadUpdate = () => ipcRenderer.invoke("app:update-download");
 api.ignoreUpdate = (version: string) =>
