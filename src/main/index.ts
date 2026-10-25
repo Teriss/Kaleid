@@ -22,8 +22,11 @@ import { installOnlineComics } from "./onlineComics";
 import { installOnlineNovels } from "./onlineNovels";
 import { installVideo } from "./video";
 import { installVideoOverlay } from "./videoOverlay";
+import { NetworkProxyManager } from "./networkProxy";
 import type { MediaQuery, Settings } from "../shared/types";
 import { normalizeReaderSettings } from "../shared/readerSettings";
+import { DEFAULT_SETTINGS } from "../shared/types";
+import { validateNetworkProxy } from "../shared/networkProxy";
 import { installWindowControls } from "./windowControls";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -63,6 +66,7 @@ protocol.registerSchemesAsPrivileged([
 let window: BrowserWindow | null = null;
 const bindWindowControls = installWindowControls(() => window);
 let appTheme: Settings["theme"] = "dark";
+const networkProxy = new NetworkProxyManager(DEFAULT_SETTINGS.networkProxy);
 function synchronizeTheme(theme: Settings["theme"]) {
   appTheme = theme === "light" ? "light" : "dark";
   for (const win of BrowserWindow.getAllWindows()) {
@@ -85,6 +89,13 @@ const pending = new Map<
   }
 >();
 const selectedFolders = new Set<string>();
+const workerNetworkRequests = new Map<string, AbortController>();
+const MATCHING_NETWORK_HOSTS = new Set([
+  "music.163.com",
+  "c.y.qq.com",
+  "y.gtimg.cn",
+  "api.amll.dev",
+]);
 let service: ReturnType<typeof utilityProcess.fork>;
 let readyResolve: () => void;
 let readyReject: (error: Error) => void;
@@ -185,6 +196,7 @@ function validateSettings(input: Settings): Settings {
     input as Settings & { readerBackgroundColor?: unknown },
   );
   return {
+    networkProxy: validateNetworkProxy(input.networkProxy),
     theme: input.theme === "light" ? "light" : "dark",
     navigationAutoHide: input.navigationAutoHide !== false,
     videoAutoPictureInPicture: input.videoAutoPictureInPicture === true,
@@ -244,9 +256,10 @@ void app
       () => window,
       call,
       () => appTheme,
+      networkProxy,
     );
-    const onlineComics = installOnlineComics(() => window, here);
-    const onlineNovels = installOnlineNovels(() => window);
+    const onlineComics = installOnlineComics(() => window, here, networkProxy);
+    const onlineNovels = installOnlineNovels(() => window, networkProxy);
     const videoOverlay = installVideoOverlay(() => window);
     const videoService = installVideo(() => window, call, videoOverlay);
     service = utilityProcess.fork(path.join(here, "worker.js"), [], {
@@ -267,6 +280,63 @@ void app
         window?.webContents.send("library:scan", message.data);
         return;
       }
+      if (message.event === "network-cancel") {
+        workerNetworkRequests.get(String(message.requestId))?.abort();
+        return;
+      }
+      if (message.event === "network-request") {
+        const requestId = String(message.requestId || "");
+        if (!requestId) return;
+        if (workerNetworkRequests.size >= 32) {
+          service.postMessage({
+            event: "network-response",
+            requestId,
+            error: "在线请求过多",
+          });
+          return;
+        }
+        const controller = new AbortController();
+        workerNetworkRequests.set(requestId, controller);
+        void (async () => {
+          try {
+            const url = new URL(String(message.url || ""));
+            if (
+              url.protocol !== "https:" ||
+              !MATCHING_NETWORK_HOSTS.has(url.hostname) ||
+              message.key !== "music.matching"
+            )
+              throw new Error("在线匹配地址不受支持");
+            const response = await networkProxy.fetch("music.matching", url, {
+              method: message.method === "POST" ? "POST" : "GET",
+              headers: message.headers,
+              body: typeof message.body === "string" ? message.body : undefined,
+              signal: AbortSignal.any([
+                controller.signal,
+                AbortSignal.timeout(30000),
+              ]),
+            });
+            const body = await response.arrayBuffer();
+            if (body.byteLength > 8 * 1024 * 1024)
+              throw new Error("在线匹配响应过大");
+            service.postMessage({
+              event: "network-response",
+              requestId,
+              status: response.status,
+              headers: Object.fromEntries(response.headers.entries()),
+              body,
+            });
+          } catch (error) {
+            service.postMessage({
+              event: "network-response",
+              requestId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          } finally {
+            workerNetworkRequests.delete(requestId);
+          }
+        })();
+        return;
+      }
       const job = pending.get(message.id);
       if (!job) return;
       clearTimeout(job.timer);
@@ -276,6 +346,9 @@ void app
     });
     service.on("exit", (code) => {
       serviceFailure = new Error(`媒体库进程已退出 (${code})，请重启应用`);
+      for (const controller of workerNetworkRequests.values())
+        controller.abort();
+      workerNetworkRequests.clear();
       clearTimeout(readyTimeout);
       readyReject(serviceFailure);
       for (const job of pending.values()) {
@@ -556,7 +629,14 @@ void app
           ...validateSettings(args[0]),
           theme: args[0]?.theme === "light" ? "light" : "dark",
         };
-        await call(method, ...args);
+        const previous = (await call("settings")) as Settings;
+        await networkProxy.setSettings(args[0].networkProxy);
+        try {
+          await call(method, ...args);
+        } catch (error) {
+          await networkProxy.setSettings(previous.networkProxy).catch(() => {});
+          throw error;
+        }
         synchronizeTheme(args[0].theme);
         return;
       }
@@ -579,7 +659,9 @@ void app
         throw new Error("无效主题来源");
       return appTheme;
     });
-    appTheme = (await call("settings")).theme === "light" ? "light" : "dark";
+    const startupSettings = (await call("settings")) as Settings;
+    await networkProxy.setSettings(startupSettings.networkProxy);
+    appTheme = startupSettings.theme === "light" ? "light" : "dark";
     function createWindow() {
       window = new BrowserWindow({
         width: 1440,

@@ -4,7 +4,6 @@ import {
   dialog,
   ipcMain,
   safeStorage,
-  session,
   shell,
   type Session,
 } from "electron";
@@ -21,6 +20,8 @@ import { MessagePackHubProtocol } from "@microsoft/signalr-protocol-msgpack";
 import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { unzipSync, strFromU8 } from "fflate";
+import { NETWORK_PROXY_KEYS } from "../../shared/networkProxy";
+import type { NetworkProxyManager } from "../networkProxy";
 import type { MediaItem, OnlineChangeEvent, Progress } from "../../shared/types";
 import {
   NOVEL_API_METHODS,
@@ -127,6 +128,7 @@ export class OnlineNovelService {
   constructor(
     private getWindow: () => BrowserWindow | null,
     userData: string,
+    private networkProxy: NetworkProxyManager,
   ) {
     this.root = path.join(userData, "novel-online");
     mkdirSync(this.root, { recursive: true });
@@ -279,7 +281,11 @@ export class OnlineNovelService {
   private ensureSession(id: NovelSourceId) {
     let current = this.sessions.get(id);
     if (current) return current;
-    current = session.fromPartition(`persist:novel-${id}`);
+    current = this.networkProxy.getSession(
+      `persist:novel-${id}`,
+      NETWORK_PROXY_KEYS.novel.source(id),
+      NETWORK_PROXY_KEYS.novel.default,
+    );
     current.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     this.sessions.set(id, current);
     return current;
@@ -296,8 +302,10 @@ export class OnlineNovelService {
       ? AbortSignal.any([init.signal, AbortSignal.timeout(30_000)])
       : AbortSignal.timeout(30_000);
     const headers = new Headers(init.headers);
+    const sourceSession = this.ensureSession(id);
     try {
-      return await this.ensureSession(id).fetch(url, { ...init, headers, signal });
+      await this.networkProxy.ready(sourceSession);
+      return await sourceSession.fetch(url, { ...init, headers, signal });
     } catch (error) {
       throw new Error(`[network] ${message(error)}`);
     }
@@ -411,9 +419,11 @@ export class OnlineNovelService {
   private async browser(id: NovelSourceId, options: Record<string, any>) {
     const address = safeRemote(String(options.url || ""), this.sourcesById.get(id)!.meta.url);
     const base = new URL(address).origin;
+    const sourceSession = this.ensureSession(id);
+    await this.networkProxy.ready(sourceSession);
     const win = new BrowserWindow({
       show: false, width: 1000, height: 800,
-      webPreferences: { session: this.ensureSession(id), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+      webPreferences: { session: sourceSession, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
     });
     this.searchWindows.add(win);
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -541,13 +551,15 @@ export class OnlineNovelService {
       return;
     }
     const def = this.sourcesById.get(id)!;
+    const sourceSession = this.ensureSession(id);
+    await this.networkProxy.ready(sourceSession);
     const win = new BrowserWindow({
       width: 1080,
       height: 800,
       parent: this.getWindow() || undefined,
       title: `${def.meta.name} · 登录与验证`,
       webPreferences: {
-        session: this.ensureSession(id),
+        session: sourceSession,
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
@@ -575,7 +587,12 @@ export class OnlineNovelService {
       ? `https://raw.githubusercontent.com/${githubBlob[1]}/${githubBlob[2]}/${githubBlob[3]}`
       : url;
     const address = safeRemote(normalized, normalized);
-    const response = await session.fromPartition("novel-source-repositories").fetch(address, {
+    const repositorySession = this.networkProxy.getSession(
+      "novel-source-repositories",
+      NETWORK_PROXY_KEYS.novel.repositories,
+    );
+    await this.networkProxy.ready(repositorySession);
+    const response = await repositorySession.fetch(address, {
       signal: AbortSignal.timeout(30_000), cache: "no-store",
     });
     if (!response.ok) throw new Error(`小说源请求失败 (${response.status})`);
@@ -1553,8 +1570,11 @@ export class OnlineNovelService {
     this.store.close();
   }
 }
-export function installOnlineNovels(getWindow: () => BrowserWindow | null) {
-  const service = new OnlineNovelService(getWindow, app.getPath("userData"));
+export function installOnlineNovels(
+  getWindow: () => BrowserWindow | null,
+  networkProxy: NetworkProxyManager,
+) {
+  const service = new OnlineNovelService(getWindow, app.getPath("userData"), networkProxy);
   const allowed = new Set<string>(NOVEL_API_METHODS);
   ipcMain.handle("novel:call", (event, method: string, args: unknown[]) => {
     if (

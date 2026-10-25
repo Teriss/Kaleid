@@ -40,7 +40,7 @@ export default function StandardGrid({
   const kind = source.query.type;
   const comicRows = kind === "comic" && source.external;
   const columnWidth = comicRows
-    ? Math.max(minimumCellWidth, 460)
+    ? Math.max(minimumCellWidth, 340)
     : minimumCellWidth;
   const comicColumns = Math.max(1, Math.floor((width - 80) / columnWidth));
   const gridColumns = comicRows ? comicColumns : columns;
@@ -49,7 +49,7 @@ export default function StandardGrid({
     (width - 80 - (gridColumns - 1) * 22) / gridColumns,
   );
   const rowHeight = comicRows
-    ? 248
+    ? 222
     : cellWidth *
         (kind === "video"
           ? 9 / 16
@@ -300,6 +300,7 @@ export default function StandardGrid({
                       item={item}
                       index={index}
                       mode="grid"
+                      richComic={comicRows}
                       selected={item ? selected?.(item, index) : false}
                       select={select}
                       contextMenu={contextMenu}

@@ -1543,6 +1543,119 @@ select {
   background: light-dark(var(--app-surface), #343436);
   color: var(--ui-ccc);
 }
+.network-proxy-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.network-proxy-row small {
+  color: light-dark(var(--app-muted), #818186);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.network-proxy-module {
+  margin-top: 20px;
+}
+.network-proxy-module > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.network-proxy-module > summary::-webkit-details-marker {
+  display: none;
+}
+.network-proxy-module-chevron {
+  flex: 0 0 auto;
+  color: light-dark(var(--app-muted), #969699);
+  transform: rotate(-90deg);
+  transition: transform 140ms ease;
+}
+.network-proxy-module[open] > summary {
+  margin-bottom: 12px;
+}
+.network-proxy-module[open] > summary .network-proxy-module-chevron {
+  transform: rotate(0deg);
+}
+.network-proxy-module-title {
+  color: light-dark(var(--app-muted), #969699);
+  font-size: 11px;
+  font-weight: 500;
+}
+.network-proxy-add-trigger {
+  width: 25px;
+  height: 25px;
+  margin-left: 1px;
+  color: light-dark(var(--app-text), #d0d0d3);
+}
+.network-proxy-add-trigger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.network-proxy-profiles {
+  padding: 0 14px;
+}
+.network-proxy-profile {
+  display: grid;
+  grid-template-columns: minmax(75px, 1fr) 80px minmax(90px, 1fr) 64px 25px;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--ui-ffffff06);
+}
+.network-proxy-add {
+  display: grid;
+  grid-template-columns: minmax(75px, 1fr) 80px minmax(90px, 1fr) 64px auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 0;
+}
+.network-proxy-profile input,
+.network-proxy-profile select,
+.network-proxy-add input,
+.network-proxy-add select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 5px 7px;
+  border: 1px solid var(--ui-ffffff12);
+  border-radius: 6px;
+  background: light-dark(var(--app-surface), #343436);
+  color: light-dark(var(--app-text), #d0d0d3);
+  font-size: 10px;
+}
+.network-proxy-profile .icon-button {
+  width: 25px;
+  height: 25px;
+}
+.network-proxy-profile .icon-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.network-proxy-empty {
+  margin: 12px 0;
+}
+.network-proxy-add-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.network-proxy-add-actions .text-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.network-proxy-status {
+  min-height: 18px;
+  margin: 14px 0 2px;
+  color: light-dark(var(--app-muted), #969699);
+  font-size: 10px;
+  line-height: 1.6;
+}
 .settings-description {
   max-width: 620px;
   margin: 0 0 16px;

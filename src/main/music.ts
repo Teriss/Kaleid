@@ -15,6 +15,8 @@ import { randomUUID, createHash, randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { MediaItem } from "../shared/types";
 import type { MusicWindowState } from "../shared/music";
+import { NETWORK_PROXY_KEYS } from "../shared/networkProxy";
+import type { NetworkProxyManager } from "./networkProxy";
 
 // electron-vite may inject its own ESM `require` shim into this bundle.
 // Keep our loader distinct so packaging cannot introduce a duplicate declaration.
@@ -25,6 +27,7 @@ export function installMusic(
   getMain: () => BrowserWindow | null,
   localCall: (method: string, ...args: any[]) => Promise<any>,
   getTheme: () => "dark" | "light" = () => "dark",
+  networkProxy: NetworkProxyManager,
 ) {
   const projectRoot = fs.existsSync(path.join(app.getAppPath(), "vendor"))
     ? app.getAppPath()
@@ -149,9 +152,13 @@ export function installMusic(
       let lastError: unknown;
       for (const mirror of manifest.mirrors) {
         try {
-          const response = await fetch(mirror.replace("{file}", model.file), {
-            signal: AbortSignal.timeout(600000),
-          });
+          const response = await networkProxy.fetch(
+            NETWORK_PROXY_KEYS.models,
+            mirror.replace("{file}", model.file),
+            {
+              signal: AbortSignal.timeout(600000),
+            },
+          );
           if (!response.ok || !response.body)
             throw new Error(`模型下载 HTTP ${response.status}`);
           const handle = await fs.promises.open(temp, "w");
@@ -193,6 +200,8 @@ export function installMusic(
           broadcast: () => {},
           authSessionRepository: repo,
           getStateFilePath: () => path.join(directory, "qq-device.json"),
+          getRequestAgents: (url: string) =>
+            networkProxy.nodeAgents(NETWORK_PROXY_KEYS.music.qq, url),
         });
         await backend.start();
         if (!backend.getPort()) throw new Error("QQ 音乐服务未启动");
@@ -204,13 +213,21 @@ export function installMusic(
       });
     return qqJob;
   }
-  const networking = (name: string) => {
-    const network = session.fromPartition(`yingjian-music-${name}`);
-    return (input: any, init?: any) =>
-      network.fetch(input instanceof URL ? input.href : input, {
+  const networking = (key: string) => {
+    const partitionKey = key.startsWith("music.")
+      ? key.slice("music.".length)
+      : key;
+    const network = networkProxy.getSession(
+      `yingjian-music-${partitionKey}`,
+      key,
+    );
+    return async (input: any, init?: any) => {
+      await networkProxy.ready(network);
+      return network.fetch(input instanceof URL ? input.href : input, {
         ...init,
         credentials: "omit",
       });
+    };
   };
   function bridge(provider: string) {
     if (!PROVIDERS.has(provider)) throw new Error("该音乐来源已停用");
@@ -232,20 +249,25 @@ export function installMusic(
         session,
         isAllowed: () => Boolean(getMain()),
       });
+      const browserSignIn = load("ytm/browserSignIn.cjs").createBrowserSignIn({
+        proxyArgs: () =>
+          networkProxy.browserProxyArgs(NETWORK_PROXY_KEYS.music.ytm),
+      });
       value = load("ytm/ytmApiBridge.cjs").createYtmApiBridge({
         store,
         safeStorage,
-        fetch: networking(provider),
+        fetch: networking(`music.${provider}`),
         evaluate: (code: string) => sandbox.evaluate(code),
         language: () => "zh-CN",
         signInFolder: () => path.join(directory, "ytm-sign-in"),
+        browserSignIn,
       });
     }
     if (provider === "spotify")
       value = load("spotify/spotifyApiBridge.cjs").createSpotifyApiBridge({
         store,
         safeStorage,
-        fetch: networking(provider),
+        fetch: networking(`music.${provider}`),
         openExternal: (url: string) => shell.openExternal(url),
         language: () => "zh-CN",
         audioDirectory: path.join(directory, "folia-spotify"),
@@ -255,8 +277,47 @@ export function installMusic(
     return value;
   }
   const knownUrls = new Set<string>();
-  const assets = new Map<string, string>();
+  const assets = new Map<string, { url: string; key: string }>();
   const assetUrls = new Map<string, string>();
+  let neteaseRoutingInstalled = false;
+  function installNeteaseRouting() {
+    if (neteaseRoutingInstalled) return;
+    const packageJson = loadCommonJS.resolve(
+      "@neteasecloudmusicapienhanced/api/package.json",
+    );
+    const packageRequire = createRequire(packageJson);
+    const axiosModule = packageRequire("axios");
+    const axios = axiosModule.default ?? axiosModule;
+    const release = (config: any) => {
+      const dispose = config?.__kaleidProxyDispose;
+      if (typeof dispose === "function") dispose();
+      if (config) delete config.__kaleidProxyDispose;
+    };
+    axios.interceptors.request.use(async (config: any) => {
+      if (!config.url) return config;
+      const target = new URL(String(config.url), config.baseURL).href;
+      const agents = await networkProxy.nodeAgents(
+        NETWORK_PROXY_KEYS.music.netease,
+        target,
+      );
+      config.proxy = false;
+      if (agents.httpAgent) config.httpAgent = agents.httpAgent;
+      if (agents.httpsAgent) config.httpsAgent = agents.httpsAgent;
+      config.__kaleidProxyDispose = agents.dispose;
+      return config;
+    });
+    axios.interceptors.response.use(
+      (response: any) => {
+        release(response.config);
+        return response;
+      },
+      (error: any) => {
+        release(error.config);
+        throw error;
+      },
+    );
+    neteaseRoutingInstalled = true;
+  }
   function remember(value: any, depth = 0) {
     if (depth > 20 || value == null) return;
     if (typeof value === "string" && /^https?:\/\//i.test(value)) {
@@ -265,7 +326,7 @@ export function installMusic(
     } else if (typeof value === "object")
       Object.values(value).forEach((v) => remember(v, depth + 1));
   }
-  function resource(url: string) {
+  function resource(provider: string, url: string) {
     if (url.startsWith("data:image/")) return url;
     if (/^folia-(ytm|spotify):/.test(url)) return url;
     const parsed = new URL(url);
@@ -282,11 +343,18 @@ export function installMusic(
       parsed.password
     )
       throw new Error("无效的音乐资源");
-    if (assetUrls.has(url)) return assetUrls.get(url)!;
+    const key =
+      provider === "navidrome"
+        ? NETWORK_PROXY_KEYS.music.navidrome
+        : provider === "netease" || provider === "qq" || provider === "ytm"
+          ? `music.${provider}`
+          : NETWORK_PROXY_KEYS.music.matching;
+    const cacheKey = `${key}\0${url}`;
+    if (assetUrls.has(cacheKey)) return assetUrls.get(cacheKey)!;
     const token = randomUUID();
-    assets.set(token, url);
+    assets.set(token, { url, key });
     const result = `music://asset/${token}`;
-    assetUrls.set(url, result);
+    assetUrls.set(cacheKey, result);
     return result;
   }
   function navUrl(operation: string, params: Record<string, any> = {}) {
@@ -311,17 +379,20 @@ export function installMusic(
   }
   function navAsset(operation: string, params: Record<string, any>) {
     const token = randomUUID();
-    assets.set(token, navUrl(operation, params));
+    assets.set(token, {
+      url: navUrl(operation, params),
+      key: NETWORK_PROXY_KEYS.music.navidrome,
+    });
     return `music://asset/${token}`;
   }
   protocol.handle("music", async (request) => {
-    const url = assets.get(new URL(request.url).pathname.slice(1));
-    if (!url) return new Response(null, { status: 404 });
+    const asset = assets.get(new URL(request.url).pathname.slice(1));
+    if (!asset) return new Response(null, { status: 404 });
     try {
       const headers: Record<string, string> = {};
       if (request.headers.has("range"))
         headers.Range = request.headers.get("range")!;
-      const response = await networking("assets")(url, {
+      const response = await networking(asset.key)(asset.url, {
         headers,
         signal: AbortSignal.timeout(60000),
       });
@@ -521,7 +592,7 @@ export function installMusic(
         schema: prompts.THEME_JSON_SCHEMA,
         schemaName: prompts.THEME_JSON_SCHEMA_NAME,
         geminiResponseSchema: prompts.getGeminiResponseSchema(),
-        customFetch: networking("ai"),
+        customFetch: networking(NETWORK_PROXY_KEYS.music.matching),
         maxTokens: 4096,
       });
       const dual = loadCommonJS(
@@ -589,7 +660,7 @@ export function installMusic(
       )
         throw new Error("不支持的 Navidrome 操作");
       if (operation === "stream") return navAsset("stream", { id: params.id });
-      const response = await networking("navidrome")(
+      const response = await networking(NETWORK_PROXY_KEYS.music.navidrome)(
         navUrl(operation, params),
         { signal: AbortSignal.timeout(30000) },
       );
@@ -630,13 +701,16 @@ export function installMusic(
         "referer",
       ])
         headers.delete(key);
-      const response = await networking("lyrics")(url.href, {
-        method: init.method === "POST" ? "POST" : "GET",
-        headers,
-        body: init.body,
-        redirect: "error",
-        signal: AbortSignal.timeout(20000),
-      });
+      const response = await networking(NETWORK_PROXY_KEYS.music.matching)(
+        url.href,
+        {
+          method: init.method === "POST" ? "POST" : "GET",
+          headers,
+          body: init.body,
+          redirect: "error",
+          signal: AbortSignal.timeout(20000),
+        },
+      );
       const bodyText = await response.text();
       try {
         remember(JSON.parse(bodyText));
@@ -683,6 +757,7 @@ export function installMusic(
       let status = 200,
         body: any;
       if (provider === "netease") {
+        installNeteaseRouting();
         const api = loadCommonJS("@neteasecloudmusicapienhanced/api");
         const fn = api[target.pathname.slice(1).replaceAll("/", "_")];
         if (typeof fn !== "function") throw new Error("不支持的网易云接口");
@@ -706,7 +781,9 @@ export function installMusic(
           timeout: 25000,
         }).catch((error: any) => {
           if (error?.body) return error;
-          throw new Error("网易云音乐请求失败，请检查网络");
+          throw new Error(
+            `网易云音乐请求失败：${error instanceof Error ? error.message : String(error)}`,
+          );
         });
         status = answer.status || 200;
         body = answer.body;
@@ -746,7 +823,7 @@ export function installMusic(
       remember(result);
       return result;
     }
-    if (method === "resource") return resource(args[1]);
+    if (method === "resource") return resource(args[0], args[1]);
     if (method === "saveCatalog") {
       const items = args[0] as MediaItem[];
       catalog.exec("BEGIN");

@@ -10,11 +10,13 @@ import {
   AudioLines,
   Video,
   Search,
+  Globe,
 } from "lucide-react";
 import { IconButton, Modal } from "./components";
 import { act, useApp } from "./store";
 import ReaderPreferences from "./ReaderPreferences";
 import type { ComicSourceInfo } from "../../shared/onlineComics";
+import NetworkProxySettingsPanel from "./NetworkProxySettings";
 
 export default function SettingsPanel({
   close,
@@ -45,6 +47,7 @@ export default function SettingsPanel({
     { id: "shortcuts", label: "快捷操作", icon: Keyboard },
     { id: "music", label: "音乐", icon: AudioLines },
     { id: "video", label: "视频", icon: Video },
+    { id: "network-proxy", label: "网络与代理", icon: Globe },
   ];
   const active = search
     ? (groups.find((group) => group.label.includes(search))?.id ?? section)
@@ -109,6 +112,7 @@ export default function SettingsPanel({
             </div>
           </div>
         )}
+        {active === "network-proxy" && <NetworkProxySettingsPanel />}
         {active === "appearance" && (
           <>
             <h3>显示与动效</h3>

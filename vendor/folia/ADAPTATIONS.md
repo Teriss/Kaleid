@@ -9,6 +9,8 @@ Local changes to upstream:
 - `src/services/onlineMusic/{netease/netease.ts,qq/qqTransport.ts,kugou/kugouTransport.ts,kugou/kugouLyricProvider.ts,qq/qqLyricProvider.ts}` import those transports; normalization and platform behavior otherwise stay upstream.
 - `src/services/onlineMusic/providerStorage.ts`: session markers are memory-only. Reusable NetEase/QQ cookies live encrypted in the host; Bodian/KuGou/YTM/Spotify retain their upstream encrypted session repositories.
 - `electron/qq/qqApiStartup.cjs`: while the package synchronously creates its HTTP server, the selected port is bound to `127.0.0.1` rather than every network interface. The temporary listen override is always restored.
+- `electron/qq/qqApiStartup.cjs`: the package's private Axios clients and MQTT WebSocket use agents selected by Kaleid’s QQ proxy route. Local server startup remains bound to loopback.
+- `electron/ytm/browserSignIn.cjs`: the YouTube Music sign-in browser accepts route-specific Chromium proxy arguments; Kaleid supplies the YTM route while the cookie-reading pass remains offline.
 - `electron/yingjianThemePrompt.cjs`: unchanged theme prompt/schema functions extracted from pinned `electron/main.cjs` so the upstream application main process is not executed.
 
 Host adapters live in `src/main/music.ts`, `src/shared/music.ts`, and `src/renderer/src/music/`. Bundled dependencies are locked by the root package-lock.json. Renderer JavaScript facades intentionally isolate the vendored TypeScript compiler configuration; Vite still bundles the imported source and its lazy renderer/worker modules.

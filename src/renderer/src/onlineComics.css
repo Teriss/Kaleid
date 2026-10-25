@@ -20,21 +20,6 @@
 .browser-shell:has(.online-comics .comic-viewer) .main-chrome {
   visibility: hidden;
 }
-.comic-single-search-back {
-  position: fixed;
-  z-index: 52;
-  top: 14px;
-  left: 68px;
-  border: 1px solid var(--app-line);
-  background: color-mix(in srgb, var(--app-surface) 92%, transparent);
-  box-shadow: 0 3px 12px #0005;
-  -webkit-app-region: no-drag;
-}
-.comic-single-search-back:hover,
-.comic-single-search-back:focus-visible {
-  background: var(--app-surface);
-  color: var(--app-text);
-}
 .online-comics button:focus-visible,
 .online-comics input:focus-visible,
 .online-comics select:focus-visible,
@@ -138,7 +123,7 @@
   align-items: stretch;
 }
 .online-layout .comic-result-grid .comic-result-card {
-  height: 222px;
+  height: 196px;
   border: 1px solid var(--app-line);
   border-radius: 12px;
   background: color-mix(in srgb, var(--app-surface) 72%, transparent);
@@ -161,10 +146,10 @@
   text-align: left;
 }
 .comic-result-cover {
-  flex: 0 0 37%;
-  width: 37%;
-  min-width: 92px;
-  max-width: 170px;
+  flex: 0 0 118px;
+  width: 118px;
+  min-width: 118px;
+  max-width: 118px;
   height: 100%;
   border-radius: 8px;
 }
@@ -176,6 +161,8 @@
   flex: 1;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   padding: 3px 22px 3px 0;
 }
 .comic-result-title {
@@ -226,9 +213,9 @@
 .comic-result-meta {
   display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 7px 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
   min-height: 20px;
   padding-top: 5px;
   color: var(--app-muted);
@@ -250,11 +237,22 @@
   letter-spacing: 0;
 }
 .comic-result-time {
+  max-width: 100%;
+  overflow: hidden;
   color: var(--app-text);
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .comic-result-card .tile-actions {
   z-index: 2;
+  flex-direction: column;
+}
+.comic-result-card .tile-actions .icon-button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
 }
 .comic-source-pills {
   display: flex;
@@ -734,6 +732,62 @@
   gap: 14px;
   padding: 12px 0;
   border-bottom: 1px solid var(--border, #ffffff14);
+}
+.online-source-manager-page .online-source-item {
+  border-bottom: 1px solid var(--border, #ffffff14);
+}
+.online-source-manager-page .online-source-item > .online-source-row {
+  border-bottom: 0;
+}
+.online-source-settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.online-source-settings-chevron {
+  transition: transform 140ms ease;
+}
+.online-source-settings-toggle[aria-expanded="true"]
+  .online-source-settings-chevron {
+  transform: rotate(180deg);
+}
+.online-source-settings-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    grid-template-rows 220ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 160ms ease;
+}
+.online-source-settings-collapse.is-expanded {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.online-source-settings-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+.online-source-manager-page .online-source-settings {
+  margin: 0 0 14px 28px;
+  padding: 14px 16px;
+  border: 1px solid var(--border, #ffffff14);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--app-surface) 65%, transparent);
+}
+.online-source-manager-page .online-source-settings h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.online-source-manager-page .online-source-settings > .muted {
+  margin: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .online-source-settings-collapse,
+  .online-source-settings-chevron {
+    transition: none;
+  }
 }
 .online-source-row > span,
 .online-source-row > label {
@@ -1749,7 +1803,7 @@
 }
 .comic-hub-cards.is-rich.is-wrap {
   grid-auto-flow: row;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
   overflow-x: visible;
 }
 .comic-hub-cards.is-rich .comic-hub-card {
@@ -1770,18 +1824,12 @@
 .comic-hub-cards.is-rich .comic-hub-card > .comic-hub-cover > .comic-result-content {
   height: 100%;
 }
-.comic-hub-cards.is-rich .comic-hub-card .comic-result-cover {
-  flex: 0 0 118px;
-  width: 118px;
-  min-width: 118px;
-  max-width: 118px;
-  height: 100%;
-}
-.comic-hub-cards.is-rich .comic-hub-card .comic-result-info {
-  overflow: hidden;
-}
 .comic-hub-cards.is-rich .comic-hub-card > .icon-button {
   top: 9px;
   right: 9px;
   z-index: 2;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
 }

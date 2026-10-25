@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import {
   ArrowLeft,
@@ -24,7 +25,6 @@ import {
   FileUp,
   FolderDown,
   FolderOpen,
-  GripVertical,
   Heart,
   Home as HomeIcon,
   Info,
@@ -64,8 +64,10 @@ import type { LayoutProps } from "./layouts/shared";
 import { Cover } from "./components";
 import { ContentNavigationContext } from "./layouts/ContentNavigation";
 import { useExternalMediaSource } from "./layouts/source";
+import SourceOrderList from "./SourceOrderList";
 import {
   ReadingHubCards,
+  ReadingHomeSearch,
   ReadingHubMenu,
   ReadingPageShell,
   ReadingResults,
@@ -293,11 +295,7 @@ function ComicCards({
           ? `comic-online-card:${item.sourceId}:${item.comicId}`
           : undefined
       }
-      richItem={
-        rich
-          ? (item) => (isOnlineComic(item) ? richItems.get(item) : undefined)
-          : undefined
-      }
+      richItem={rich ? (item) => richItems.get(item) : undefined}
       richWrap={richWrap}
       empty="暂无漫画"
       large={large}
@@ -1046,6 +1044,38 @@ function SourceImportDialog({
   );
 }
 
+function AnimatedSourceSettings({
+  expanded,
+  id,
+  children,
+}: {
+  expanded: boolean;
+  id: string;
+  children: ReactNode;
+}) {
+  const [mounted, setMounted] = useState(expanded);
+  useLayoutEffect(() => {
+    if (expanded) setMounted(true);
+  }, [expanded]);
+  useEffect(() => {
+    if (expanded || !mounted) return;
+    const timeout = setTimeout(() => setMounted(false), 220);
+    return () => clearTimeout(timeout);
+  }, [expanded, mounted]);
+  return (
+    <div
+      className={`online-source-settings-collapse ${expanded ? "is-expanded" : ""}`}
+      id={id}
+      aria-hidden={!expanded}
+      inert={!expanded}
+    >
+      <div className="online-source-settings-clip">
+        {mounted ? children : null}
+      </div>
+    </div>
+  );
+}
+
 function SourceManager({
   sources,
   close,
@@ -1111,135 +1141,173 @@ function SourceManager({
         </button>
       </div>
       <div className="online-source-list">
-        {sources.map((source) => (
-          <div className="online-source-row" key={source.id}>
-            <label>
-              <input
-                type="checkbox"
-                checked={source.enabled}
-                disabled={!!busy}
-                onChange={(e) =>
-                  void action(source.id, () =>
-                    api().enable(source.id, e.target.checked),
-                  )
-                }
-              />
-              <span>
-                {source.name}
-                <small>
-                  {source.version}
-                  {source.error ? ` · ${source.error}` : ""}
-                </small>
-              </span>
-            </label>
-            <button
-              className="text-button"
-              disabled={!!busy}
-              onClick={() => {
-                setEditing(source);
-                setValues({ ...source.settingValues });
-              }}
+        {sources.map((source) => {
+          const expanded = editing?.id === source.id;
+          const sourceSettings = Object.entries(source.settings || {});
+          const settingsId = `comic-source-settings-${source.id}`;
+          return (
+            <article
+              className={`online-source-item ${expanded ? "is-expanded" : ""}`}
+              key={source.id}
             >
-              源设置
-            </button>
-            {source.capabilities.login.length > 0 && (
-              <button
-                className="text-button"
-                disabled={!!busy}
-                onClick={() => setAccounting(source)}
-              >
-                {source.logged ? "账号 · 已登录" : "登录"}
-              </button>
-            )}
-            {source.update && (
-              <button
-                className="button"
-                disabled={!!busy}
-                onClick={() =>
-                  void action(source.id, () => api().update(source.id))
-                }
-              >
-                更新
-              </button>
-            )}
-            <button
-              className="text-button"
-              disabled={!!busy}
-              onClick={() =>
-                void action(source.id, () => api().uninstall(source.id))
-              }
-            >
-              卸载
-            </button>
-          </div>
-        ))}
+              <div className="online-source-row">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={source.enabled}
+                    disabled={!!busy}
+                    onChange={(e) =>
+                      void action(source.id, () =>
+                        api().enable(source.id, e.target.checked),
+                      )
+                    }
+                  />
+                  <span>
+                    {source.name}
+                    <small>
+                      {source.version}
+                      {source.error ? ` · ${source.error}` : ""}
+                    </small>
+                  </span>
+                </label>
+                <button
+                  className="text-button online-source-settings-toggle"
+                  disabled={!!busy}
+                  aria-expanded={expanded}
+                  aria-controls={expanded ? settingsId : undefined}
+                  onClick={() => {
+                    if (expanded) {
+                      setEditing(undefined);
+                      return;
+                    }
+                    setEditing(source);
+                    setValues({ ...source.settingValues });
+                  }}
+                >
+                  源设置
+                  <ChevronDown
+                    size={14}
+                    className="online-source-settings-chevron"
+                  />
+                </button>
+                {source.capabilities.login.length > 0 && (
+                  <button
+                    className="text-button"
+                    disabled={!!busy}
+                    onClick={() => setAccounting(source)}
+                  >
+                    {source.logged ? "账号 · 已登录" : "登录"}
+                  </button>
+                )}
+                {source.update && (
+                  <button
+                    className="button"
+                    disabled={!!busy}
+                    onClick={() =>
+                      void action(source.id, () => api().update(source.id))
+                    }
+                  >
+                    更新
+                  </button>
+                )}
+                <button
+                  className="text-button"
+                  disabled={!!busy}
+                  onClick={() =>
+                    void action(source.id, () => api().uninstall(source.id))
+                  }
+                >
+                  卸载
+                </button>
+              </div>
+              <AnimatedSourceSettings expanded={expanded} id={settingsId}>
+                <section
+                  className="online-settings online-source-settings"
+                  aria-label={`${source.name}源设置`}
+                >
+                  <h3>{source.name} · 设置</h3>
+                  {sourceSettings.length > 0 ? (
+                    sourceSettings.map(([key, spec]) => (
+                      <label key={key}>
+                        {spec.title || key}
+                        {spec.type === "callback" ? (
+                          <button
+                            className="button secondary"
+                            disabled={!!busy}
+                            onClick={() =>
+                              void action("setting-action", () =>
+                                api().settingAction(source.id, key),
+                              )
+                            }
+                          >
+                            {(spec as any).buttonText || spec.title || "执行"}
+                          </button>
+                        ) : spec.type === "select" ? (
+                          <select
+                            value={String(values[key] ?? spec.default ?? "")}
+                            onChange={(e) =>
+                              setValues((v) => ({
+                                ...v,
+                                [key]: e.target.value,
+                              }))
+                            }
+                          >
+                            {spec.options?.map((o: any, i: number) => (
+                              <option key={i} value={optionValue(o)}>
+                                {optionText(o)}
+                              </option>
+                            ))}
+                          </select>
+                        ) : spec.type === "switch" ? (
+                          <input
+                            type="checkbox"
+                            checked={Boolean(values[key] ?? spec.default)}
+                            onChange={(e) =>
+                              setValues((v) => ({
+                                ...v,
+                                [key]: e.target.checked,
+                              }))
+                            }
+                          />
+                        ) : (
+                          <input
+                            value={String(values[key] ?? spec.default ?? "")}
+                            onChange={(e) =>
+                              setValues((v) => ({
+                                ...v,
+                                [key]: e.target.value,
+                              }))
+                            }
+                          />
+                        )}
+                      </label>
+                    ))
+                  ) : (
+                    <p className="muted">此漫画源没有可配置的设置项。</p>
+                  )}
+                  {sourceSettings.length > 0 && (
+                    <button
+                      className="button primary"
+                      disabled={!!busy}
+                      onClick={() =>
+                        void action("settings", async () => {
+                          await api().settings(source.id, values);
+                          setEditing(undefined);
+                        })
+                      }
+                    >
+                      保存源设置
+                    </button>
+                  )}
+                </section>
+              </AnimatedSourceSettings>
+            </article>
+          );
+        })}
         {!sources.length && (
           <p className="muted">读取仓库后，选择需要的漫画源安装。</p>
         )}
       </div>
-      {editing && (
-        <section className="online-settings">
-          <h3>{editing.name} · 设置</h3>
-          {Object.entries(editing.settings || {}).map(([key, spec]) => (
-            <label key={key}>
-              {spec.title || key}
-              {spec.type === "callback" ? (
-                <button
-                  className="button secondary"
-                  disabled={!!busy}
-                  onClick={() =>
-                    void action("setting-action", () =>
-                      api().settingAction(editing.id, key),
-                    )
-                  }
-                >
-                  {(spec as any).buttonText || spec.title || "执行"}
-                </button>
-              ) : spec.type === "select" ? (
-                <select
-                  value={String(values[key] ?? spec.default ?? "")}
-                  onChange={(e) =>
-                    setValues((v) => ({ ...v, [key]: e.target.value }))
-                  }
-                >
-                  {spec.options?.map((o: any, i: number) => (
-                    <option key={i} value={optionValue(o)}>
-                      {optionText(o)}
-                    </option>
-                  ))}
-                </select>
-              ) : spec.type === "switch" ? (
-                <input
-                  type="checkbox"
-                  checked={Boolean(values[key] ?? spec.default)}
-                  onChange={(e) =>
-                    setValues((v) => ({ ...v, [key]: e.target.checked }))
-                  }
-                />
-              ) : (
-                <input
-                  value={String(values[key] ?? spec.default ?? "")}
-                  onChange={(e) =>
-                    setValues((v) => ({ ...v, [key]: e.target.value }))
-                  }
-                />
-              )}
-            </label>
-          ))}
-          <button
-            className="button primary"
-            disabled={!!busy}
-            onClick={() =>
-              void action("settings", async () => {
-                await api().settings(editing.id, values);
-                setEditing(undefined);
-              })
-            }
-          >
-            保存源设置
-          </button>
-        </section>
-      )}
       <div className="online-download-directory">
         <label>
           下载位置（修改后用于新任务）<small>{directory}</small>
@@ -1558,8 +1626,6 @@ export default function OnlineComics({
       return [];
     }
   });
-  const [draggingSourceId, setDraggingSourceId] = useState<string>();
-  const [dragOverSourceId, setDragOverSourceId] = useState<string>();
   const [sourceQuickMenuOpen, setSourceQuickMenuOpen] = useState(false);
   const [sourceQuickBusy, setSourceQuickBusy] = useState(false);
   const sourceQuickMenu = useRef<HTMLDivElement>(null);
@@ -2287,6 +2353,18 @@ export default function OnlineComics({
     remember(readingResultStart());
     clearSearchPanelHideTimer();
     setSearchPanelVisible(false);
+    if (searchMode === "aggregate" && rawQuery.trim()) {
+      const selected = sources.filter(
+        (source) =>
+          source.enabled &&
+          source.capabilities.search &&
+          aggregateIds.includes(source.id),
+      );
+      if (selected.length === 1) {
+        openSingleSearchPage(selected[0].id, rawQuery);
+        return;
+      }
+    }
     const submittedSource = searchMode === "single" ? sourceId || "" : "";
     const submittedQuery = submittedSource
       ? appendComicAutoLanguageFilter(
@@ -3227,21 +3305,30 @@ export default function OnlineComics({
       setSourceQuickBusy(false);
     }
   }
-  function reorderHomeSources(draggedId: string, targetId: string) {
+  function reorderHomeSources(
+    draggedId: string,
+    targetId: string,
+    insertAfter: boolean,
+  ) {
     if (!draggedId || draggedId === targetId) return;
     const reordered = [...homeSources];
     const from = reordered.findIndex((source) => source.id === draggedId);
-    const to = reordered.findIndex((source) => source.id === targetId);
-    if (from < 0 || to < 0) return;
+    if (from < 0) return;
     const [dragged] = reordered.splice(from, 1);
-    reordered.splice(to, 0, dragged);
+    const targetIndex = reordered.findIndex((source) => source.id === targetId);
+    if (targetIndex < 0) return;
+    reordered.splice(targetIndex + Number(insertAfter), 0, dragged);
+    if (
+      reordered.every((source, index) => source.id === homeSources[index]?.id)
+    )
+      return;
     const order = reordered.map((source) => source.id);
     setSourceOrder(order);
     localStorage.setItem("comic:home-source-order", JSON.stringify(order));
-    setSourceSort("custom");
-    localStorage.setItem("comic:home-source-sort", "custom");
-    setDraggingSourceId(undefined);
-    setDragOverSourceId(undefined);
+    if (sourceSort !== "custom") {
+      setSourceSort("custom");
+      localStorage.setItem("comic:home-source-sort", "custom");
+    }
   }
   function open(card: OnlineComic) {
     const identity = `comic-online-card:${card.sourceId}:${card.comicId}`;
@@ -4075,7 +4162,7 @@ export default function OnlineComics({
       onMouseMove={(event) => {
         const onBackButton =
           event.target instanceof Element &&
-          Boolean(event.target.closest(".comic-single-search-back"));
+          Boolean(event.target.closest(".comic-detail-toolbar .comic-detail-back"));
         if (!onBackButton && event.clientX <= 44) setComicMenuOpen(true);
         if (!onBackButton) onSearchPointerMove(event);
       }}
@@ -4114,14 +4201,7 @@ export default function OnlineComics({
               )
             }
           />
-          {!scope.remoteId &&
-            [
-              "favorites",
-              "history",
-              "readLater",
-              "following",
-              "downloads",
-            ].includes(section) && (
+          {!scope.remoteId && section !== "home" && (
               <header className="comic-detail-toolbar">
                 <button
                   className="text-button comic-detail-back"
@@ -4463,22 +4543,6 @@ export default function OnlineComics({
                   )}
               </header>
             )}
-          {singleResultPage && (
-            <button
-              type="button"
-              className="icon-button comic-single-search-back"
-              aria-label="返回上一页"
-              title="返回上一页"
-              onClick={() => {
-                clearSearchPanelHideTimer();
-                setSearchPanelVisible(false);
-                setComicMenuOpen(false);
-                if (!onBack()) go({ section: "home" }, "replace");
-              }}
-            >
-              <ArrowLeft size={17} />
-            </button>
-          )}
           {detailPage && (
             <header className="comic-detail-toolbar">
               <button
@@ -5151,6 +5215,20 @@ export default function OnlineComics({
             </div>
           ) : section === "home" ? (
             <main className="comic-home">
+              <ReadingHomeSearch
+                kind="漫画"
+                open={() =>
+                  go(
+                    {
+                      section: "search",
+                      search: undefined,
+                      searchMode: "aggregate",
+                      comicSearchId: newComicSearchId(),
+                    },
+                    "root",
+                  )
+                }
+              />
               <section className="comic-home-row comic-home-sources">
                 <div className="comic-home-heading">
                   <button
@@ -5236,76 +5314,16 @@ export default function OnlineComics({
                             全部停用
                           </button>
                         </div>
-                        <div className="comic-source-quick-list">
-                          {homeSources.map((source) => (
-                            <div
-                              className={`comic-source-quick-row${dragOverSourceId === source.id ? " is-drop-target" : ""}${draggingSourceId === source.id ? " is-dragging" : ""}`}
-                              key={source.id}
-                              onDragOver={(event) => {
-                                event.preventDefault();
-                                if (
-                                  draggingSourceId &&
-                                  draggingSourceId !== source.id
-                                )
-                                  setDragOverSourceId(source.id);
-                              }}
-                              onDrop={(event) => {
-                                event.preventDefault();
-                                reorderHomeSources(
-                                  event.dataTransfer.getData("text/plain") ||
-                                    draggingSourceId ||
-                                    "",
-                                  source.id,
-                                );
-                              }}
-                              onDragEnd={() => {
-                                setDraggingSourceId(undefined);
-                                setDragOverSourceId(undefined);
-                              }}
-                            >
-                              <input
-                                id={`comic-source-enabled-${source.id}`}
-                                type="checkbox"
-                                checked={source.enabled}
-                                disabled={sourceQuickBusy}
-                                onChange={(event) =>
-                                  void setQuickSourceEnabled(
-                                    source,
-                                    event.target.checked,
-                                  )
-                                }
-                              />
-                              <label
-                                htmlFor={`comic-source-enabled-${source.id}`}
-                              >
-                                <span>{source.name}</span>
-                                <small>
-                                  {source.enabled ? "已激活" : "未激活"}
-                                </small>
-                              </label>
-                              <button
-                                type="button"
-                                className="comic-source-drag-handle"
-                                draggable={!sourceQuickBusy}
-                                aria-label={`拖动以调整 ${source.name} 的排序`}
-                                title="拖动排序"
-                                onDragStart={(event) => {
-                                  event.dataTransfer.effectAllowed = "move";
-                                  event.dataTransfer.setData(
-                                    "text/plain",
-                                    source.id,
-                                  );
-                                  setDraggingSourceId(source.id);
-                                }}
-                              >
-                                <GripVertical size={17} />
-                              </button>
-                            </div>
-                          ))}
-                          {!homeSources.length && (
-                            <p className="muted">还没有安装漫画源。</p>
-                          )}
-                        </div>
+                        <SourceOrderList
+                          items={homeSources}
+                          idPrefix="comic"
+                          disabled={sourceQuickBusy}
+                          emptyText="还没有安装漫画源。"
+                          onToggle={(source, enabled) => {
+                            void setQuickSourceEnabled(source, enabled);
+                          }}
+                          onReorder={reorderHomeSources}
+                        />
                       </div>
                     )}
                   </div>
@@ -5361,7 +5379,6 @@ export default function OnlineComics({
                     toggleLater={setLater}
                     laterIds={laterIds}
                     contextMenu={openHubMenu}
-                    rich
                   />
                 )}
               </section>

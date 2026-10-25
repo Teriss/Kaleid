@@ -19,6 +19,8 @@ import {
   X,
 } from "lucide-react";
 import type { BrowseMemory, MediaItem } from "../../../shared/types";
+import type { OnlineComic } from "../../../shared/onlineComics";
+import { comicCardTags, comicCardTime } from "../../../shared/comicCard";
 import { Cover, IconButton } from "../components";
 import { act, resource, time, useApp, usePlayback } from "../store";
 import type { PagedMediaSource } from "./source";
@@ -185,6 +187,7 @@ export function Poster({
   select,
   contextMenu,
   removeRecent,
+  richComic = false,
   mode = "wall",
 }: {
   item?: MediaItem;
@@ -198,10 +201,16 @@ export function Poster({
   select?(item: MediaItem, index: number, event?: ReactMouseEvent): void;
   contextMenu?(item: MediaItem, index: number, event: ReactMouseEvent): void;
   removeRecent?(item: MediaItem): void | Promise<void>;
+  richComic?: boolean;
   mode?: "wall" | "spatial" | "grid";
 }) {
   const currentTrackId = usePlayback((state) => state.track?.id);
   const reducedMotion = useApp((state) => state.settings.reducedMotion);
+  const richComicCard =
+    mode === "grid" &&
+    item?.type === "comic" &&
+    !item.kind &&
+    (richComic || Boolean(item.remoteData?.comicRef));
   const showCardLyrics =
     active &&
     mode !== "grid" &&
@@ -210,7 +219,7 @@ export function Poster({
     item.id === currentTrackId;
   return (
     <article
-      className={`poster ${mode}-poster ${active ? "is-focused" : ""} ${selected ? "is-selected" : ""} ${item?.kind === "folder" ? "directory-poster" : ""} ${item?.type === "image" ? "image-poster" : ""} ${mode === "grid" && item?.type === "comic" && item.remoteData?.comicRef ? "comic-result-card" : ""} ${item?.missing ? "is-missing" : ""}`}
+      className={`poster ${mode}-poster ${active ? "is-focused" : ""} ${selected ? "is-selected" : ""} ${item?.kind === "folder" ? "directory-poster" : ""} ${item?.type === "image" ? "image-poster" : ""} ${richComicCard ? "comic-result-card" : ""} ${item?.missing ? "is-missing" : ""}`}
       style={style}
       data-index={index}
       data-media-id={item?.id}
@@ -229,9 +238,7 @@ export function Poster({
         }}
         onContextMenu={(event) => item && contextMenu?.(item, index, event)}
       >
-        {mode === "grid" &&
-        item?.type === "comic" &&
-        item.remoteData?.comicRef ? (
+        {richComicCard && item ? (
           <ComicResultContent item={item} />
         ) : item ? (
           <Cover item={item} />
@@ -246,22 +253,13 @@ export function Poster({
             <Folder size={14} />
           </span>
         )}
-        {!(
-          mode === "grid" &&
-          item?.type === "comic" &&
-          item.remoteData?.comicRef
-        ) && <span className="poster-shade" />}
-        {item &&
-          !(
-            mode === "grid" &&
-            item.type === "comic" &&
-            item.remoteData?.comicRef
-          ) && (
-            <span className="poster-caption">
-              <strong>{item.title}</strong>
-              {active && item.artist && <small>{item.artist}</small>}
-            </span>
-          )}
+        {!richComicCard && <span className="poster-shade" />}
+        {item && !richComicCard && (
+          <span className="poster-caption">
+            <strong>{item.title}</strong>
+            {active && item.artist && <small>{item.artist}</small>}
+          </span>
+        )}
         {item?.type === "video" && item.duration ? (
           <span className="poster-duration">{time(item.duration)}</span>
         ) : null}
@@ -325,73 +323,22 @@ export function Poster({
 }
 
 /**
- * Rich online-comic tile: cover, `[<pages>p]` title, tags, rating and upload
- * time. Shared by the result grid and every hub/section card so all sources
- * present their comics the same way.
+ * Shared rich comic tile: cover, `[<pages>p]` title, tags, rating and upload
+ * time. Local comics use the same layout and leave unavailable metadata empty.
  */
 export function ComicResultContent({ item }: { item: MediaItem }) {
-  const comic = item.remoteData?.comic as
-    | {
-        maxPage?: number;
-        stars?: number;
-        uploadTime?: string;
-        description?: string;
-        tags?: unknown;
-        tagDisplay?: {
-          namespace: string;
-          tags: { value: string; label: string }[];
-        }[];
-      }
-    | undefined;
+  const comic = item.remoteData?.comic as OnlineComic | undefined;
   const maxPage =
     typeof comic?.maxPage === "number" && comic.maxPage > 0
       ? comic.maxPage
       : undefined;
-  const translatedTags = comic?.tagDisplay
-    ?.filter(
-      (group) =>
-        !/^(category|categories|uploader|upload.?time|time|pages|max.?page)$/i.test(
-          group.namespace,
-        ),
-    )
-    .flatMap((group) =>
-      group.tags.map((tag) => ({ value: tag.value, label: tag.label })),
-    );
-  const rawTags = Array.isArray(comic?.tags)
-    ? comic.tags
-        .filter((tag): tag is string => typeof tag === "string")
-        .map((tag) => ({
-          value: tag,
-          label: tag.split(":").at(-1)?.replaceAll("_", " ") ?? tag,
-        }))
-    : [];
-  // Keep descriptive tags (language, artist, parody, character, genre) and
-  // leave source metadata such as category/uploader to the detail view.
-  const tags = (translatedTags ?? rawTags)
-    .filter(
-      ({ value }) =>
-        !/^(category|uploader|upload.?time|max.?page):/i.test(value),
-    )
-    .slice(0, 10);
+  const tags = comicCardTags(comic);
+  const subtitle = comic?.subtitle;
   const rating =
     typeof comic?.stars === "number" && Number.isFinite(comic.stars)
       ? Math.max(0, Math.min(5, comic.stars))
       : undefined;
-  // Venera's detailed comic tile also displays the list item's description
-  // below the rating when the detail-only uploadTime field is unavailable.
-  const uploaded = comic?.uploadTime?.trim() || comic?.description?.trim();
-  const date = uploaded ? new Date(uploaded) : undefined;
-  const timeLabel =
-    date && Number.isFinite(date.getTime())
-      ? new Intl.DateTimeFormat("zh-CN", {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-        }).format(date)
-      : uploaded;
+  const timeLabel = comicCardTime(comic);
   const title = `${maxPage ? `[${maxPage}p]` : ""}${item.title.replace(/\s*\n\s*/g, " ").trim()}`;
   return (
     <span className="comic-result-content">
@@ -400,9 +347,9 @@ export function ComicResultContent({ item }: { item: MediaItem }) {
         <strong className="comic-result-title" title={title}>
           {title}
         </strong>
-        {item.artist && (
-          <small className="comic-result-subtitle" title={item.artist}>
-            {item.artist}
+        {subtitle && (
+          <small className="comic-result-subtitle" title={subtitle}>
+            {subtitle}
           </small>
         )}
         <span className="comic-result-tags" aria-label="漫画标签">

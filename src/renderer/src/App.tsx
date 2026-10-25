@@ -45,6 +45,7 @@ import {
 import {
   ParentNavigationStack,
   parentLibraryLocation,
+  readingHubHomeLocation,
   type NavigationSnapshot,
   type NavigationMode,
   type NavigationSurface,
@@ -771,6 +772,11 @@ export default function App() {
     else navigate({ view });
   }
   function popParentPage() {
+    const home = readingHubHomeLocation(scopeRef.current);
+    if (home) {
+      navigate(home, true, false, "root");
+      return true;
+    }
     if (!parentStackRollback.current)
       parentStackRollback.current = parents.current.snapshot();
     const parent = parents.current.pop();

@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, type Settings } from "./types";
+import { normalizeNetworkProxy } from "./networkProxy";
 import {
   nearestReaderTheme,
   READER_THEME_IDS,
@@ -56,6 +57,7 @@ export function normalizeStoredSettings(input: unknown): Settings {
     ...DEFAULT_SETTINGS,
     ...current,
     ...normalizeReaderSettings(stored),
+    networkProxy: normalizeNetworkProxy(stored.networkProxy),
     theme: stored.theme === "light" ? "light" : "dark",
   } as Settings;
 }

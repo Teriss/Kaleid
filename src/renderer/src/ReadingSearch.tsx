@@ -38,6 +38,14 @@ export function useReadingSearchPanel(route: {
   useEffect(() => {
     clearSearchPanelHideTimer();
     setSearchPanelVisible(false);
+    if (
+      route.section === "search" &&
+      route.mode === "aggregate" &&
+      !route.remoteId
+    ) {
+      const frame = requestAnimationFrame(() => searchInput.current?.focus());
+      return () => cancelAnimationFrame(frame);
+    }
   }, [route.section, route.remoteId, route.mode, route.sourceId, route.pageId]);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {

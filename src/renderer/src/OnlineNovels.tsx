@@ -19,7 +19,6 @@ import {
   Copy,
   FolderDown,
   FolderOpen,
-  GripVertical,
   Heart,
   Home,
   Info,
@@ -51,9 +50,11 @@ import { Cover, IconButton, Modal } from "./components";
 import { act, report, useApp } from "./store";
 import NovelViewer from "./NovelViewer";
 import { useExternalMediaSource } from "./layouts/source";
+import SourceOrderList from "./SourceOrderList";
 import type { LayoutProps } from "./layouts/shared";
 import {
   ReadingHubCards,
+  ReadingHomeSearch,
   ReadingHubMenu,
   ReadingDetailSkeleton,
   HomeSectionToggle,
@@ -416,7 +417,6 @@ export default function OnlineNovels({
     preference<string[]>("home-source-order", []),
   );
   const [sourceBusy, setSourceBusy] = useState(false);
-  const [draggingSource, setDraggingSource] = useState<string>();
   const [collapsedHome, setCollapsedHome] = useState<Record<string, boolean>>(
     () => preference("home-collapsed", {}),
   );
@@ -540,6 +540,33 @@ export default function OnlineNovels({
   }, [sources, sourceSort, sourceOrder]);
   const persist = (key: string, value: unknown) =>
     localStorage.setItem(`novel:${key}`, JSON.stringify(value));
+  const reorderHomeSources = (
+    draggedId: string,
+    targetId: string,
+    insertAfter: boolean,
+  ) => {
+    if (!draggedId || draggedId === targetId) return;
+    const reordered = [...homeSources];
+    const draggedIndex = reordered.findIndex(
+      (source) => source.id === draggedId,
+    );
+    if (draggedIndex < 0) return;
+    const [dragged] = reordered.splice(draggedIndex, 1);
+    const targetIndex = reordered.findIndex((source) => source.id === targetId);
+    if (targetIndex < 0) return;
+    reordered.splice(targetIndex + Number(insertAfter), 0, dragged);
+    if (
+      reordered.every((source, index) => source.id === homeSources[index]?.id)
+    )
+      return;
+    const order = reordered.map((source) => source.id);
+    setSourceOrder(order);
+    persist("home-source-order", order);
+    if (sourceSort !== "custom") {
+      setSourceSort("custom");
+      persist("home-source-sort", "custom");
+    }
+  };
   const toggleHome = (key: string) =>
     setCollapsedHome((old) => {
       const next = { ...old, [key]: !old[key] };
@@ -1309,14 +1336,28 @@ export default function OnlineNovels({
     setSearchHistory(history);
     persist("search-history", history);
     persist("search-sources", aggregateIds);
+    const selected = sources.filter(
+      (source) =>
+        source.enabled &&
+        source.capabilities.search &&
+        aggregateIds.includes(source.id),
+    );
+    const directSource =
+      searchSource === "all" && selected.length === 1
+        ? selected[0].id
+        : undefined;
+    const targetSource =
+      directSource || (searchSource === "all" ? undefined : searchSource);
     go({
       section: "search",
       search: term.trim(),
-      novelSearchSources: searchSource === "all" ? aggregateIds : undefined,
-      searchMode: searchSource === "all" ? "aggregate" : "single",
-      providerId: searchSource === "all" ? undefined : searchSource,
+      novelSearchSources: targetSource ? undefined : aggregateIds,
+      searchMode: targetSource ? "single" : "aggregate",
+      providerId: targetSource,
       novelPage: 1,
-      novelSearchId: scope.novelSearchId || newReadingSearchId(),
+      novelSearchId: directSource
+        ? newReadingSearchId()
+        : scope.novelSearchId || newReadingSearchId(),
     });
     clearSearchPanelHideTimer();
     setSearchPanelVisible(false);
@@ -1638,6 +1679,19 @@ export default function OnlineNovels({
           className="comic-home"
           onScroll={(event) => rememberScroll(event.currentTarget)}
         >
+          <ReadingHomeSearch
+            kind="小说"
+            open={() =>
+              go(
+                {
+                  section: "search",
+                  providerId: sourceId,
+                  searchMode: "aggregate",
+                },
+                "root",
+              )
+            }
+          />
           <section className="comic-home-row comic-home-sources">
             <div className="comic-home-heading">
               <button
@@ -1709,73 +1763,16 @@ export default function OnlineNovels({
                         全部停用
                       </button>
                     </div>
-                    <div className="comic-source-quick-list">
-                      {homeSources.map((source) => (
-                        <div
-                          className={`comic-source-quick-row${draggingSource === source.id ? " is-dragging" : ""}`}
-                          key={source.id}
-                          onDragOver={(event) => event.preventDefault()}
-                          onDrop={(event) => {
-                            event.preventDefault();
-                            const id = event.dataTransfer.getData("text/plain");
-                            if (
-                              !sources.some((s) => s.id === id) ||
-                              id === source.id
-                            )
-                              return;
-                            const order = homeSources
-                              .map((s) => s.id)
-                              .filter((key) => key !== id);
-                            order.splice(
-                              order.indexOf(source.id),
-                              0,
-                              id as NovelSourceId,
-                            );
-                            setSourceOrder(order);
-                            persist("home-source-order", order);
-                            setSourceSort("custom");
-                            persist("home-source-sort", "custom");
-                            setDraggingSource(undefined);
-                          }}
-                        >
-                          <input
-                            id={`novel-source-enabled-${source.id}`}
-                            type="checkbox"
-                            checked={source.enabled}
-                            disabled={sourceBusy}
-                            onChange={(event) =>
-                              void act(() =>
-                                updateSources(
-                                  [source.id],
-                                  event.target.checked,
-                                ),
-                              )
-                            }
-                          />
-                          <label htmlFor={`novel-source-enabled-${source.id}`}>
-                            <span>{source.name}</span>
-                            <small>
-                              {source.enabled ? "已激活" : "未激活"}
-                            </small>
-                          </label>
-                          <button
-                            className="comic-source-drag-handle"
-                            draggable={!sourceBusy}
-                            aria-label={`拖动以调整 ${source.name} 的排序`}
-                            onDragStart={(event) => {
-                              event.dataTransfer.setData(
-                                "text/plain",
-                                source.id,
-                              );
-                              setDraggingSource(source.id);
-                            }}
-                            onDragEnd={() => setDraggingSource(undefined)}
-                          >
-                            <GripVertical size={17} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
+                    <SourceOrderList
+                      items={homeSources}
+                      idPrefix="novel"
+                      disabled={sourceBusy}
+                      emptyText="还没有安装小说源。"
+                      onToggle={(source, enabled) => {
+                        void act(() => updateSources([source.id], enabled));
+                      }}
+                      onReorder={reorderHomeSources}
+                    />
                   </div>
                 )}
               </div>

@@ -41,6 +41,27 @@ export type NavigationSurface =
   "viewer" | "music" | "queue" | "match" | "overlay" | "create" | "manage";
 export type NavigationMode = "root" | "push" | "replace";
 
+/** Reading hub list pages return home; works and chapters keep their parent. */
+export function readingHubHomeLocation(
+  scope: BrowseLocation,
+): BrowseLocation | null {
+  if (
+    (scope.view !== "comic" && scope.view !== "novel") ||
+    !scope.section ||
+    scope.section === "home" ||
+    scope.remoteId ||
+    scope.novelChapterId ||
+    scope.remoteKind === "chapter"
+  )
+    return null;
+  return {
+    view: scope.view,
+    type: scope.view,
+    section: "home",
+    ...(scope.providerId ? { providerId: scope.providerId } : {}),
+  };
+}
+
 /** A restorable page snapshot used by the semantic parent stack. */
 export interface NavigationSnapshot {
   surfaceStack?: NavigationSurface[];

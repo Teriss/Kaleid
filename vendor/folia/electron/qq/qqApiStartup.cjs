@@ -50,6 +50,7 @@ async function startQqApi(options = {}) {
     port,
     stateFilePath,
     authSessionRepository,
+    getRequestAgents,
     moduleId = QQ_API_MODULE,
     loadModule = (target) => require(target),
     env = process.env,
@@ -89,11 +90,113 @@ async function startQqApi(options = {}) {
     // Yingjian adaptation: this in-process server never listens on LAN interfaces.
     const http = require('node:http');
     const listen = http.Server.prototype.listen;
+    let axios;
+    let axiosCreate;
+    if (typeof getRequestAgents === 'function') {
+      const packageJson = require.resolve(`${moduleId}/package.json`);
+      const packageRequire = require('node:module').createRequire(packageJson);
+      axios = packageRequire('axios');
+      axiosCreate = axios.create;
+      const instrumentClient = (client) => {
+        client.interceptors.request.use(async (config) => {
+          const target = new URL(String(config.url || ''), config.baseURL).href;
+          const agents = await getRequestAgents(target);
+          config.proxy = false;
+          if (agents.httpAgent) config.httpAgent = agents.httpAgent;
+          if (agents.httpsAgent) config.httpsAgent = agents.httpsAgent;
+          config.__kaleidProxyDispose = agents.dispose;
+          return config;
+        });
+        const release = (config) => {
+          const dispose = config && config.__kaleidProxyDispose;
+          if (typeof dispose === 'function') dispose();
+          if (config) delete config.__kaleidProxyDispose;
+        };
+        client.interceptors.response.use((response) => {
+          release(response.config);
+          return response;
+        }, (error) => {
+          release(error.config);
+          throw error;
+        });
+        return client;
+      };
+      const createRoutedClient = function (...args) {
+        return instrumentClient(Reflect.apply(axiosCreate, this, args));
+      };
+      axios.create = createRoutedClient;
+
+      // QR login creates an Axios client for each login session, after the HTTP server has
+      // loaded. Wrap the package-private factory so those later clients get the same route.
+      const authHttpClientPath = require('node:path').join(
+        require('node:path').dirname(packageJson),
+        'dist/src/services/auth/httpClient.js',
+      );
+      const authHttpClientModule = packageRequire(authHttpClientPath);
+      const createAuthHttpClient = authHttpClientModule.default;
+      authHttpClientModule.default = function (...args) {
+        const currentCreate = axios.create;
+        axios.create = createRoutedClient;
+        try {
+          return Reflect.apply(createAuthHttpClient, this, args);
+        } finally {
+          axios.create = currentCreate;
+        }
+      };
+
+      const wsPath = packageRequire.resolve('ws');
+      const WebSocket = packageRequire('ws');
+      const routedAgent = new (class extends http.Agent {
+        constructor() {
+          super({ keepAlive: false });
+        }
+        addRequest(request, requestOptions) {
+          const protocol = requestOptions.protocol || 'https:';
+          const hostname = requestOptions.hostname || requestOptions.host;
+          const authority = hostname.includes(':') && !hostname.startsWith('[')
+            ? `[${hostname}]`
+            : hostname;
+          const target = `${protocol}//${authority}${requestOptions.port ? `:${requestOptions.port}` : ''}${requestOptions.path || '/'}`;
+          Promise.resolve(getRequestAgents(target)).then((agents) => {
+            const agent = protocol === 'https:' ? agents.httpsAgent : agents.httpAgent;
+            let socketSeen = false;
+            let released = false;
+            const release = () => {
+              if (released) return;
+              released = true;
+              agents.dispose?.();
+            };
+            request.once('socket', (socket) => {
+              socketSeen = true;
+              socket.once('close', release);
+            });
+            request.once('error', () => { if (!socketSeen) release(); });
+            request.once('close', () => { if (!socketSeen) release(); });
+            request.agent = agent || (protocol === 'https:' ? require('node:https').globalAgent : http.globalAgent);
+            request.agent.addRequest(request, requestOptions);
+          }).catch((error) => request.destroy(error));
+        }
+      })();
+      class RoutedWebSocket extends WebSocket {
+        constructor(address, protocols, options) {
+          if (protocols && typeof protocols === 'object' && !Array.isArray(protocols)) {
+            options = protocols;
+            protocols = undefined;
+          }
+          super(address, protocols, { ...(options || {}), agent: routedAgent });
+        }
+      }
+      const cachedWs = require.cache[wsPath];
+      if (cachedWs) cachedWs.exports = RoutedWebSocket;
+    }
     http.Server.prototype.listen = function (...args) {
       if (args[0] === port && (args[1] === undefined || typeof args[1] === 'function')) args.splice(1, 0, '127.0.0.1');
       return Reflect.apply(listen, this, args);
     };
-    try { qqApi = loadModule(moduleId); } finally { http.Server.prototype.listen = listen; }
+    try { qqApi = loadModule(moduleId); } finally {
+      http.Server.prototype.listen = listen;
+      if (axios && axiosCreate) axios.create = axiosCreate;
+    }
     if (authSessionRepository) {
       const configureAuthSessionRepository = qqApi && (
         qqApi.configureAuthSessionRepository ||

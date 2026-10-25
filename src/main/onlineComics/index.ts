@@ -13,6 +13,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
+import { NETWORK_PROXY_KEYS } from "../../shared/networkProxy";
+import type { NetworkProxyManager } from "../networkProxy";
 import {
   type ComicAddressResult,
   type ComicRepositoryEntry,
@@ -171,6 +173,10 @@ function chapters(
 function clean(value: any): any {
   if (!value || typeof value !== "object") return value;
   if (value.$fn) return undefined;
+  if (value instanceof Map)
+    return {
+      $map: [...value.entries()].map(([key, entry]) => [key, clean(entry)]),
+    };
   if (Array.isArray(value)) return value.map(clean);
   return Object.fromEntries(
     Object.entries(value).map(([k, v]) => [k, clean(v)]),
@@ -181,7 +187,6 @@ const exists = (file: string) =>
     () => true,
     () => false,
   );
-
 export class OnlineComicService implements Omit<
   OnlineComicsAPI,
   "onChange" | "onUI"
@@ -265,6 +270,7 @@ export class OnlineComicService implements Omit<
     private getWindow: () => BrowserWindow | null,
     private here: string,
     readonly root: string,
+    private networkProxy: NetworkProxyManager,
   ) {
     this.store = new OnlineComicStore(path.join(root, "comic-online.sqlite"));
     this.tagTranslations = new ComicTagTranslations(
@@ -279,7 +285,10 @@ export class OnlineComicService implements Omit<
           : { data: {}, settings: {}, logged: false };
         this.sourcesMap.set(record.id, {
           ...record,
-          state: { ...state, cookies: [] },
+          state: {
+            ...state,
+            cookies: Array.isArray(state.cookies) ? state.cookies : [],
+          },
           token: undefined,
         });
       } catch {
@@ -334,6 +343,7 @@ export class OnlineComicService implements Omit<
     if (
       Object.keys(state.data).length ||
       Object.keys(state.settings).length ||
+      (Array.isArray(state.cookies) && state.cookies.length > 0) ||
       state.logged
     ) {
       if (!safeStorage.isEncryptionAvailable())
@@ -343,6 +353,7 @@ export class OnlineComicService implements Omit<
           JSON.stringify({
             data: state.data,
             settings: state.settings,
+            cookies: state.cookies,
             logged: state.logged,
           }),
         )
@@ -442,83 +453,17 @@ export class OnlineComicService implements Omit<
     return source;
   }
   private sourceSession(source: Source) {
-    const ses = session.fromPartition(`persist:comic-${source.id}`);
+    const ses = this.networkProxy.getSession(
+      `persist:comic-${source.id}`,
+      NETWORK_PROXY_KEYS.comic.source(source.id),
+      NETWORK_PROXY_KEYS.comic.default,
+    );
     if (!this.sourceSessionSetup.has(ses)) {
       ses.setPermissionRequestHandler((_contents, _permission, callback) =>
         callback(false),
       );
       ses.setPermissionCheckHandler(() => false);
-      this.sourceSessionSetup.set(ses, ses.setProxy({ mode: "system" }));
-      if (/\bkey\s*=\s*['"]ehentai['"]/.test(source.script)) {
-        ses.webRequest.onBeforeSendHeaders(
-          { urls: ["https://exhentai.org/*"] },
-          (details, callback) => {
-            const headers = details.requestHeaders || {};
-            const requestUrl = new URL(details.url);
-            const safeHeaders = Object.fromEntries(
-              Object.entries(headers).filter(([key]) =>
-                /^(accept|accept-language|referer|user-agent|sec-fetch-.*|sec-ch-ua.*)$/i.test(
-                  key,
-                ),
-              ),
-            );
-            for (const key of Object.keys(safeHeaders)) {
-              if (key.toLowerCase() === "referer") {
-                safeHeaders[key] = String(safeHeaders[key]).split(/[?#]/, 1)[0];
-              }
-            }
-            const cookieNames = String(headers.Cookie || headers.cookie || "")
-              .split(";")
-              .map((pair) => pair.slice(0, pair.indexOf("=")).trim())
-              .filter(Boolean);
-            console.info(
-              "[ExHentai request diagnostics]",
-              JSON.stringify({
-                requestId: details.id,
-                url: `${requestUrl.origin}${requestUrl.pathname}`,
-                queryKeys: [...new Set(requestUrl.searchParams.keys())],
-                method: details.method,
-                resourceType: details.resourceType,
-                headers: safeHeaders,
-                cookieNames,
-              }),
-            );
-            callback({ requestHeaders: details.requestHeaders });
-          },
-        );
-        ses.webRequest.onHeadersReceived(
-          { urls: ["https://exhentai.org/*"] },
-          (details, callback) => {
-            const responseUrl = new URL(details.url);
-            const responseHeaders = details.responseHeaders || {};
-            const safeHeaders = Object.fromEntries(
-              Object.entries(responseHeaders).filter(([key]) =>
-                /^(content-type|content-length|content-encoding|server|cf-ray|cf-mitigated|location|date)$/i.test(
-                  key,
-                ),
-              ),
-            );
-            const setCookieValues = Object.entries(responseHeaders)
-              .filter(([key]) => key.toLowerCase() === "set-cookie")
-              .flatMap(([, value]) => (Array.isArray(value) ? value : [value]));
-            const setCookieNames = setCookieValues
-              .map((value) => String(value).split("=", 1)[0].trim())
-              .filter(Boolean);
-            console.info(
-              "[ExHentai response diagnostics]",
-              JSON.stringify({
-                requestId: details.id,
-                url: `${responseUrl.origin}${responseUrl.pathname}`,
-                queryKeys: [...new Set(responseUrl.searchParams.keys())],
-                statusCode: details.statusCode,
-                headers: safeHeaders,
-                setCookieNames,
-              }),
-            );
-            callback({ responseHeaders: details.responseHeaders });
-          },
-        );
-      }
+      this.sourceSessionSetup.set(ses, this.networkProxy.ready(ses));
     }
     return ses;
   }
@@ -531,7 +476,45 @@ export class OnlineComicService implements Omit<
         source.token = randomUUID();
         this.sourceAbort.get(source.id)?.abort();
         this.sourceAbort.set(source.id, new AbortController());
-        source.state.cookies = await this.sourceSession(source).cookies.get({});
+        const sourceSession = this.sourceSession(source);
+        const persistedCookies = Array.isArray(source.state.cookies)
+          ? source.state.cookies
+          : [];
+        const currentCookies = await sourceSession.cookies.get({});
+        const currentCookieKeys = new Set(
+          currentCookies.map(
+            (cookie) => `${cookie.name}|${cookie.domain}|${cookie.path}`,
+          ),
+        );
+        for (const cookie of persistedCookies) {
+          const domain = String(cookie.domain || "").replace(/^\./, "");
+          const path = cookie.path || "/";
+          if (
+            !domain ||
+            currentCookieKeys.has(`${cookie.name}|${cookie.domain}|${path}`)
+          )
+            continue;
+          if (
+            Number.isFinite(Number(cookie.expirationDate)) &&
+            Number(cookie.expirationDate) <= Date.now() / 1000
+          )
+            continue;
+          await sourceSession.cookies.set({
+            url: `${cookie.secure ? "https" : "http"}://${domain}${path}`,
+            name: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain,
+            path,
+            secure: cookie.secure,
+            httpOnly: cookie.httpOnly,
+            ...(Number.isFinite(Number(cookie.expirationDate))
+              ? { expirationDate: Number(cookie.expirationDate) }
+              : {}),
+            ...(cookie.sameSite ? { sameSite: cookie.sameSite } : {}),
+          });
+          currentCookieKeys.add(`${cookie.name}|${cookie.domain}|${path}`);
+        }
+        source.state.cookies = await sourceSession.cookies.get({});
         try {
           source.meta = await this.rpc(
             source,
@@ -544,7 +527,24 @@ export class OnlineComicService implements Omit<
             const forumCookies = await ses.cookies.get({
               url: "https://forums.e-hentai.org",
             });
+            const exhentaiCookies = await ses.cookies.get({
+              url: "https://exhentai.org",
+            });
+            const exhentaiIgneous = exhentaiCookies.find(
+              (cookie) =>
+                cookie.name === "igneous" &&
+                cookie.value &&
+                !["mystery", "null"].includes(cookie.value.toLowerCase()),
+            );
             for (const cookie of forumCookies) {
+              if (cookie.name === "cf_clearance") continue;
+              if (
+                cookie.name === "igneous" &&
+                (!cookie.value ||
+                  ["mystery", "null"].includes(cookie.value.toLowerCase()))
+              )
+                continue;
+              if (cookie.name === "igneous" && exhentaiIgneous) continue;
               await ses.cookies.set({
                 url: "https://exhentai.org",
                 name: cookie.name,
@@ -651,12 +651,10 @@ export class OnlineComicService implements Omit<
     ses: ReturnType<typeof session.fromPartition>,
     url: string,
     init: RequestInit,
-    diagnostics = false,
   ) {
     // Venera's `http_client: dart:io` selects a native HTTP stack. Use Node's
     // native fetch when the OS route is direct, while keeping cookies in this
-    // source's Electron Session. For PAC/system proxy routes retain Electron's
-    // session transport so the configured proxy is still honored.
+    // source's Electron Session. For proxy routes retain Electron's transport.
     const proxy = (await ses.resolveProxy(url)).split(/[;,]/, 1)[0].trim();
     if (proxy && proxy.toUpperCase() !== "DIRECT")
       return ses.fetch(url, {
@@ -693,29 +691,6 @@ export class OnlineComicService implements Omit<
           "cookie",
           [...cookies].map(([key, value]) => `${key}=${value}`).join("; "),
         );
-      if (diagnostics) {
-        const requestUrl = new URL(currentUrl);
-        const safeHeaders = Object.fromEntries(
-          [...headers.entries()].filter(([key]) =>
-            /^(accept|accept-language|referer|user-agent|sec-fetch-.*|sec-ch-ua.*)$/i.test(
-              key,
-            ),
-          ),
-        );
-        if (safeHeaders.referer)
-          safeHeaders.referer = safeHeaders.referer.split(/[?#]/, 1)[0];
-        console.info(
-          "[ExHentai request diagnostics]",
-          JSON.stringify({
-            transport: "native-http",
-            url: `${requestUrl.origin}${requestUrl.pathname}`,
-            queryKeys: [...new Set(requestUrl.searchParams.keys())],
-            method,
-            headers: safeHeaders,
-            cookieNames: [...cookies.keys()],
-          }),
-        );
-      }
       const response = await fetch(currentUrl, {
         method,
         headers,
@@ -723,33 +698,6 @@ export class OnlineComicService implements Omit<
         signal: init.signal,
         redirect: "manual",
       });
-      if (diagnostics) {
-        const responseUrl = new URL(currentUrl);
-        const safeHeaders = Object.fromEntries(
-          [...response.headers.entries()].filter(([key]) =>
-            /^(content-type|content-length|content-encoding|server|cf-ray|cf-mitigated|location|date)$/i.test(
-              key,
-            ),
-          ),
-        );
-        const responseHeaders = response.headers as Headers & {
-          getSetCookie?: () => string[];
-        };
-        const setCookieNames = (responseHeaders.getSetCookie?.() || [])
-          .map((value) => value.split("=", 1)[0].trim())
-          .filter(Boolean);
-        console.info(
-          "[ExHentai response diagnostics]",
-          JSON.stringify({
-            transport: "native-http",
-            url: `${responseUrl.origin}${responseUrl.pathname}`,
-            queryKeys: [...new Set(responseUrl.searchParams.keys())],
-            statusCode: response.status,
-            headers: safeHeaders,
-            setCookieNames,
-          }),
-        );
-      }
       const responseHeaders = response.headers as Headers & {
         getSetCookie?: () => string[];
       };
@@ -846,43 +794,6 @@ export class OnlineComicService implements Omit<
         const cookies = new Map(
           storedCookies.map((cookie) => [cookie.name, cookie.value]),
         );
-        if (
-          source.meta.key === "ehentai" &&
-          new URL(url).hostname === "exhentai.org"
-        ) {
-          const proxyRoute = (await ses.resolveProxy(url))
-            .split(/[;,]/, 1)[0]
-            .trim();
-          console.info(
-            "[ExHentai session diagnostics]",
-            JSON.stringify({
-              url: `${new URL(url).origin}${new URL(url).pathname}`,
-              queryKeys: [...new Set(new URL(url).searchParams.keys())],
-              proxyRoute: proxyRoute.toUpperCase().startsWith("DIRECT")
-                ? "direct"
-                : "proxy",
-              sourceRequestedTransport: prepared.httpClient || "default",
-              selectedTransport:
-                prepared.httpClient === "dart:io" &&
-                (proxyRoute.toUpperCase().startsWith("DIRECT") || !proxyRoute)
-                  ? "native-http"
-                  : "electron-session",
-              cookies: storedCookies.map((cookie) => ({
-                name: cookie.name,
-                domain: cookie.domain,
-                path: cookie.path,
-                secure: cookie.secure,
-                httpOnly: cookie.httpOnly,
-                sameSite: cookie.sameSite,
-                expirationDate: cookie.expirationDate,
-              })),
-              explicitCookieNames: (headers.get("cookie") || "")
-                .split(";")
-                .map((pair) => pair.slice(0, pair.indexOf("=")).trim())
-                .filter(Boolean),
-            }),
-          );
-        }
         for (const pair of (headers.get("cookie") || "").split(";")) {
           const equal = pair.indexOf("=");
           if (equal > 0)
@@ -971,7 +882,6 @@ export class OnlineComicService implements Omit<
                 body: ["GET", "HEAD"].includes(method) ? undefined : body,
                 signal,
               },
-              source.meta.key === "ehentai",
             )
           : await ses.fetch(url, {
               method,
@@ -1003,22 +913,6 @@ export class OnlineComicService implements Omit<
           }
         }
         const contentBytes = Uint8Array.from(Buffer.concat(chunks));
-        if (
-          source.meta.key === "ehentai" &&
-          new URL(url).hostname === "exhentai.org"
-        ) {
-          const responseUrl = new URL(url);
-          console.info(
-            "[ExHentai response body diagnostics]",
-            JSON.stringify({
-              transport: useNativeHttp ? "native-http" : "electron-session",
-              url: `${responseUrl.origin}${responseUrl.pathname}`,
-              queryKeys: [...new Set(responseUrl.searchParams.keys())],
-              statusCode: response.status,
-              bodyBytes: contentBytes.byteLength,
-            }),
-          );
-        }
         const data = contentBytes.slice().buffer;
         const responseHeaders = Object.fromEntries(response.headers);
         const jsonResponse = /\bjson\b/i.test(
@@ -1264,17 +1158,29 @@ export class OnlineComicService implements Omit<
   };
   repository = async (address: string): Promise<ComicRepositoryEntry[]> => {
     const url = sourceURL(address);
-    const response = await session
-      .fromPartition("comic-repositories")
-      .fetch(url, { signal: AbortSignal.timeout(30000), cache: "no-store" });
+    const repositorySession = this.networkProxy.getSession(
+      "comic-repositories",
+      NETWORK_PROXY_KEYS.comic.repositories,
+    );
+    await this.networkProxy.ready(repositorySession);
+    const response = await repositorySession.fetch(url, {
+      signal: AbortSignal.timeout(30000),
+      cache: "no-store",
+    });
     if (!response.ok) throw new Error(`源仓库请求失败 (${response.status})`);
     return this.parseRepository(url, await response.text());
   };
   openAddress = async (address: string): Promise<ComicAddressResult> => {
     const url = sourceURL(address);
-    const response = await session
-      .fromPartition("comic-repositories")
-      .fetch(url, { signal: AbortSignal.timeout(30000), cache: "no-store" });
+    const repositorySession = this.networkProxy.getSession(
+      "comic-repositories",
+      NETWORK_PROXY_KEYS.comic.repositories,
+    );
+    await this.networkProxy.ready(repositorySession);
+    const response = await repositorySession.fetch(url, {
+      signal: AbortSignal.timeout(30000),
+      cache: "no-store",
+    });
     if (!response.ok) throw new Error(`源地址请求失败 (${response.status})`);
     const text = await response.text();
     if (text.length > 4 * 1024 * 1024) throw new Error("源文件超过 4 MiB");
@@ -1317,12 +1223,15 @@ export class OnlineComicService implements Omit<
     );
   };
   private async script(url: string) {
-    const r = await session
-      .fromPartition("comic-repositories")
-      .fetch(sourceURL(url), {
-        signal: AbortSignal.timeout(30000),
-        cache: "no-store",
-      });
+    const repositorySession = this.networkProxy.getSession(
+      "comic-repositories",
+      NETWORK_PROXY_KEYS.comic.repositories,
+    );
+    await this.networkProxy.ready(repositorySession);
+    const r = await repositorySession.fetch(sourceURL(url), {
+      signal: AbortSignal.timeout(30000),
+      cache: "no-store",
+    });
     if (!r.ok) throw new Error(`源脚本请求失败 (${r.status})`);
     const text = await r.text();
     if (text.length > 4 * 1024 * 1024) throw new Error("源脚本过大");
@@ -1689,9 +1598,10 @@ export class OnlineComicService implements Omit<
     return `media://comic/${token}`;
   }
   private comic(id: string, raw: any): OnlineComic {
+    const comicId = String(raw.id ?? raw.comicId);
     const comic: OnlineComic = {
       sourceId: id,
-      comicId: String(raw.id ?? raw.comicId),
+      comicId,
       title: String(raw.title || "未命名漫画"),
       subtitle: raw.subtitle || raw.subTitle,
       description: raw.description,
@@ -2080,7 +1990,24 @@ export class OnlineComicService implements Omit<
         "account.loginWithCookies.validate",
         [values],
       );
-      if (!valid) throw new Error("Cookie 验证失败");
+      if (!valid) {
+        const cookies = await this.sourceSession(s).cookies.get({
+          url: "https://exhentai.org",
+        });
+        const installedMemberId = cookies.some(
+          (cookie) => cookie.name === "ipb_member_id" && cookie.value,
+        );
+        const installedPassHash = cookies.some(
+          (cookie) => cookie.name === "ipb_pass_hash" && cookie.value,
+        );
+        if (
+          !values[0]?.trim() ||
+          !values[1]?.trim() ||
+          !installedMemberId ||
+          !installedPassHash
+        )
+          throw new Error("Cookie 验证失败，Cookie 未成功写入 ExHentai 会话");
+      }
     } else if (kind === "webview") await this.webLogin(s);
     else throw new Error("不支持的登录方式");
     if (s.token !== token || !s.enabled || this.sourcesMap.get(id) !== s)
@@ -3081,11 +3008,13 @@ export class OnlineComicService implements Omit<
 export function installOnlineComics(
   getWindow: () => BrowserWindow | null,
   here: string,
+  networkProxy: NetworkProxyManager,
 ) {
   const service = new OnlineComicService(
     getWindow,
     here,
     app.getPath("userData"),
+    networkProxy,
   );
   const allowed = new Set<keyof OnlineComicsAPI>([
     "sources",

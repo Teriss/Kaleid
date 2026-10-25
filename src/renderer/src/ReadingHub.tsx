@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ChevronRight,
   LoaderCircle,
+  Search,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -52,6 +53,27 @@ export function ReadingResults({
       <SpatialGrid {...props} forceCarousel={single || layout === "carousel"} />
     );
   return alternate || <StandardGrid {...props} />;
+}
+
+export function ReadingHomeSearch({
+  kind,
+  open,
+}: {
+  kind: "漫画" | "小说";
+  open(): void;
+}) {
+  return (
+    <button
+      type="button"
+      className="reading-home-search"
+      aria-label={`搜索${kind}`}
+      onClick={open}
+    >
+      <Search size={18} />
+      <span>搜索{kind}</span>
+      <small>聚合搜索</small>
+    </button>
+  );
 }
 export function ReadingDetailHero({
   source,

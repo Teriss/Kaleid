@@ -222,6 +222,7 @@ const isSignedIn = cookies => cookies.some(cookie => cookie.name === 'SAPISID' &
 function createBrowserSignIn({
   spawn = childProcess.spawn, exists = fs.existsSync, platform = process.platform, env = process.env, now = Date.now,
   log = (...args) => console.log(...args), warn = (...args) => console.warn(...args),
+  proxyArgs = () => [],
   // `mark(dir)` makes the folder and puts the app's mark into it; `remove(dir)` is one pass of
   // its removal. `execFile` and `kill` are Node's, for the processes an earlier run left.
   mark = dir => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, FOLDER_MARK), ''); },
@@ -275,7 +276,7 @@ function createBrowserSignIn({
     let child = null;
     try {
       mark(profileDir);
-      child = start(browserPath, [`--user-data-dir=${profileDir}`, '--no-first-run', '--no-default-browser-check', SIGN_IN_URL], { stdio: 'ignore', detached: true });
+      child = start(browserPath, [...proxyArgs(), `--user-data-dir=${profileDir}`, '--no-first-run', '--no-default-browser-check', SIGN_IN_URL], { stdio: 'ignore', detached: true });
     } catch (error) {
       warn(`[Ytm] The sign-in folder could not be marked as the app's own (${error?.code ?? 'unknown'}); no browser was started`);
     }

@@ -226,6 +226,37 @@ export class SourceRuntime {
     // shared-domain cookies instead, and retain ExHentai-specific cookies.
     await this.evaluate(`(() => {
       if (__source.key !== 'ehentai') return;
+      // The list layout preference belongs to the requesting browser session.
+      // The app's isolated source session can receive Minimal/Compact markup
+      // even when the user's regular browser is set to Extended. The E-Hentai
+      // parser only reads tags from Extended rows, so explicitly request that
+      // layout for every gallery-list page.
+      if (typeof __source.getGalleries === 'function') {
+        const getGalleries = __source.getGalleries.bind(__source);
+        __source.getGalleries = async function(url, ...args) {
+          let target = String(url || this.baseUrl);
+          if (target.indexOf('://') < 0) {
+            const base = String(this.baseUrl || '').endsWith('/')
+              ? String(this.baseUrl).slice(0, -1)
+              : String(this.baseUrl || '');
+            target = base + (target.startsWith('/') ? target : '/' + target);
+          }
+          const hashIndex = target.indexOf('#');
+          const fragment = hashIndex < 0 ? '' : target.slice(hashIndex);
+          const request = hashIndex < 0 ? target : target.slice(0, hashIndex);
+          const host = request.split('/')[2]?.split(':')[0]?.toLowerCase();
+          if (host === 'e-hentai.org' || host === 'exhentai.org') {
+            const queryIndex = request.indexOf('?');
+            const path = queryIndex < 0 ? request : request.slice(0, queryIndex);
+            const query = queryIndex < 0 ? '' : request.slice(queryIndex + 1);
+            const params = query.split('&').filter(Boolean)
+              .filter((param) => param.split('=', 1)[0].toLowerCase() !== 'inline_set');
+            params.push('inline_set=dm_e');
+            target = path + '?' + params.join('&') + fragment;
+          }
+          return getGalleries(target, ...args);
+        };
+      }
       const webLogin = __source.account?.loginWithWebview;
       if (webLogin && typeof webLogin.onLoginSuccess === 'function') {
         const original = webLogin.onLoginSuccess;

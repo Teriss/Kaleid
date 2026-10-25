@@ -206,6 +206,7 @@ export interface ComicContext {
   bookmarks: ComicBookmark[];
 }
 export interface Settings {
+  networkProxy: import("./networkProxy").NetworkProxySettings;
   theme: "dark" | "light";
   videoAutoPictureInPicture: boolean;
   comicAutoLanguageFilters: Record<string, "chinese" | "english" | "japanese">;
@@ -229,6 +230,11 @@ export interface Settings {
   lyricsPresentation: "split" | "fullscreen" | "wall";
 }
 export const DEFAULT_SETTINGS: Settings = {
+  networkProxy: {
+    profiles: [],
+    defaultRoute: { mode: "system" },
+    rules: {},
+  },
   theme: "dark",
   videoAutoPictureInPicture: false,
   comicAutoLanguageFilters: {},

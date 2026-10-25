@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 import {
   ArrowLeft,
   BookmarkPlus,
@@ -335,6 +336,27 @@ export default function ComicViewer({
     clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => setTools(false), 3000);
   }
+  function refreshAutoHide() {
+    if (!tools) return;
+    clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setTools(false), 3000);
+  }
+  function toggleTools() {
+    const visible = !tools;
+    setTools(visible);
+    clearTimeout(hideTimer.current);
+    if (visible)
+      hideTimer.current = setTimeout(() => setTools(false), 3000);
+  }
+  function toggleToolsAtCenter(event: MouseEvent<HTMLDivElement>) {
+    if ((event.target as HTMLElement).closest("button, a, input, select"))
+      return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - bounds.left) / bounds.width;
+    const y = (event.clientY - bounds.top) / bounds.height;
+    if (x < 0.25 || x > 0.75 || y < 0.2 || y > 0.8) return;
+    toggleTools();
+  }
   useEffect(() => {
     wake();
   }, []);
@@ -668,10 +690,9 @@ export default function ComicViewer({
   return (
     <div
       className={`viewer comic-viewer ${visibleTools ? "" : "comic-quiet"}`}
-      onPointerMove={wake}
-      onFocusCapture={wake}
+      onPointerMove={refreshAutoHide}
     >
-      <header className="comic-chrome comic-header" onPointerEnter={wake}>
+      <header className="comic-chrome comic-header">
         <button
           className="back-button"
           onClick={() => {
@@ -704,7 +725,11 @@ export default function ComicViewer({
           </IconButton>
         </div>
       </header>
-      <div className="comic-viewport" ref={viewport}>
+      <div
+        className="comic-viewport"
+        ref={viewport}
+        onClick={toggleToolsAtCenter}
+      >
         {loading ? (
           <div className="comic-message" role="status">
             正在读取漫画…

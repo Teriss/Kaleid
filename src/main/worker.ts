@@ -49,6 +49,77 @@ const port = (
     };
   }
 ).parentPort;
+const networkReplies = new Map<
+  string,
+  {
+    resolve(value: any): void;
+    reject(error: Error): void;
+    timer: ReturnType<typeof setTimeout>;
+    signal?: AbortSignal;
+    abort?: () => void;
+  }
+>();
+let networkRequestId = 0;
+function networkFetch(
+  input: string,
+  init: RequestInit = {},
+  key = "music.matching",
+) {
+  const requestId = `worker-network-${++networkRequestId}`;
+  return new Promise<Response>((resolve, reject) => {
+    const finish = () => {
+      const pending = networkReplies.get(requestId);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      pending.signal?.removeEventListener("abort", pending.abort!);
+      networkReplies.delete(requestId);
+    };
+    const timer = setTimeout(() => {
+      port.postMessage({ event: "network-cancel", requestId });
+      finish();
+      reject(new Error("在线请求超时"));
+    }, 35000);
+    const abort = () => {
+      port.postMessage({ event: "network-cancel", requestId });
+      finish();
+      reject(new DOMException("在线请求已取消", "AbortError"));
+    };
+    networkReplies.set(requestId, {
+      resolve: (message) => {
+        finish();
+        if (message.error) reject(new Error(message.error));
+        else
+          resolve(
+            new Response(
+              [204, 205, 304].includes(message.status) ? null : message.body,
+              {
+                status: message.status,
+                headers: message.headers,
+              },
+            ),
+          );
+      },
+      reject,
+      timer,
+      signal: init.signal ?? undefined,
+      abort,
+    });
+    if (init.signal?.aborted) {
+      abort();
+      return;
+    }
+    init.signal?.addEventListener("abort", abort, { once: true });
+    port.postMessage({
+      event: "network-request",
+      requestId,
+      key,
+      url: input,
+      method: init.method,
+      headers: Object.fromEntries(new Headers(init.headers).entries()),
+      body: typeof init.body === "string" ? init.body : undefined,
+    });
+  });
+}
 const dataDir = process.env.MEDIA_BROWSER_DATA!;
 await fs.mkdir(path.join(dataDir, "cache"), { recursive: true });
 const db = new DatabaseSync(path.join(dataDir, "library.sqlite"));
@@ -1643,7 +1714,7 @@ function cleanMusicText(value: unknown, max = 300) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 async function fetchMusicJson(url: string) {
-  const response = await fetch(url, {
+  const response = await networkFetch(url, {
     signal: AbortSignal.timeout(9000),
     headers: { "user-agent": "Mozilla/5.0 MediaBrowser/0.3" },
   });
@@ -2186,7 +2257,9 @@ const handlers: Record<string, (...args: any[]) => any> = {
         )
       )
         throw new Error("封面来源不受支持");
-      const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      const response = await networkFetch(url.href, {
+        signal: AbortSignal.timeout(10000),
+      });
       const contentType = response.headers.get("content-type") ?? "";
       const length = Number(response.headers.get("content-length") ?? 0);
       if (
@@ -2522,8 +2595,24 @@ const handlers: Record<string, (...args: any[]) => any> = {
 };
 port.on(
   "message",
-  async ({ data }: { data: { id: number; method: string; args: any[] } }) => {
+  async ({
+    data,
+  }: {
+    data: {
+      id?: number;
+      method?: string;
+      args?: any[];
+      event?: string;
+      requestId?: string;
+    };
+  }) => {
+    if (data?.event === "network-response") {
+      networkReplies.get(String(data.requestId))?.resolve(data);
+      return;
+    }
     try {
+      if (!data.method || !Array.isArray(data.args))
+        throw new Error("无效操作");
       const fn = handlers[data.method];
       if (!fn) throw new Error("未知操作");
       const result = await fn(...data.args);

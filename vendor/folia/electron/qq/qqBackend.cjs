@@ -131,6 +131,7 @@ function createQqBackend({
   broadcast,
   networkRecorder = null,
   getStateFilePath = () => null,
+  getRequestAgents,
   authSessionRepository,
   logger = console,
   now = Date.now,
@@ -163,7 +164,7 @@ function createQqBackend({
 
       handle = await step('listen', async (note) => {
         const stateFilePath = getStateFilePath();
-        const started = await startServer({ port, stateFilePath, authSessionRepository });
+        const started = await startServer({ port, stateFilePath, authSessionRepository, getRequestAgents });
         note({ port, stateFile: stateFilePath || null, sessionRepository: authSessionRepository?.kind ?? null });
         return started;
       });
