@@ -786,7 +786,9 @@ void app
         )
           throw new Error("无效查询");
       }
-      return call(method, ...args);
+      const result = await call(method, ...args);
+      if (method === "opened") window?.webContents.send("library:history-change");
+      return result;
     });
     ipcMain.handle("app:theme", (event) => {
       if (

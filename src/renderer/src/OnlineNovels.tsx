@@ -938,6 +938,21 @@ export default function OnlineNovels({
   }, []);
   useEffect(() => {
     let live = true;
+    const unsubscribe = window.media.onHistoryChange(() => {
+      void window.media
+        .query({ type: "novel", limit: 12, sort: "recent" })
+        .then((result) => {
+          if (live) setLocalItems(result.items);
+        })
+        .catch(() => {});
+    });
+    return () => {
+      live = false;
+      unsubscribe();
+    };
+  }, []);
+  useEffect(() => {
+    let live = true;
     void Promise.all([
       api().sources(),
       api().downloads(),

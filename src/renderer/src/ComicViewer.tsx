@@ -6,7 +6,6 @@ import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
-  Expand,
   FolderOpen,
   Grid2X2,
   Minus,
@@ -151,7 +150,16 @@ export default function ComicViewer({
     [contextWarning, setContextWarning] = useState(""),
     [reload, setReload] = useState(0);
   const [page, setPage] = useState(0),
-    [zoom, setZoom] = useState(1),
+    [zoom, setZoom] = useState(() => {
+      try {
+        const saved = Number(localStorage.getItem("kaleid.comicZoom"));
+        return Number.isFinite(saved) && saved >= 0.5 && saved <= 5
+          ? saved
+          : 1;
+      } catch {
+        return 1;
+      }
+    }),
     [pan, setPan] = useState({ x: 0, y: 0 });
   const [tools, setTools] = useState(true),
     [panel, setPanel] = useState<
@@ -201,6 +209,13 @@ export default function ComicViewer({
     [item.id, item.resourceVersion, reload],
   );
   useEffect(() => () => imageCache.dispose(), [imageCache]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("kaleid.comicZoom", String(zoom));
+    } catch {
+      // Keep zoom usable when browser storage is unavailable.
+    }
+  }, [zoom]);
   function flush() {
     clearTimeout(saveTimer.current);
     saveTimer.current = undefined;
@@ -371,8 +386,6 @@ export default function ComicViewer({
   function updatePreferences(changes: Partial<ComicPreferences>) {
     const next = { ...prefs, ...changes };
     setPrefs(next);
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
     prefsSave.current = prefsSave.current
       .then(() => adapter.preferences(item, next))
       .catch(report);
@@ -386,8 +399,6 @@ export default function ComicViewer({
     if (!pages.length) return;
     index = Math.max(0, Math.min(pages.length - 1, index));
     setPage(index);
-    setPan({ x: 0, y: 0 });
-    setZoom(1);
     remember(index, offset);
     if (scroll.current && prefs.mode === "scroll") {
       scroll.current.scrollTop =
@@ -475,10 +486,7 @@ export default function ComicViewer({
       if (event.key === "Escape") {
         event.preventDefault();
         if (panel) setPanel(null);
-        else if (zoom !== 1) {
-          setZoom(1);
-          setPan({ x: 0, y: 0 });
-        } else {
+        else {
           void flush();
           close();
         }
@@ -553,10 +561,7 @@ export default function ComicViewer({
     };
     const appBack = () => {
       if (panel) setPanel(null);
-      else if (zoom !== 1) {
-        setZoom(1);
-        setPan({ x: 0, y: 0 });
-      } else {
+      else {
         void flush();
         close();
       }
@@ -720,9 +725,6 @@ export default function ComicViewer({
         </div>
         <div className="comic-actions">
           {toolbar}
-          <IconButton label="漫画全屏" onClick={() => void toggleFullscreen()}>
-            <Expand size={18} />
-          </IconButton>
         </div>
       </header>
       <div
@@ -925,6 +927,13 @@ export default function ComicViewer({
           <ChevronRight size={18} />
         </IconButton>
       </footer>
+      {panel && (
+        <button
+          className="comic-drawer-backdrop"
+          aria-label="点击关闭侧栏"
+          onClick={() => setPanel(null)}
+        />
+      )}
       {panel && (
         <aside
           className="comic-drawer"

@@ -2178,8 +2178,22 @@ export default function OnlineComics({
         void refresh().catch(report);
       }, 180);
     });
+    const unsubscribeHistory = window.media.onHistoryChange(() => {
+      void window.media
+        .query({
+          type: "comic",
+          recent: true,
+          sort: "recent",
+          limit: 200,
+        })
+        .then((result) => {
+          if (mounted.current) setLocalRecent(result.items || []);
+        })
+        .catch(() => {});
+    });
     return () => {
       unsubscribe();
+      unsubscribeHistory();
       if (fullTimer) clearTimeout(fullTimer);
       if (silentTimer) clearTimeout(silentTimer);
     };
