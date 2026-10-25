@@ -139,6 +139,33 @@ const optionText = (o: any) =>
 const mapEntries = (value: any): [string, any][] =>
   value?.$map || Object.entries(value || {});
 
+const normalizedComicSearchText = (comic: OnlineComic) => {
+  const values: string[] = [];
+  const collect = (value: unknown, depth = 0) => {
+    if (depth > 4 || value == null) return;
+    if (typeof value === "string" || typeof value === "number") {
+      values.push(String(value));
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) collect(entry, depth + 1);
+      return;
+    }
+    if (typeof value === "object")
+      for (const [key, entry] of Object.entries(value)) {
+        values.push(key);
+        collect(entry, depth + 1);
+      }
+  };
+  collect(comic.title);
+  collect(comic.subtitle);
+  collect(comic.description);
+  collect((comic as OnlineComicDetails).uploader);
+  collect(comic.tags);
+  collect(comic.tagDisplay);
+  return values.join("\n").normalize("NFKC").toLocaleLowerCase();
+};
+
 type HubCardItem = OnlineComic | MediaItem;
 type AggregateSearchGroup = {
   source: ComicSourceInfo;
@@ -1542,6 +1569,11 @@ export default function OnlineComics({
     [onlineHistory, setOnlineHistory] = useState<OnlineComic[]>([]),
     [onlineFavorites, setOnlineFavorites] = useState<OnlineComic[]>([]),
     [downloaded, setDownloaded] = useState<OnlineComic[]>([]);
+  const [downloadSourceFilter, setDownloadSourceFilter] = useState("all");
+  const [downloadSort, setDownloadSort] = useState("download-newest");
+  const [downloadSearchOpen, setDownloadSearchOpen] = useState(false);
+  const [downloadSearch, setDownloadSearch] = useState("");
+  const downloadSearchInput = useRef<HTMLInputElement>(null);
   // loadPage reads these through refs so a refresh cannot rebuild its identity.
   const laterItemsRef = useRef(laterItems);
   laterItemsRef.current = laterItems;
@@ -1744,6 +1776,147 @@ export default function OnlineComics({
     loadingMore = useRef(false);
   const section =
     scope.section === "siteFavorites" ? "favorites" : scope.section || "home";
+  const downloadSearchIndex = useMemo(
+    () =>
+      section === "downloads"
+        ? cards.map((comic) => ({
+            comic,
+            text: normalizedComicSearchText(comic),
+          }))
+        : [],
+    [cards, section],
+  );
+  const downloadTimes = useMemo(() => {
+    const times = new Map<string, number>();
+    for (const task of tasks) {
+      if (task.state !== "completed") continue;
+      const key = `${task.sourceId}\u0000${task.comicId}`;
+      times.set(key, Math.max(times.get(key) || 0, task.createdAt || 0));
+    }
+    return times;
+  }, [tasks]);
+  const latestDownloadedCards = useMemo(
+    () =>
+      downloaded
+        .map((comic, index) => ({ comic, index }))
+        .sort(
+          (a, b) =>
+            (downloadTimes.get(`${b.comic.sourceId}\u0000${b.comic.comicId}`) || 0) -
+              (downloadTimes.get(`${a.comic.sourceId}\u0000${a.comic.comicId}`) || 0) ||
+            a.index - b.index,
+        )
+        .map(({ comic }) => comic),
+    [downloaded, downloadTimes],
+  );
+  const downloadSearchTerms = useMemo(
+    () =>
+      downloadSearch
+        .normalize("NFKC")
+        .toLocaleLowerCase()
+        .trim()
+        .split(/\s+/u)
+        .filter(Boolean),
+    [downloadSearch],
+  );
+  const downloadSearchMatches = useMemo(() => {
+    const matches: typeof downloadSearchIndex = [];
+    const counts = new Map<string, number>();
+    for (const entry of downloadSearchIndex) {
+      if (!downloadSearchTerms.every((term) => entry.text.includes(term)))
+        continue;
+      matches.push(entry);
+      counts.set(entry.comic.sourceId, (counts.get(entry.comic.sourceId) || 0) + 1);
+    }
+    return { matches, counts };
+  }, [downloadSearchIndex, downloadSearchTerms]);
+  const downloadSourceTabs = useMemo(() => {
+    const sourceOrder = new Map(sources.map((source, index) => [source.id, index]));
+    return [...new Set(cards.map((comic) => comic.sourceId))]
+      .map((id) => ({
+        id,
+        count: downloadSearchMatches.counts.get(id) || 0,
+        name: sources.find((source) => source.id === id)?.name || "未知来源",
+      }))
+      .sort((a, b) => {
+        const orderA = sourceOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+        const orderB = sourceOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+        return orderA - orderB || a.name.localeCompare(b.name, "zh-CN");
+      });
+  }, [cards, sources, downloadSearchMatches]);
+  const filteredDownloadedCards = useMemo(
+    () => {
+      const results = downloadSearchMatches.matches
+        .filter(({ comic }) =>
+          downloadSourceFilter === "all" ||
+          comic.sourceId === downloadSourceFilter,
+        )
+        .map(({ comic }, index) => ({ comic, index }));
+      results.sort((a, b) => {
+        const titleOrder = a.comic.title.localeCompare(b.comic.title, "zh-CN");
+        switch (downloadSort) {
+          case "download-oldest":
+            return (
+              (downloadTimes.get(`${a.comic.sourceId}\u0000${a.comic.comicId}`) || 0) -
+                (downloadTimes.get(`${b.comic.sourceId}\u0000${b.comic.comicId}`) || 0) ||
+              a.index - b.index
+            );
+          case "title-asc":
+            return titleOrder || a.index - b.index;
+          case "title-desc":
+            return -titleOrder || a.index - b.index;
+          case "pages-desc":
+            return (b.comic.maxPage || 0) - (a.comic.maxPage || 0) || a.index - b.index;
+          case "rating-desc":
+            return (b.comic.stars || 0) - (a.comic.stars || 0) || a.index - b.index;
+          case "download-newest":
+          default:
+            return (
+              (downloadTimes.get(`${b.comic.sourceId}\u0000${b.comic.comicId}`) || 0) -
+                (downloadTimes.get(`${a.comic.sourceId}\u0000${a.comic.comicId}`) || 0) ||
+              a.index - b.index
+            );
+        }
+      });
+      return results.map(({ comic }) => comic);
+    },
+    [
+      downloadSearchMatches,
+      downloadSourceFilter,
+      downloadSort,
+      downloadTimes,
+    ],
+  );
+  useEffect(() => {
+    if (section !== "downloads" || scope.remoteId) {
+      setDownloadSearchOpen(false);
+      setDownloadSearch("");
+      setDownloadSourceFilter("all");
+      return;
+    }
+    const shortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || document.querySelector("dialog[open]"))
+        return;
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        event.key.toLowerCase() === "f"
+      ) {
+        event.preventDefault();
+        setDownloadSearchOpen(true);
+        requestAnimationFrame(() => {
+          downloadSearchInput.current?.focus();
+          downloadSearchInput.current?.select();
+        });
+      } else if (event.key === "Escape" && downloadSearchOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        setDownloadSearch("");
+        setDownloadSearchOpen(false);
+      }
+    };
+    window.addEventListener("keydown", shortcut, true);
+    return () => window.removeEventListener("keydown", shortcut, true);
+  }, [section, scope.remoteId, downloadSearchOpen]);
   const searchMode = scope.searchMode || "aggregate";
   const detailKey = `${scope.providerId || ""}\u0000${scope.remoteId || ""}`;
   const detailKeyRef = useRef(detailKey);
@@ -2367,6 +2540,8 @@ export default function OnlineComics({
     ? singleSearchPage.cards
     : section === "search"
       ? EMPTY_COMICS
+      : section === "downloads"
+        ? filteredDownloadedCards
       : cards;
   const displayPageInfo = singleResultPage
     ? singleSearchPage.pageInfo
@@ -4269,7 +4444,90 @@ export default function OnlineComics({
                   <ArrowLeft size={17} />
                 </button>
                 <strong>{title}</strong>
-                <span className="spacer" />
+                {section === "downloads" ? (
+                  <div
+                    className="comic-download-source-tabs"
+                    role="tablist"
+                    aria-label="已下载来源分类"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={downloadSourceFilter === "all"}
+                      className={downloadSourceFilter === "all" ? "active" : ""}
+                      onClick={() => setDownloadSourceFilter("all")}
+                    >
+                      全部 <span>{downloadSearchMatches.matches.length}</span>
+                    </button>
+                    {downloadSourceTabs.map((source) => (
+                      <button
+                        type="button"
+                        role="tab"
+                        key={source.id}
+                        aria-selected={downloadSourceFilter === source.id}
+                        className={
+                          downloadSourceFilter === source.id ? "active" : ""
+                        }
+                        onClick={() => setDownloadSourceFilter(source.id)}
+                      >
+                        {source.name} <span>{source.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="spacer" />
+                )}
+                {section === "downloads" && (
+                  <div className="comic-download-search">
+                    {downloadSearchOpen && (
+                      <input
+                        ref={downloadSearchInput}
+                        type="search"
+                        aria-label="搜索已下载漫画"
+                        placeholder="搜索标题、标签等 · Ctrl+F"
+                        value={downloadSearch}
+                        onChange={(event) => setDownloadSearch(event.target.value)}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      className={`text-button${downloadSearchOpen ? " active" : ""}`}
+                      aria-label={
+                        downloadSearchOpen ? "关闭已下载搜索" : "搜索已下载漫画"
+                      }
+                      aria-expanded={downloadSearchOpen}
+                      title="搜索已下载漫画（Ctrl+F）"
+                      onClick={() => {
+                        if (downloadSearchOpen) {
+                          setDownloadSearch("");
+                          setDownloadSearchOpen(false);
+                        } else {
+                          setDownloadSearchOpen(true);
+                          requestAnimationFrame(() =>
+                            downloadSearchInput.current?.focus(),
+                          );
+                        }
+                      }}
+                    >
+                      <Search size={16} />
+                    </button>
+                  </div>
+                )}
+                {section === "downloads" && (
+                  <select
+                    className="comic-download-sort"
+                    aria-label="已下载漫画排序方式"
+                    value={downloadSort}
+                    onChange={(event) => setDownloadSort(event.target.value)}
+                  >
+                    <option value="download-newest">下载时间（新到旧）</option>
+                    <option value="download-oldest">下载时间（旧到新）</option>
+                    <option value="title-asc">标题升序</option>
+                    <option value="title-desc">标题降序</option>
+                    <option value="pages-desc">页数（多到少）</option>
+                    <option value="rating-desc">评分（高到低）</option>
+                  </select>
+                )}
                 {section === "downloads" && (
                   <button
                     className="text-button download-queue-trigger"
@@ -5568,7 +5826,7 @@ export default function OnlineComics({
                 </div>
                 {!collapsedHome.downloads && (
                   <ComicCards
-                    items={downloaded.slice(0, 10)}
+                    items={latestDownloadedCards.slice(0, 10)}
                     open={(item) =>
                       isOnlineComic(item)
                         ? void readDownloaded(item)
@@ -5664,9 +5922,13 @@ export default function OnlineComics({
                 ) && (
                   <div className="online-empty">
                     <p>
-                      {!sources.length
-                        ? "还没有漫画源。请从漫画首页的漫画源入口安装。"
-                        : "暂无漫画"}
+                      {section === "downloads"
+                        ? downloadSearchTerms.length
+                          ? "没有匹配的已下载漫画"
+                          : "此来源暂无已下载漫画"
+                        : !sources.length
+                          ? "还没有漫画源。请从漫画首页的漫画源入口安装。"
+                          : "暂无漫画"}
                     </p>
                   </div>
                 )}

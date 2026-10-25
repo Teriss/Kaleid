@@ -51,7 +51,6 @@ import {
 import { NovelStore } from "./store";
 import {
   folderName,
-  insideFolder,
   movePath,
   pruneEmptyFolders,
 } from "../downloadPaths";
@@ -831,6 +830,11 @@ export class OnlineNovelService {
       }
     }
     const tasks = this.store.all<SavedTask>("download");
+    const downloaded = new Set(
+      tasks
+        .filter((task) => task.state === "completed")
+        .map((task) => task.id),
+    );
     return this.present({
       ...saved!,
       offline,
@@ -842,10 +846,8 @@ export class OnlineNovelService {
           "progress",
           chapterKey({ ...ref, chapterId: c.id }),
         )?.progress,
-        downloaded: tasks.some(
-          (t) =>
-            t.id === chapterKey({ ...ref, chapterId: c.id }) &&
-            t.state === "completed",
+        downloaded: downloaded.has(
+          chapterKey({ ...ref, chapterId: c.id }),
         ),
       })),
     });
@@ -859,7 +861,7 @@ export class OnlineNovelService {
       throw new Error("无效书架栏目");
     const refs =
       section === "downloads"
-        ? this.store
+      ? this.store
             .all<SavedTask>("download")
             .filter((t) => t.state === "completed")
         : this.store.all<OnlineNovelRef>(section);
@@ -868,9 +870,11 @@ export class OnlineNovelService {
       const key = bookKey(ref);
       if (seen.has(key)) return [];
       seen.add(key);
+      // Summary records omit chapter bodies, keeping large completed libraries
+      // cheap to enumerate. Older records without a summary still fall back.
       const novel =
-        this.store.get<SavedNovel>("book", key) ||
-        this.store.get<OnlineNovel>("summary", key);
+        this.store.get<OnlineNovel>("summary", key) ||
+        this.store.get<SavedNovel>("book", key);
       return novel
         ? [
             this.present({
@@ -1193,21 +1197,40 @@ export class OnlineNovelService {
     return directory;
   }
   /** `<download root>/<source name>/<novel title>`, unique per novel. */
-  private novelFolderFor(root: string, ref: OnlineNovelRef, title: string) {
+  private taskFolderOccupants(tasks: SavedTask[]) {
+    const occupants = new Map<string, Set<string>>();
+    for (const task of tasks) {
+      let folder = task.bundle?.file || task.directory;
+      while (folder) {
+        const key = folder.replace(/\\/g, "/").toLowerCase();
+        const ids = occupants.get(key) || new Set<string>();
+        ids.add(task.novelId);
+        occupants.set(key, ids);
+        const parent = path.dirname(folder);
+        if (parent === folder) break;
+        folder = parent;
+      }
+    }
+    return occupants;
+  }
+  private novelFolderFor(
+    root: string,
+    ref: OnlineNovelRef,
+    title: string,
+    tasks = this.store.all<SavedTask>("download"),
+    occupants = this.taskFolderOccupants(tasks),
+  ) {
     const base = path.join(
       root,
       folderName(this.sourcesById.get(ref.sourceId)?.meta.name, "未知来源"),
       folderName(title, bookKey(ref).slice(0, 8)),
     );
-    const tasks = this.store.all<SavedTask>("download");
     // Two novels of one source may share a title; never mix their chapters.
     let folder = base;
     for (let index = 2; index < 100; index++) {
-      const clash = tasks.some(
-        (task) =>
-          task.novelId !== ref.novelId &&
-          insideFolder(task.bundle?.file || task.directory, folder),
-      );
+      const clash = [
+        ...(occupants.get(folder.replace(/\\/g, "/").toLowerCase()) || []),
+      ].some((novelId) => novelId !== ref.novelId);
       if (!clash) return folder;
       folder = `${base} (${index})`;
     }
@@ -1331,16 +1354,25 @@ export class OnlineNovelService {
       return;
     }
     const folders = new Map<string, string>();
+    const claimedFolders = new Set<string>();
+    const occupants = this.taskFolderOccupants(all);
     const folderFor = (task: SavedTask) => {
       const key = bookKey(task);
       let folder = folders.get(key);
       if (!folder) {
-        const base = this.novelFolderFor(root, task, task.novelTitle);
+        const base = this.novelFolderFor(
+          root,
+          task,
+          task.novelTitle,
+          all,
+          occupants,
+        );
         // Tasks are a snapshot, so guard against two novels claiming one name.
         folder = base;
-        for (let index = 2; [...folders.values()].includes(folder); index++)
+        for (let index = 2; claimedFolders.has(folder.toLowerCase()); index++)
           folder = `${base} (${index})`;
         folders.set(key, folder);
+        claimedFolders.add(folder.toLowerCase());
       }
       return folder;
     };

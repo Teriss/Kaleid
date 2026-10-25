@@ -1825,23 +1825,32 @@ export class OnlineComicService implements Omit<
     this.store.set("comic", comicKey(ref), saved);
     this.changed();
   };
-  library = async (section: "shelf" | "history" | "downloads") =>
-    this.store
+  library = async (section: "shelf" | "history" | "downloads") => {
+    // Download records can contain thousands of page descriptors. Read and
+    // parse them once, then filter comics by a set of completed comic keys.
+    // Calling store.all("download") inside the per-comic filter makes this
+    // quadratic and can freeze the UI for large migrated libraries.
+    const downloaded =
+      section === "downloads"
+        ? new Set(
+            this.store
+              .all<Download>("download")
+              .filter((download) => download.state === "completed")
+              .map(comicKey),
+          )
+        : undefined;
+    return this.store
       .all<SavedComic>("comic")
-      .filter((c) =>
+      .filter((comic) =>
         section === "shelf"
-          ? c.favorite
+          ? comic.favorite
           : section === "history"
-            ? c.opened
-            : this.store
-                .all<Download>("download")
-                .some(
-                  (d) =>
-                    comicKey(d) === comicKey(c.ref) && d.state === "completed",
-                ),
+            ? comic.opened
+            : downloaded!.has(comicKey(comic.ref)),
       )
       .sort((a, b) => (b.opened || 0) - (a.opened || 0))
-      .map((c) => c.details);
+      .map((comic) => comic.details);
+  };
   removeHistory = async (ref?: OnlineComicRef) => {
     for (const record of this.store.all<SavedComic>("comic")) {
       if (!record.opened) continue;

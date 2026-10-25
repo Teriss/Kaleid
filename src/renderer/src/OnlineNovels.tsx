@@ -309,6 +309,154 @@ export default function OnlineNovels({
     [tasks, setTasks] = useState<NovelDownloadTask[]>([]),
     [follows, setFollows] = useState<NovelFollowState[]>([]);
   const [downloadQueueOpen, setDownloadQueueOpen] = useState(false);
+  const [downloadSourceFilter, setDownloadSourceFilter] = useState("all");
+  const [downloadSearchOpen, setDownloadSearchOpen] = useState(false);
+  const [downloadSearch, setDownloadSearch] = useState("");
+  const [downloadSort, setDownloadSort] = useState("download-newest");
+  const downloadSearchInput = useRef<HTMLInputElement>(null);
+  const downloadedNovels = lists.downloads || [];
+  const downloadSearchIndex = useMemo(
+    () =>
+      section === "downloads"
+        ? downloadedNovels.map((novel) => ({
+            novel,
+            text: [
+              novel.title,
+              novel.author,
+              novel.description,
+              novel.updatedAt,
+              novel.novelId,
+            ]
+              .filter(Boolean)
+              .join("\n")
+              .normalize("NFKC")
+              .toLocaleLowerCase(),
+          }))
+        : [],
+    [downloadedNovels, section],
+  );
+  const downloadSearchTerms = useMemo(
+    () =>
+      downloadSearch
+        .normalize("NFKC")
+        .toLocaleLowerCase()
+        .trim()
+        .split(/\s+/u)
+        .filter(Boolean),
+    [downloadSearch],
+  );
+  const downloadSearchMatches = useMemo(() => {
+    const matches: typeof downloadSearchIndex = [];
+    const counts = new Map<string, number>();
+    for (const entry of downloadSearchIndex) {
+      if (!downloadSearchTerms.every((term) => entry.text.includes(term)))
+        continue;
+      matches.push(entry);
+      counts.set(entry.novel.sourceId, (counts.get(entry.novel.sourceId) || 0) + 1);
+    }
+    return { matches, counts };
+  }, [downloadSearchIndex, downloadSearchTerms]);
+  const downloadSourceTabs = useMemo(() => {
+    const sourceOrder = new Map(sources.map((source, index) => [source.id, index]));
+    return [...new Set(downloadedNovels.map((novel) => novel.sourceId))]
+      .map((id) => ({
+        id,
+        count: downloadSearchMatches.counts.get(id) || 0,
+        name: sources.find((source) => source.id === id)?.name || "未知来源",
+      }))
+      .sort((a, b) => {
+        const orderA = sourceOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+        const orderB = sourceOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+        return orderA - orderB || a.name.localeCompare(b.name, "zh-CN");
+      });
+  }, [downloadedNovels, sources, downloadSearchMatches]);
+  const downloadTimes = useMemo(() => {
+    const times = new Map<string, number>();
+    for (const task of tasks) {
+      if (task.state !== "completed") continue;
+      const key = `${task.sourceId}\u0000${task.novelId}`;
+      times.set(key, Math.max(times.get(key) || 0, task.createdAt || 0));
+    }
+    return times;
+  }, [tasks]);
+  const latestDownloadedNovels = useMemo(
+    () =>
+      downloadedNovels
+        .map((novel, index) => ({ novel, index }))
+        .sort((a, b) => {
+          const timeA =
+            downloadTimes.get(`${a.novel.sourceId}\u0000${a.novel.novelId}`) || 0;
+          const timeB =
+            downloadTimes.get(`${b.novel.sourceId}\u0000${b.novel.novelId}`) || 0;
+          return timeB - timeA || a.index - b.index;
+        })
+        .map(({ novel }) => novel),
+    [downloadedNovels, downloadTimes],
+  );
+  const filteredDownloadedNovels = useMemo(() => {
+    const results = downloadSearchMatches.matches
+      .filter(
+        ({ novel }) =>
+          downloadSourceFilter === "all" ||
+          novel.sourceId === downloadSourceFilter,
+      )
+      .map(({ novel }, index) => ({ novel, index }));
+    results.sort((a, b) => {
+      const titleOrder = a.novel.title.localeCompare(b.novel.title, "zh-CN");
+      const timeA =
+        downloadTimes.get(`${a.novel.sourceId}\u0000${a.novel.novelId}`) || 0;
+      const timeB =
+        downloadTimes.get(`${b.novel.sourceId}\u0000${b.novel.novelId}`) || 0;
+      switch (downloadSort) {
+        case "download-oldest":
+          return timeA - timeB || a.index - b.index;
+        case "title-asc":
+          return titleOrder || a.index - b.index;
+        case "title-desc":
+          return -titleOrder || a.index - b.index;
+        case "download-newest":
+        default:
+          return timeB - timeA || a.index - b.index;
+      }
+    });
+    return results.map(({ novel }) => novel);
+  }, [
+    downloadSearchMatches,
+    downloadSourceFilter,
+    downloadSort,
+    downloadTimes,
+  ]);
+  useEffect(() => {
+    if (section !== "downloads") {
+      setDownloadSearchOpen(false);
+      setDownloadSearch("");
+      setDownloadSourceFilter("all");
+      return;
+    }
+    const shortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || document.querySelector("dialog[open]"))
+        return;
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        event.key.toLowerCase() === "f"
+      ) {
+        event.preventDefault();
+        setDownloadSearchOpen(true);
+        requestAnimationFrame(() => {
+          downloadSearchInput.current?.focus();
+          downloadSearchInput.current?.select();
+        });
+      } else if (event.key === "Escape" && downloadSearchOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        setDownloadSearch("");
+        setDownloadSearchOpen(false);
+      }
+    };
+    window.addEventListener("keydown", shortcut, true);
+    return () => window.removeEventListener("keydown", shortcut, true);
+  }, [section, downloadSearchOpen]);
   const downloadQueueGroups = useMemo<DownloadQueueGroup[]>(() => {
     const groups = new Map<string, NovelDownloadTask[]>();
     for (const task of tasks) {
@@ -1426,6 +1574,10 @@ export default function OnlineNovels({
     "following",
     "downloads",
   ].includes(section);
+  const libraryNovels =
+    section === "downloads"
+      ? filteredDownloadedNovels
+      : lists[section] || [];
   const favorites = (novel: OnlineNovel) =>
     void act(() => updateHub("shelf", novel, !has("shelf", novel)));
   async function exportEpub() {
@@ -1513,7 +1665,7 @@ export default function OnlineNovels({
   };
   const cards = (key: string, items = lists[key] || []) => (
     <ReadingHubCards
-      items={items.slice(0, 10)}
+      items={(key === "downloads" ? latestDownloadedNovels : items).slice(0, 10)}
       identity={(n) => `${n.sourceId}:${n.novelId}`}
       title={(n) => n.title}
       cover={(n) => <Cover item={cardItem(n)} />}
@@ -1690,7 +1842,82 @@ export default function OnlineNovels({
               : NOVEL_MENU_ITEMS.find((item) => item.section === section)
                   ?.label || "发现"}
           </strong>
-          <span className="spacer" />
+          {section === "downloads" && !ref ? (
+            <div
+              className="comic-download-source-tabs"
+              role="tablist"
+              aria-label="已下载来源分类"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={downloadSourceFilter === "all"}
+                className={downloadSourceFilter === "all" ? "active" : ""}
+                onClick={() => setDownloadSourceFilter("all")}
+              >
+                全部 <span>{downloadSearchMatches.matches.length}</span>
+              </button>
+              {downloadSourceTabs.map((source) => (
+                <button
+                  type="button"
+                  role="tab"
+                  key={source.id}
+                  aria-selected={downloadSourceFilter === source.id}
+                  className={downloadSourceFilter === source.id ? "active" : ""}
+                  onClick={() => setDownloadSourceFilter(source.id)}
+                >
+                  {source.name} <span>{source.count}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span className="spacer" />
+          )}
+          {section === "downloads" && !ref && (
+            <div className="comic-download-search">
+              {downloadSearchOpen && (
+                <input
+                  ref={downloadSearchInput}
+                  type="search"
+                  aria-label="搜索已下载小说"
+                  placeholder="搜索标题、作者、简介等 · Ctrl+F"
+                  value={downloadSearch}
+                  onChange={(event) => setDownloadSearch(event.target.value)}
+                />
+              )}
+              <button
+                type="button"
+                className={`text-button${downloadSearchOpen ? " active" : ""}`}
+                aria-label={downloadSearchOpen ? "关闭已下载搜索" : "搜索已下载小说"}
+                aria-expanded={downloadSearchOpen}
+                title="搜索已下载小说（Ctrl+F）"
+                onClick={() => {
+                  if (downloadSearchOpen) {
+                    setDownloadSearch("");
+                    setDownloadSearchOpen(false);
+                  } else {
+                    setDownloadSearchOpen(true);
+                    requestAnimationFrame(() => downloadSearchInput.current?.focus());
+                  }
+                }}
+              >
+                <Search size={16} />
+              </button>
+            </div>
+          )}
+          {section === "downloads" && !ref && (
+            <select
+              className="comic-download-sort"
+              aria-label="已下载小说排序方式"
+              value={downloadSort}
+              onChange={(event) => setDownloadSort(event.target.value)}
+            >
+              <option value="download-newest">下载时间（新到旧）</option>
+              <option value="download-oldest">下载时间（旧到新）</option>
+              <option value="title-asc">标题升序</option>
+              <option value="title-desc">标题降序</option>
+            </select>
+          )}
           {section === "downloads" && !ref && (
             <button
               className="text-button download-queue-trigger"
@@ -2649,10 +2876,10 @@ export default function OnlineNovels({
                 ))}
             </>
           )}
-          {!!lists[section]?.length ? (
+          {!!libraryNovels.length ? (
             <Results
               key={section}
-              novels={lists[section]}
+              novels={libraryNovels}
               memory={memory}
               remember={remember}
               open={
@@ -2667,7 +2894,13 @@ export default function OnlineNovels({
               }
             />
           ) : (
-            <p className="novel-muted">此栏目暂无小说</p>
+            <p className="novel-muted">
+              {section === "downloads"
+                ? downloadSearchTerms.length
+                  ? "没有匹配的已下载小说"
+                  : "此来源暂无已下载小说"
+                : "此栏目暂无小说"}
+            </p>
           )}
         </>
       )}
