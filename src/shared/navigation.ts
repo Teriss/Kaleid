@@ -41,14 +41,14 @@ export type NavigationSurface =
   "viewer" | "music" | "queue" | "match" | "overlay" | "create" | "manage";
 export type NavigationMode = "root" | "push" | "replace";
 
-/** Reading hub list pages return home; works and chapters keep their parent. */
+/** Only aggregate search returns home; all other pages follow the parent stack. */
 export function readingHubHomeLocation(
   scope: BrowseLocation,
 ): BrowseLocation | null {
   if (
     (scope.view !== "comic" && scope.view !== "novel") ||
-    !scope.section ||
-    scope.section === "home" ||
+    scope.section !== "search" ||
+    scope.searchMode === "single" ||
     scope.remoteId ||
     scope.novelChapterId ||
     scope.remoteKind === "chapter"
@@ -77,6 +77,74 @@ export interface NavigationSnapshot {
   matchOpen: boolean;
   createType: MediaType | null;
   manageId?: string;
+}
+
+export type ReadingSearchView = "comic" | "novel";
+
+export interface SuspendedSearchSession {
+  view: ReadingSearchView;
+  current: NavigationSnapshot;
+  parents: NavigationSnapshot[];
+}
+
+export function hasSingleSourceSearch(
+  scope: BrowseLocation,
+): scope is BrowseLocation & { view: ReadingSearchView } {
+  return (
+    (scope.view === "comic" || scope.view === "novel") &&
+    scope.section === "search" &&
+    scope.searchMode === "single"
+  );
+}
+
+export function containsSingleSourceSearch(
+  current: BrowseLocation,
+  parents: readonly NavigationSnapshot[],
+) {
+  return (
+    hasSingleSourceSearch(current) ||
+    parents.some((parent) => hasSingleSourceSearch(parent.scope))
+  );
+}
+
+export function leavesAggregateReadingSearch(
+  current: BrowseLocation,
+  next: BrowseLocation,
+) {
+  return (
+    (current.view === "comic" || current.view === "novel") &&
+    current.section === "search" &&
+    current.searchMode !== "single" &&
+    (current.view !== next.view ||
+      current.section !== next.section ||
+      current.searchMode !== next.searchMode ||
+      current.search !== next.search ||
+      current.providerId !== next.providerId)
+  );
+}
+
+/** Keeps one in-memory search visit for each reading type. */
+export class SuspendedSearchSessions {
+  private sessions: Partial<Record<ReadingSearchView, SuspendedSearchSession>> =
+    {};
+
+  has(view: ReadingSearchView) {
+    return Boolean(this.sessions[view]);
+  }
+
+  save(session: SuspendedSearchSession) {
+    this.sessions[session.view] = structuredClone(session);
+  }
+
+  take(view: ReadingSearchView) {
+    const session = this.sessions[view];
+    delete this.sessions[view];
+    return session ? structuredClone(session) : null;
+  }
+
+  clear(view: ReadingSearchView) {
+    delete this.sessions[view];
+  }
 }
 
 function normalizedPath(value: string) {

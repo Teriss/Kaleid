@@ -2,6 +2,36 @@
 export type ReadingResultLayout = "grid" | "archiveShelf" | "carousel";
 export type ReadingResultMode = "pagination" | "waterfall";
 export type ReadingLoadOperation = "replace" | "jump" | "prepend" | "append";
+export function normalizeReadingSearchTerms(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((term): term is string => typeof term === "string")
+    .map((term) => term.trim())
+    .filter((term, index, terms) => term.length > 0 && terms.indexOf(term) === index);
+}
+export function orderReadingSearchHistory(
+  terms: readonly string[],
+  pinned: readonly string[],
+) {
+  const available = new Set(terms);
+  const pinnedTerms = [...new Set(pinned)].filter((term) => available.has(term));
+  const pinnedSet = new Set(pinnedTerms);
+  return [...pinnedTerms, ...terms.filter((term) => !pinnedSet.has(term))];
+}
+export function limitReadingSearchHistory(
+  terms: readonly string[],
+  pinned: readonly string[],
+  maxEntries: number,
+) {
+  const ordered = orderReadingSearchHistory(terms, pinned);
+  const pinnedSet = new Set(pinned);
+  const pinnedTerms = ordered.filter((term) => pinnedSet.has(term));
+  const recentTerms = ordered.filter((term) => !pinnedSet.has(term));
+  return [
+    ...pinnedTerms,
+    ...recentTerms.slice(0, Math.max(0, maxEntries - pinnedTerms.length)),
+  ];
+}
 /** New searches/pages must not inherit the last result's scroll or selection. */
 export function readingResultStart() {
   return {

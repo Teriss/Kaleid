@@ -31,6 +31,7 @@ dist/
 !tests/unit/readerGestures.test.ts
 !tests/unit/onlineNovels.test.ts
 !tests/unit/readingSearch.test.ts
+!tests/unit/navigation.test.ts
 !tests/unit/externalMediaSource.test.ts
 !tests/e2e/
 !tests/e2e/reader.spec.ts

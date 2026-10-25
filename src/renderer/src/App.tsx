@@ -44,11 +44,16 @@ import {
 } from "lucide-react";
 import {
   ParentNavigationStack,
+  SuspendedSearchSessions,
+  containsSingleSourceSearch,
+  hasSingleSourceSearch,
+  leavesAggregateReadingSearch,
   parentLibraryLocation,
   readingHubHomeLocation,
   type NavigationSnapshot,
   type NavigationMode,
   type NavigationSurface,
+  type ReadingSearchView,
 } from "../../shared/navigation";
 import type {
   BrowseMemory,
@@ -177,6 +182,7 @@ export default function App() {
   const [settingsSection, setSettingsSection] = useState("appearance");
   const [musicPreview, setMusicPreview] = useState<MediaItem | null>(null);
   const parents = useRef(new ParentNavigationStack());
+  const suspendedSearches = useRef(new SuspendedSearchSessions());
   const parentStackRollback = useRef<NavigationSnapshot[] | null>(null);
   const restoringNavigation = useRef(false);
   const surfaces = useRef<NavigationSurface[]>([]);
@@ -654,6 +660,43 @@ export default function App() {
           ?.type ??
         currentType,
     };
+    if (booted && !restoring && mode === "root") {
+      const currentScope = scopeRef.current;
+      const currentView =
+        currentScope.view === "comic" || currentScope.view === "novel"
+          ? currentScope.view
+          : null;
+      if (currentView) {
+        const leavingAggregateSearch = leavesAggregateReadingSearch(
+          currentScope,
+          resolved,
+        );
+        const openingAggregateSearch =
+          resolved.view === currentView &&
+          resolved.section === "search" &&
+          resolved.searchMode !== "single";
+        if (leavingAggregateSearch || openingAggregateSearch) {
+          suspendedSearches.current.clear(currentView);
+        } else if (
+          scopeKey(currentScope) !== scopeKey(resolved) &&
+          containsSingleSourceSearch(currentScope, parents.current.snapshot())
+        ) {
+          suspendedSearches.current.save({
+            view: currentView,
+            current: snapshotRef.current(),
+            parents: parents.current.snapshot(),
+          });
+        }
+      }
+    }
+    if (
+      booted &&
+      !restoring &&
+      hasSingleSourceSearch(resolved) &&
+      !containsSingleSourceSearch(scopeRef.current, parents.current.snapshot())
+    ) {
+      suspendedSearches.current.clear(resolved.view);
+    }
     const isComicDetail = (location: BrowseScope) =>
       location.view === "comic" &&
       Boolean(location.remoteId) &&
@@ -808,6 +851,17 @@ export default function App() {
       createType: null,
       manageId: undefined,
     }).catch(report);
+    return true;
+  }
+  function resumeSearch(view: ReadingSearchView) {
+    const session = suspendedSearches.current.take(view);
+    if (!session) return false;
+    void restoreEntry(session.current)
+      .then(() => {
+        parents.current.restore(session.parents);
+        parentStackRollback.current = null;
+      })
+      .catch(report);
     return true;
   }
   function goParent() {
@@ -1906,14 +1960,16 @@ export default function App() {
         active={Boolean(searchTerm)}
         onClick={() =>
           scope.view === "novel"
-            ? navigate({
+            ? resumeSearch("novel") ||
+              navigate({
                 view: "novel",
                 type: "novel",
                 section: "search",
                 searchMode: "aggregate",
               })
             : scope.view === "comic"
-              ? navigate({
+              ? resumeSearch("comic") ||
+                navigate({
                   view: "comic",
                   type: "comic",
                   providerId: scope.providerId,
@@ -2256,6 +2312,7 @@ export default function App() {
               navigate(next, true, false, mode)
             }
             onBack={popParentPage}
+            resumeSearch={() => resumeSearch("novel")}
             memory={memory}
             remember={remember}
             local={() =>
@@ -2276,6 +2333,7 @@ export default function App() {
               navigate(next, true, false, mode)
             }
             onBack={popParentPage}
+            resumeSearch={() => resumeSearch("comic")}
             memory={memory}
             remember={remember}
             local={() =>

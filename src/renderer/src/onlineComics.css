@@ -1373,27 +1373,30 @@
 }
 .comic-search-history-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
 }
 .comic-search-history-item {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  max-width: min(100%, 420px);
+  width: 100%;
   overflow: hidden;
   border: 1px solid var(--app-line);
-  border-radius: 99px;
+  border-radius: 10px;
   background: var(--app-surface);
 }
 .comic-search-history-term {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   padding: 7px 11px;
   color: var(--app-text);
   background: transparent;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.comic-search-history-pin,
 .comic-search-history-remove {
   display: inline-flex;
   flex: 0 0 auto;
@@ -1405,6 +1408,16 @@
   border-radius: 50%;
   color: var(--app-muted);
   background: transparent;
+}
+.comic-search-history-pin {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+.comic-search-history-pin:hover,
+.comic-search-history-pin.is-pinned {
+  color: var(--app-accent);
+  background: color-mix(in srgb, var(--app-accent) 12%, transparent);
 }
 .comic-search-history-remove:hover {
   color: var(--app-text);

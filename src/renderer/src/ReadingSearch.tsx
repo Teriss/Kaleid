@@ -6,7 +6,8 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { ChevronDown, X } from "lucide-react";
+import { ChevronDown, Pin, PinOff, X } from "lucide-react";
+import { orderReadingSearchHistory } from "../../shared/readingSearch";
 import type {
   ReadingResultLayout,
   ReadingResultMode,
@@ -246,21 +247,26 @@ export function ReadingSearchPanel({
 }
 export function ReadingSearchHistory({
   terms,
+  pinned,
   collapsed,
   toggle,
+  togglePin,
   clear,
   remove,
   submit,
   disabled = false,
 }: {
   terms: string[];
+  pinned: string[];
   collapsed: boolean;
   toggle(): void;
+  togglePin(term: string): void;
   clear(): void;
   remove(term: string): void;
   submit(term: string): void;
   disabled?: boolean;
 }) {
+  const orderedTerms = orderReadingSearchHistory(terms, pinned);
   return (
     <section className="comic-search-history" aria-label="搜索历史">
       <div className="comic-search-history-heading">
@@ -272,40 +278,53 @@ export function ReadingSearchHistory({
         >
           <ChevronDown className={collapsed ? "is-collapsed" : ""} size={16} />
           <strong>搜索历史</strong>
-          <span>{terms.length}</span>
+          <span>{orderedTerms.length}</span>
         </button>
         <button
           type="button"
           className="text-button"
-          disabled={!terms.length}
+          disabled={!orderedTerms.length}
           onClick={clear}
         >
           清除全部
         </button>
       </div>
       {!collapsed &&
-        (terms.length ? (
+        (orderedTerms.length ? (
           <div className="comic-search-history-list">
-            {terms.map((term) => (
-              <div className="comic-search-history-item" key={term}>
-                <button
-                  type="button"
-                  className="comic-search-history-term"
-                  disabled={disabled}
-                  onClick={() => submit(term)}
-                >
-                  {term}
-                </button>
-                <button
-                  type="button"
-                  className="comic-search-history-remove"
-                  aria-label={`删除搜索历史：${term}`}
-                  onClick={() => remove(term)}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            ))}
+            {orderedTerms.map((term) => {
+              const isPinned = pinned.includes(term);
+              return (
+                <div className="comic-search-history-item" key={term}>
+                  <button
+                    type="button"
+                    className="comic-search-history-term"
+                    disabled={disabled}
+                    onClick={() => submit(term)}
+                  >
+                    {term}
+                  </button>
+                  <button
+                    type="button"
+                    className={`comic-search-history-pin${isPinned ? " is-pinned" : ""}`}
+                    aria-label={`${isPinned ? "取消收藏" : "收藏"}搜索记录：${term}`}
+                    title={isPinned ? "取消收藏并置后" : "收藏并固定在前面"}
+                    aria-pressed={isPinned}
+                    onClick={() => togglePin(term)}
+                  >
+                    {isPinned ? <Pin size={14} /> : <PinOff size={14} />}
+                  </button>
+                  <button
+                    type="button"
+                    className="comic-search-history-remove"
+                    aria-label={`删除搜索历史：${term}`}
+                    onClick={() => remove(term)}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         ) : (
           <p className="comic-search-history-empty">暂无搜索历史</p>

@@ -92,6 +92,8 @@ import {
   emptyReadingSearchPage,
   readingResultModePatch,
   readingResultStart,
+  normalizeReadingSearchTerms,
+  limitReadingSearchHistory,
   loadReadingSearchPage,
   searchSourcePool,
   type ReadingSearchPage,
@@ -102,6 +104,7 @@ import "./onlineComics.css";
 const api = () => window.media.onlineComics;
 const hub = () => window.media.comicHub;
 const COMIC_SEARCH_HISTORY_KEY = "comic:search-history";
+const COMIC_SEARCH_HISTORY_PINNED_KEY = "comic:search-history-pinned";
 const COMIC_SEARCH_HISTORY_COLLAPSED_KEY = "comic:search-history-collapsed";
 const MAX_COMIC_SEARCH_HISTORY = 30;
 const EMPTY_COMICS: OnlineComic[] = [];
@@ -167,6 +170,7 @@ type ComicDetailRecord = {
   error?: string;
 };
 type SingleSearchPageState = ReadingSearchPage<OnlineComic, ComicSearchPage>;
+let retainedSingleSearchPages: Record<string, SingleSearchPageState> = {};
 const emptySingleSearchPage = (defaults: Partial<SingleSearchPageState> = {}) =>
   emptyReadingSearchPage<OnlineComic, ComicSearchPage>(defaults);
 function singleSearchPageDefaults(
@@ -1445,6 +1449,7 @@ export default function OnlineComics({
   scope,
   navigate,
   onBack,
+  resumeSearch,
   local,
   openLocal,
   openLayout,
@@ -1454,6 +1459,7 @@ export default function OnlineComics({
   scope: BrowseLocation;
   navigate(scope: BrowseLocation, mode?: NavigationMode): void;
   onBack(): boolean;
+  resumeSearch(): boolean;
   local(): void;
   openLocal(item: MediaItem): void;
   openLayout(): void;
@@ -1473,9 +1479,25 @@ export default function OnlineComics({
   const [aggregateTotal, setAggregateTotal] = useState(0);
   const [aggregateBusy, setAggregateBusy] = useState(false);
   const [aggregateError, setAggregateError] = useState("");
-  const [singleSearchPages, setSingleSearchPages] = useState<
+  const [singleSearchPages, setSingleSearchPagesState] = useState<
     Record<string, SingleSearchPageState>
-  >({});
+  >(() => retainedSingleSearchPages);
+  const singleSearchPageStore = useRef(singleSearchPages);
+  const setSingleSearchPages = (
+    update:
+      | Record<string, SingleSearchPageState>
+      | ((
+          pages: Record<string, SingleSearchPageState>,
+        ) => Record<string, SingleSearchPageState>),
+  ) => {
+    const next =
+      typeof update === "function"
+        ? update(singleSearchPageStore.current)
+        : update;
+    singleSearchPageStore.current = next;
+    retainedSingleSearchPages = next;
+    setSingleSearchPagesState(next);
+  };
   const [aggregateRetrying, setAggregateRetrying] = useState<Set<string>>(
     new Set(),
   );
@@ -1653,20 +1675,23 @@ export default function OnlineComics({
       const saved: unknown = JSON.parse(
         localStorage.getItem(COMIC_SEARCH_HISTORY_KEY) || "[]",
       );
-      return Array.isArray(saved)
-        ? saved
-            .filter((term): term is string => typeof term === "string")
-            .map((term) => term.trim())
-            .filter(
-              (term, index, terms) =>
-                term.length > 0 && terms.indexOf(term) === index,
-            )
-            .slice(0, MAX_COMIC_SEARCH_HISTORY)
-        : [];
+      return normalizeReadingSearchTerms(saved).slice(0, MAX_COMIC_SEARCH_HISTORY);
     } catch {
       return [];
     }
   });
+  const [pinnedSearchHistory, setPinnedSearchHistory] = useState<string[]>(
+    () => {
+      try {
+        const pinned = normalizeReadingSearchTerms(
+          JSON.parse(localStorage.getItem(COMIC_SEARCH_HISTORY_PINNED_KEY) || "[]"),
+        );
+        return pinned.filter((term) => searchHistory.includes(term));
+      } catch {
+        return [];
+      }
+    },
+  );
   const searchHistoryRef = useRef(searchHistory);
   searchHistoryRef.current = searchHistory;
   const [searchHistoryCollapsed, setSearchHistoryCollapsed] = useState(() => {
@@ -2248,7 +2273,9 @@ export default function OnlineComics({
     isSingleSearchPage &&
     Boolean(sourceId) &&
     (searchSubmitRevision > 0 ||
-      autoStartSearchPageIds.current.has(singleSearchPageKey)) &&
+      autoStartSearchPageIds.current.has(singleSearchPageKey) ||
+      !singleSearchPage.pageInfo ||
+      singleSearchPage.busy) &&
     !loadedSearchKeys.current.has(singleSearchRequestKey) &&
     (!sourcesLoaded || current?.id === sourceId);
   const updateSingleSearchPage = (patch: Partial<SingleSearchPageState>) => {
@@ -2279,16 +2306,40 @@ export default function OnlineComics({
   const rememberSearch = (term: string) => {
     if (!term) return;
     saveSearchHistory(
-      [term, ...searchHistoryRef.current.filter((item) => item !== term)].slice(
-        0,
+      limitReadingSearchHistory(
+        [term, ...searchHistoryRef.current.filter((item) => item !== term)],
+        pinnedSearchHistory,
         MAX_COMIC_SEARCH_HISTORY,
       ),
     );
   };
   const removeSearchHistoryItem = (term: string) => {
     saveSearchHistory(searchHistoryRef.current.filter((item) => item !== term));
+    const nextPinned = pinnedSearchHistory.filter((item) => item !== term);
+    setPinnedSearchHistory(nextPinned);
+    try {
+      localStorage.setItem(
+        COMIC_SEARCH_HISTORY_PINNED_KEY,
+        JSON.stringify(nextPinned),
+      );
+    } catch {}
   };
-  const clearSearchHistory = () => saveSearchHistory([]);
+  const togglePinnedSearchHistory = (term: string) => {
+    const next = pinnedSearchHistory.includes(term)
+      ? pinnedSearchHistory.filter((item) => item !== term)
+      : [...pinnedSearchHistory, term];
+    setPinnedSearchHistory(next);
+    try {
+      localStorage.setItem(COMIC_SEARCH_HISTORY_PINNED_KEY, JSON.stringify(next));
+    } catch {}
+  };
+  const clearSearchHistory = () => {
+    saveSearchHistory([]);
+    setPinnedSearchHistory([]);
+    try {
+      localStorage.setItem(COMIC_SEARCH_HISTORY_PINNED_KEY, "[]");
+    } catch {}
+  };
   const setSearchHistoryCollapsedPersisted = (collapsed: boolean) => {
     setSearchHistoryCollapsed(collapsed);
     try {
@@ -3074,7 +3125,9 @@ export default function OnlineComics({
     // returning to a page uses its cached state and never repeats the request.
     const autoStartedPage =
       searchMode === "single" &&
-      autoStartSearchPageIds.current.has(singleSearchPageKey);
+      (autoStartSearchPageIds.current.has(singleSearchPageKey) ||
+        !singleSearchPage.pageInfo ||
+        singleSearchPage.busy);
     if (searchSubmitRevision === 0 && !autoStartedPage) return;
     if (
       !sourcesLoaded ||
@@ -4188,17 +4241,19 @@ export default function OnlineComics({
             section={section}
             items={COMIC_MENU_ITEMS}
             navigate={(key) =>
-              go(
-                {
-                  section: key,
-                  search: undefined,
-                  searchMode: "aggregate",
-                  ...(key === "search"
-                    ? { comicSearchId: newComicSearchId() }
-                    : {}),
-                },
-                "root",
-              )
+              key === "search" && resumeSearch()
+                ? undefined
+                : go(
+                    {
+                      section: key,
+                      search: undefined,
+                      searchMode: "aggregate",
+                      ...(key === "search"
+                        ? { comicSearchId: newComicSearchId() }
+                        : {}),
+                    },
+                    "root",
+                  )
             }
           />
           {!scope.remoteId && section !== "home" && (
@@ -4638,10 +4693,12 @@ export default function OnlineComics({
               {!scope.search && (
                 <ReadingSearchHistory
                   terms={searchHistory}
+                  pinned={pinnedSearchHistory}
                   collapsed={searchHistoryCollapsed}
                   toggle={() =>
                     setSearchHistoryCollapsedPersisted(!searchHistoryCollapsed)
                   }
+                  togglePin={togglePinnedSearchHistory}
                   clear={clearSearchHistory}
                   remove={removeSearchHistoryItem}
                   submit={submitSearch}
@@ -5218,6 +5275,7 @@ export default function OnlineComics({
               <ReadingHomeSearch
                 kind="漫画"
                 open={() =>
+                  resumeSearch() ||
                   go(
                     {
                       section: "search",

@@ -81,6 +81,8 @@ import {
   readingResultStart,
   loadReadingSearchPage,
   newReadingSearchId,
+  normalizeReadingSearchTerms,
+  limitReadingSearchHistory,
   searchSourcePool,
   type ReadingSearchPage,
   type ReadingLoadOperation,
@@ -154,6 +156,10 @@ type NovelResultPreference = {
   layout: "grid" | "archiveShelf" | "carousel";
   mode: "pagination" | "waterfall";
 };
+const retainedNovelSearchPages = new Map<
+  string,
+  ReadingSearchPage<OnlineNovel, NovelSearchPage>
+>();
 function novelSingleResultPreference(): NovelResultPreference {
   const fallback: NovelResultPreference = {
     layout: "grid",
@@ -271,6 +277,7 @@ export default function OnlineNovels({
   scope,
   navigate,
   onBack,
+  resumeSearch,
   memory,
   remember,
   local,
@@ -280,6 +287,7 @@ export default function OnlineNovels({
   scope: BrowseLocation;
   navigate(next: BrowseLocation, mode?: NavigationMode): void;
   onBack(): boolean;
+  resumeSearch(): boolean;
   memory: BrowseMemory;
   remember(p: Partial<BrowseMemory>): void;
   local(): void;
@@ -391,7 +399,13 @@ export default function OnlineNovels({
         ""
       : "all";
   type SearchState = ReadingSearchPage<OnlineNovel, NovelSearchPage>;
-  const searchPages = useRef(new Map<string, SearchState>());
+  const searchPages = useRef(
+    new Map<string, SearchState>(retainedNovelSearchPages),
+  );
+  const setSearchPage = (key: string, state: SearchState) => {
+    searchPages.current.set(key, state);
+    retainedNovelSearchPages.set(key, state);
+  };
   const requestIds = useRef(new Map<string, number>());
   const [, setSearchStateRevision] = useState(0);
   const resultRequests = useRef(new Map<string, number>());
@@ -421,8 +435,16 @@ export default function OnlineNovels({
     () => preference("home-collapsed", {}),
   );
   const [searchHistory, setSearchHistory] = useState<string[]>(() =>
-    preference("search-history", []),
+    normalizeReadingSearchTerms(preference("search-history", [])),
   );
+  const [pinnedSearchHistory, setPinnedSearchHistory] = useState<string[]>(() => {
+    const history = normalizeReadingSearchTerms(
+      preference("search-history", []),
+    );
+    return normalizeReadingSearchTerms(
+      preference("search-history-pinned", []),
+    ).filter((term) => history.includes(term));
+  });
   const [searchHistoryCollapsed, setSearchHistoryCollapsed] = useState(() =>
     preference("search-history-collapsed", false),
   );
@@ -836,7 +858,7 @@ export default function OnlineNovels({
           ),
         };
       }
-      searchPages.current.set(key, state);
+      setSearchPage(key, state);
       if (state.pageInfo) {
         try {
           const sourceKey = JSON.parse(key)[2] as string;
@@ -888,7 +910,7 @@ export default function OnlineNovels({
     };
     if (!force && state.pageInfo && state.page === number && !state.error) {
       state = { ...state, busy: false, loadingOperation: undefined };
-      searchPages.current.set(key, state);
+      setSearchPage(key, state);
       apply();
       return;
     }
@@ -921,7 +943,7 @@ export default function OnlineNovels({
           serial === loadSerial.current,
         update: (patch) => {
           state = { ...state, ...patch };
-          searchPages.current.set(key, state);
+          setSearchPage(key, state);
           apply();
         },
         formatError: errorText,
@@ -959,7 +981,10 @@ export default function OnlineNovels({
       return;
     }
     const stamp = `${sourceIdentity}:${refresh}`;
-    const force = refreshStamp.current !== stamp;
+    const hasCachedSearchPages =
+      section === "search" &&
+      ids.every((id) => searchPages.current.get(searchPageKey(id))?.pageInfo);
+    const force = refreshStamp.current !== stamp && !hasCachedSearchPages;
     refreshStamp.current = stamp;
     setBusy(true);
     void searchSourcePool(
@@ -1328,10 +1353,14 @@ export default function OnlineNovels({
         ))
     )
       return;
-    const history = [
-      term.trim(),
-      ...searchHistory.filter((value) => value !== term.trim()),
-    ].slice(0, 30);
+    const history = limitReadingSearchHistory(
+      [
+        term.trim(),
+        ...searchHistory.filter((value) => value !== term.trim()),
+      ],
+      pinnedSearchHistory,
+      30,
+    );
     remember(readingResultStart());
     setSearchHistory(history);
     persist("search-history", history);
@@ -1362,6 +1391,29 @@ export default function OnlineNovels({
     clearSearchPanelHideTimer();
     setSearchPanelVisible(false);
     setRefresh((value) => value + 1);
+  };
+  const savePinnedSearchHistory = (next: string[]) => {
+    setPinnedSearchHistory(next);
+    persist("search-history-pinned", next);
+  };
+  const togglePinnedSearchHistory = (term: string) =>
+    savePinnedSearchHistory(
+      pinnedSearchHistory.includes(term)
+        ? pinnedSearchHistory.filter((value) => value !== term)
+        : [...pinnedSearchHistory, term],
+    );
+  const clearSearchHistory = () => {
+    setSearchHistory([]);
+    persist("search-history", []);
+    savePinnedSearchHistory([]);
+  };
+  const removeSearchHistoryItem = (term: string) => {
+    const next = searchHistory.filter((value) => value !== term);
+    setSearchHistory(next);
+    persist("search-history", next);
+    savePinnedSearchHistory(
+      pinnedSearchHistory.filter((value) => value !== term),
+    );
   };
   const result =
     ["discover", "popular"].includes(section) || singleSearch
@@ -1606,16 +1658,18 @@ export default function OnlineNovels({
             section={section}
             items={NOVEL_MENU_ITEMS}
             navigate={(key) =>
-              key === "local"
-                ? local()
-                : go(
-                    {
-                      section: key,
-                      providerId: sourceId,
-                      searchMode: "aggregate",
-                    },
-                    "root",
-                  )
+              key === "search" && resumeSearch()
+                ? undefined
+                : key === "local"
+                  ? local()
+                  : go(
+                      {
+                        section: key,
+                        providerId: sourceId,
+                        searchMode: "aggregate",
+                      },
+                      "root",
+                    )
             }
           />
         </>
@@ -1682,6 +1736,7 @@ export default function OnlineNovels({
           <ReadingHomeSearch
             kind="小说"
             open={() =>
+              resumeSearch() ||
               go(
                 {
                   section: "search",
@@ -2351,20 +2406,15 @@ export default function OnlineNovels({
           {!scope.search && (
             <ReadingSearchHistory
               terms={searchHistory}
+              pinned={pinnedSearchHistory}
               collapsed={searchHistoryCollapsed}
               toggle={() => {
                 setSearchHistoryCollapsed((v) => !v);
                 persist("search-history-collapsed", !searchHistoryCollapsed);
               }}
-              clear={() => {
-                setSearchHistory([]);
-                persist("search-history", []);
-              }}
-              remove={(term) => {
-                const next = searchHistory.filter((value) => value !== term);
-                setSearchHistory(next);
-                persist("search-history", next);
-              }}
+              togglePin={togglePinnedSearchHistory}
+              clear={clearSearchHistory}
+              remove={removeSearchHistoryItem}
               submit={(term) => submitSearch(undefined, term)}
             />
           )}

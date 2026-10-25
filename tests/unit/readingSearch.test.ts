@@ -3,6 +3,9 @@ import {
   emptyReadingSearchPage,
   loadReadingSearchPage,
   searchSourcePool,
+  normalizeReadingSearchTerms,
+  orderReadingSearchHistory,
+  limitReadingSearchHistory,
   readingResultModePatch,
   type ReadingSearchPage,
   type ReadingLoadOperation,
@@ -38,6 +41,23 @@ function setup(
   };
 }
 describe("共用漫画和小说搜索控制器", () => {
+  it("规范化搜索历史，并把收藏记录稳定排在前面", () => {
+    const terms = normalizeReadingSearchTerms([
+      "最近搜索",
+      " 收藏项 ",
+      "最近搜索",
+      "",
+      12,
+    ]);
+    expect(terms).toEqual(["最近搜索", "收藏项"]);
+    expect(orderReadingSearchHistory(terms, ["收藏项", "已删除", "收藏项"])).toEqual([
+      "收藏项",
+      "最近搜索",
+    ]);
+    expect(
+      limitReadingSearchHistory(["新词", "收藏项", "旧词"], ["收藏项"], 2),
+    ).toEqual(["收藏项", "新词"]);
+  });
   it("切回分页保留当前可见页和缓存，切回瀑布流可继续使用缓存", async () => {
     const calls: number[] = [];
     const subject = setup(async (page) => {
