@@ -578,7 +578,7 @@ export default function SettingsPanel({
               ["打开焦点媒体", "Enter"],
               ["取消聚焦 / 返回", "Esc"],
               ["移动焦点 / 翻页", "← ↑ ↓ →"],
-              ["音乐播放 / 暂停", "Space"],
+              ["播放 / 暂停", "Space"],
               ["墙面缩放", "Ctrl + 滚轮"],
             ].map(([label, key]) => (
               <div className="setting-row" key={label}>

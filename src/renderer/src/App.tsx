@@ -93,6 +93,7 @@ import {
 } from "./layouts/memory";
 import { PagedMediaSource, useMediaSource } from "./layouts/source";
 import { singleCollectionMedia } from "./layouts/collectionActivation";
+import { isPlaybackSpaceShortcut } from "./playbackSpace";
 import BravaisWall from "./layouts/BravaisWall";
 import SpatialGrid from "./layouts/SpatialGrid";
 import LibraryCarousel from "./layouts/LibraryCarousel";
@@ -1029,7 +1030,7 @@ export default function App() {
       if (viewer?.item.type === "video") setViewer(null);
       setMusicPreview(null);
       const playback = usePlayback.getState();
-      playback.play(item, origin.items);
+      if (playback.track?.id !== item.id) playback.play(item, origin.items);
       usePlayback.setState({ expanded: true, queueVisible: false });
       void (
         origin.queueIds
@@ -1867,14 +1868,12 @@ export default function App() {
         }
       }
       if (
-        event.code === "Space" &&
+        isPlaybackSpaceShortcut(event) &&
         !viewer &&
         !overlay &&
         !createType &&
         !manage &&
-        !typing &&
         !blocked &&
-        !["BUTTON"].includes(target?.tagName) &&
         usePlayback.getState().track
       ) {
         event.preventDefault();

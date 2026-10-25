@@ -743,11 +743,12 @@ export default function Player({
     usePlayback.setState({ lyricPreview: lyrics[activeIndex]?.text ?? "" });
   }, [activeIndex, lyrics]);
   useEffect(() => {
+    if (stageLyricsOnly) return;
     currentLine.current?.scrollIntoView({
       behavior: useApp.getState().settings.reducedMotion ? "instant" : "smooth",
       block: "center",
     });
-  }, [activeIndex, state.expanded]);
+  }, [activeIndex, state.expanded, stageLyricsOnly]);
   function tick() {
     if (
       !track ||
@@ -1192,17 +1193,8 @@ export default function Player({
               />
             </Suspense>
           ) : null}
-          {stageLyricsOnly && (
-            <div className="folia-stage-transport">{controls}</div>
-          )}
-          <div
-            className="stage-content"
-            style={
-              stageLyricsOnly
-                ? { visibility: "hidden", pointerEvents: "none" }
-                : undefined
-            }
-          >
+          <div className="music-stage-transport">{controls}</div>
+          {!stageLyricsOnly && <div className="stage-content">
             <div className="stage-album">
               <Cover item={track} />
               <h1>{track.title}</h1>
@@ -1268,11 +1260,10 @@ export default function Player({
                 )}
               </p>
               <div className="stage-controls">
-                {controls}
                 <div className="play-timeline">
                   <span>{time(state.position)}</span>
                   <input
-                    aria-label="全屏音乐进度"
+                    aria-label="音乐播放进度"
                     type="range"
                     min="0"
                     max={state.duration || 1}
@@ -1461,7 +1452,7 @@ export default function Player({
                 </div>
               )}
             </div>
-          </div>
+          </div>}
         </div>
       )}
       {matchOpen && (

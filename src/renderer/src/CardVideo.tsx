@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Maximize2, Pause, Play, X } from "lucide-react";
 import type { MediaItem } from "../../shared/types";
 import { report, time } from "./store";
+import { isPlaybackSpaceShortcut } from "./playbackSpace";
 import { useVideoOverlay } from "./useVideoOverlay";
 import { hideVideo, useVideoSession, videoBounds } from "./videoSession";
 
@@ -119,7 +120,12 @@ export default function CardVideo({
         if (latest.current.state?.fullscreen)
           void command({ type: "fullscreen", value: false });
         else latest.current.stop();
-      } else if (event.key === " " || event.key === "Enter") {
+      } else if (event.code === "Space" || event.key === " ") {
+        if (!isPlaybackSpaceShortcut(event)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void command({ type: "pause", value: !latest.current.state?.paused });
+      } else if (event.key === "Enter") {
         if ((event.target as HTMLElement)?.closest("button")) return;
         event.preventDefault();
         event.stopImmediatePropagation();

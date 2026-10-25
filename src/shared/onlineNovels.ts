@@ -20,7 +20,13 @@ export interface NovelSourceInfo {
   update?: boolean;
   settings: Record<string, NovelSetting>;
   settingValues: Record<string, unknown>;
-  capabilities: { search: boolean; latest: boolean; popular: boolean; login: string[]; exportEpub: boolean };
+  capabilities: {
+    search: boolean;
+    latest: boolean;
+    popular: boolean;
+    login: string[];
+    exportEpub: boolean;
+  };
 }
 export interface NovelSetting {
   title?: string;
@@ -77,6 +83,7 @@ export interface NovelDownloadTask extends OnlineNovelChapterRef {
   createdAt: number;
   size?: number;
   error?: string;
+  retryAt?: number;
 }
 export interface NovelBookmark extends OnlineNovelChapterRef {
   id: string;
@@ -123,6 +130,9 @@ export const NOVEL_API_METHODS = [
   "deleteBookmark",
   "downloads",
   "enqueue",
+  "retryFailed",
+  "getDownloadConcurrency",
+  "setDownloadConcurrency",
   "downloadAction",
   "downloadDirectory",
   "revealDownload",
@@ -133,9 +143,27 @@ export const NOVEL_API_METHODS = [
 export interface OnlineNovelsAPI {
   sources(): Promise<NovelSourceInfo[]>;
   repositories(): Promise<string[]>;
-  openAddress(url: string): Promise<{ kind: "repository"; entries: { name: string; url: string; version?: string; description?: string; id?: string; installedId?: string }[] } | { kind: "source"; source: NovelSourceInfo }>;
+  openAddress(
+    url: string,
+  ): Promise<
+    | {
+        kind: "repository";
+        entries: {
+          name: string;
+          url: string;
+          version?: string;
+          description?: string;
+          id?: string;
+          installedId?: string;
+        }[];
+      }
+    | { kind: "source"; source: NovelSourceInfo }
+  >;
   install(url: string): Promise<NovelSourceInfo>;
-  importFile(): Promise<{ sources: NovelSourceInfo[]; errors: string[] } | null>;
+  importFile(): Promise<{
+    sources: NovelSourceInfo[];
+    errors: string[];
+  } | null>;
   checkUpdates(): Promise<NovelSourceInfo[]>;
   update(id: NovelSourceId): Promise<NovelSourceInfo>;
   uninstall(id: NovelSourceId): Promise<void>;
@@ -181,6 +209,9 @@ export interface OnlineNovelsAPI {
   deleteBookmark(ref: OnlineNovelRef, id: string): Promise<NovelBookmark[]>;
   downloads(): Promise<NovelDownloadTask[]>;
   enqueue(ref: OnlineNovelRef, chapterIds: string[]): Promise<void>;
+  retryFailed(): Promise<number>;
+  getDownloadConcurrency(): Promise<number>;
+  setDownloadConcurrency(value: number): Promise<number>;
   downloadAction(
     id: string,
     action: "pause" | "resume" | "cancel" | "delete",

@@ -46,6 +46,11 @@ import type {
   NovelFollowState,
   NovelHubList,
 } from "../../shared/onlineNovels";
+import {
+  canEnqueueNovelChapter,
+  compareNovelTitles,
+  novelDownloadLabel,
+} from "../../shared/novelDownloads";
 import { Cover, IconButton, Modal } from "./components";
 import { act, report, useApp } from "./store";
 import NovelViewer from "./NovelViewer";
@@ -312,8 +317,31 @@ export default function OnlineNovels({
   const [downloadSourceFilter, setDownloadSourceFilter] = useState("all");
   const [downloadSearchOpen, setDownloadSearchOpen] = useState(false);
   const [downloadSearch, setDownloadSearch] = useState("");
-  const [downloadSort, setDownloadSort] = useState("download-newest");
+  const [downloadSort, setDownloadSort] = useState(() => {
+    const saved = preference("downloads-sort", "download-newest");
+    return [
+      "download-newest",
+      "download-oldest",
+      "title-asc",
+      "title-desc",
+    ].includes(saved)
+      ? saved
+      : "download-newest";
+  });
+  const [downloadConcurrency, setDownloadConcurrency] = useState(1);
   const downloadSearchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    let live = true;
+    void api()
+      .getDownloadConcurrency()
+      .then((value) => {
+        if (live) setDownloadConcurrency(value);
+      })
+      .catch(report);
+    return () => {
+      live = false;
+    };
+  }, []);
   const downloadedNovels = lists.downloads || [];
   const downloadSearchIndex = useMemo(
     () =>
@@ -352,12 +380,17 @@ export default function OnlineNovels({
       if (!downloadSearchTerms.every((term) => entry.text.includes(term)))
         continue;
       matches.push(entry);
-      counts.set(entry.novel.sourceId, (counts.get(entry.novel.sourceId) || 0) + 1);
+      counts.set(
+        entry.novel.sourceId,
+        (counts.get(entry.novel.sourceId) || 0) + 1,
+      );
     }
     return { matches, counts };
   }, [downloadSearchIndex, downloadSearchTerms]);
   const downloadSourceTabs = useMemo(() => {
-    const sourceOrder = new Map(sources.map((source, index) => [source.id, index]));
+    const sourceOrder = new Map(
+      sources.map((source, index) => [source.id, index]),
+    );
     return [...new Set(downloadedNovels.map((novel) => novel.sourceId))]
       .map((id) => ({
         id,
@@ -385,9 +418,11 @@ export default function OnlineNovels({
         .map((novel, index) => ({ novel, index }))
         .sort((a, b) => {
           const timeA =
-            downloadTimes.get(`${a.novel.sourceId}\u0000${a.novel.novelId}`) || 0;
+            downloadTimes.get(`${a.novel.sourceId}\u0000${a.novel.novelId}`) ||
+            0;
           const timeB =
-            downloadTimes.get(`${b.novel.sourceId}\u0000${b.novel.novelId}`) || 0;
+            downloadTimes.get(`${b.novel.sourceId}\u0000${b.novel.novelId}`) ||
+            0;
           return timeB - timeA || a.index - b.index;
         })
         .map(({ novel }) => novel),
@@ -402,7 +437,7 @@ export default function OnlineNovels({
       )
       .map(({ novel }, index) => ({ novel, index }));
     results.sort((a, b) => {
-      const titleOrder = a.novel.title.localeCompare(b.novel.title, "zh-CN");
+      const titleOrder = compareNovelTitles(a.novel.title, b.novel.title);
       const timeA =
         downloadTimes.get(`${a.novel.sourceId}\u0000${a.novel.novelId}`) || 0;
       const timeB =
@@ -460,11 +495,12 @@ export default function OnlineNovels({
   const downloadQueueGroups = useMemo<DownloadQueueGroup[]>(() => {
     const groups = new Map<string, NovelDownloadTask[]>();
     for (const task of tasks) {
-      // Paused tasks stay listed so pausing never looks like a deletion.
+      // Keep failures visible until retried or explicitly removed.
       if (
         task.state !== "downloading" &&
         task.state !== "queued" &&
-        task.state !== "paused"
+        task.state !== "paused" &&
+        task.state !== "failed"
       )
         continue;
       const key = `${task.sourceId}\u0000${task.novelId}`;
@@ -477,6 +513,10 @@ export default function OnlineNovels({
         (task) => task.state === "downloading" || task.state === "queued",
       );
       const paused = entries.filter((task) => task.state === "paused");
+      const failed = entries.filter((task) => task.state === "failed");
+      const waiting = active.filter(
+        (task) => task.retryAt && task.error,
+      ).length;
       const downloading = active.filter(
         (task) => task.state === "downloading",
       ).length;
@@ -499,23 +539,37 @@ export default function OnlineNovels({
           downloading ? `${downloading} 章下载中` : "",
           queued ? `${queued} 章排队` : "",
           paused.length ? `${paused.length} 章已暂停` : "",
+          failed.length ? `${failed.length} 章失败` : "",
+          waiting ? `${waiting} 章等待重试` : "",
         ]
           .filter(Boolean)
           .join(" · "),
         taskIds: entries.map((task) => task.id),
         activeTaskIds: active.map((task) => task.id),
         pausedTaskIds: paused.map((task) => task.id),
+        failedTaskIds: failed.map((task) => task.id),
+        failures: failed.map((task) => ({
+          title: task.title,
+          error: task.error || "下载失败",
+        })),
         downloading,
         queued,
         paused: paused.length,
+        progress: (completed / allNovelTasks.length) * 100,
         progressLabel: `队列已完成 ${completed} / ${allNovelTasks.length} 章 · ${
-          downloading ? "当前章节处理中" : pausedOnly ? "已暂停" : "等待开始"
+          downloading
+            ? "当前章节处理中"
+            : waiting
+              ? "等待重试"
+              : pausedOnly
+                ? "已暂停"
+                : active.length
+                  ? "等待开始"
+                  : "下载失败"
         }`,
       };
     });
   }, [tasks, sources]);
-  // Download controls only tell downloaded apart from not downloaded; progress
-  // itself lives in the queue popup.
   const downloadTasks = useMemo(() => {
     const map = new Map<string, NovelDownloadTask>();
     for (const task of tasks)
@@ -529,6 +583,28 @@ export default function OnlineNovels({
     downloadTasks.get(
       `${novel.sourceId}\u0000${novel.novelId}\u0000${chapterId ?? ""}`,
     );
+  const isDownloaded = (novel: OnlineNovelRef, chapterId: string) =>
+    taskOf(novel, chapterId)?.state === "completed";
+  const canDownload = (novel: OnlineNovelRef, chapterId: string) =>
+    canEnqueueNovelChapter(taskOf(novel, chapterId));
+  const groupDownloadLabel = (
+    novel: OnlineNovelRef,
+    chapters: OnlineNovelDetails["chapters"],
+    initialLabel: string,
+  ) => {
+    if (chapters.every((chapter) => isDownloaded(novel, chapter.id)))
+      return "已下载";
+    const entries = chapters.map((chapter) => taskOf(novel, chapter.id));
+    if (entries.some(canEnqueueNovelChapter))
+      return entries.some(Boolean) ? "补全下载" : initialLabel;
+    return entries.some((task) => task?.state === "downloading")
+      ? "下载中"
+      : entries.some((task) => task?.retryAt && task.error)
+        ? "等待重试"
+        : entries.some((task) => task?.state === "queued")
+          ? "排队中"
+          : "已暂停";
+  };
   const [localItems, setLocalItems] = useState<MediaItem[]>([]),
     [selected, setSelected] = useState<string[]>([]);
   const [keyword, setKeywordValue] = useState(scope.search || "");
@@ -585,14 +661,16 @@ export default function OnlineNovels({
   const [searchHistory, setSearchHistory] = useState<string[]>(() =>
     normalizeReadingSearchTerms(preference("search-history", [])),
   );
-  const [pinnedSearchHistory, setPinnedSearchHistory] = useState<string[]>(() => {
-    const history = normalizeReadingSearchTerms(
-      preference("search-history", []),
-    );
-    return normalizeReadingSearchTerms(
-      preference("search-history-pinned", []),
-    ).filter((term) => history.includes(term));
-  });
+  const [pinnedSearchHistory, setPinnedSearchHistory] = useState<string[]>(
+    () => {
+      const history = normalizeReadingSearchTerms(
+        preference("search-history", []),
+      );
+      return normalizeReadingSearchTerms(
+        preference("search-history-pinned", []),
+      ).filter((term) => history.includes(term));
+    },
+  );
   const [searchHistoryCollapsed, setSearchHistoryCollapsed] = useState(() =>
     preference("search-history-collapsed", false),
   );
@@ -1517,10 +1595,7 @@ export default function OnlineNovels({
     )
       return;
     const history = limitReadingSearchHistory(
-      [
-        term.trim(),
-        ...searchHistory.filter((value) => value !== term.trim()),
-      ],
+      [term.trim(), ...searchHistory.filter((value) => value !== term.trim())],
       pinnedSearchHistory,
       30,
     );
@@ -1590,9 +1665,7 @@ export default function OnlineNovels({
     "downloads",
   ].includes(section);
   const libraryNovels =
-    section === "downloads"
-      ? filteredDownloadedNovels
-      : lists[section] || [];
+    section === "downloads" ? filteredDownloadedNovels : lists[section] || [];
   const favorites = (novel: OnlineNovel) =>
     void act(() => updateHub("shelf", novel, !has("shelf", novel)));
   async function exportEpub() {
@@ -1680,7 +1753,10 @@ export default function OnlineNovels({
   };
   const cards = (key: string, items = lists[key] || []) => (
     <ReadingHubCards
-      items={(key === "downloads" ? latestDownloadedNovels : items).slice(0, 10)}
+      items={(key === "downloads" ? latestDownloadedNovels : items).slice(
+        0,
+        10,
+      )}
       identity={(n) => `${n.sourceId}:${n.novelId}`}
       title={(n) => n.title}
       cover={(n) => <Cover item={cardItem(n)} />}
@@ -1721,7 +1797,7 @@ export default function OnlineNovels({
             className="text-button download-queue-trigger"
             onClick={() => setDownloadQueueOpen(true)}
           >
-            下载中{" "}
+            下载队列{" "}
             <span>
               {downloadQueueGroups.reduce(
                 (count, group) => count + group.taskIds.length,
@@ -1903,7 +1979,9 @@ export default function OnlineNovels({
               <button
                 type="button"
                 className={`text-button${downloadSearchOpen ? " active" : ""}`}
-                aria-label={downloadSearchOpen ? "关闭已下载搜索" : "搜索已下载小说"}
+                aria-label={
+                  downloadSearchOpen ? "关闭已下载搜索" : "搜索已下载小说"
+                }
                 aria-expanded={downloadSearchOpen}
                 title="搜索已下载小说（Ctrl+F）"
                 onClick={() => {
@@ -1912,7 +1990,9 @@ export default function OnlineNovels({
                     setDownloadSearchOpen(false);
                   } else {
                     setDownloadSearchOpen(true);
-                    requestAnimationFrame(() => downloadSearchInput.current?.focus());
+                    requestAnimationFrame(() =>
+                      downloadSearchInput.current?.focus(),
+                    );
                   }
                 }}
               >
@@ -1925,7 +2005,14 @@ export default function OnlineNovels({
               className="comic-download-sort"
               aria-label="已下载小说排序方式"
               value={downloadSort}
-              onChange={(event) => setDownloadSort(event.target.value)}
+              onChange={(event) => {
+                const value = event.target.value;
+                setDownloadSort(value);
+                localStorage.setItem(
+                  "novel:downloads-sort",
+                  JSON.stringify(value),
+                );
+              }}
             >
               <option value="download-newest">下载时间（新到旧）</option>
               <option value="download-oldest">下载时间（旧到新）</option>
@@ -1939,7 +2026,7 @@ export default function OnlineNovels({
               aria-haspopup="dialog"
               onClick={() => setDownloadQueueOpen(true)}
             >
-              下载中{" "}
+              下载队列{" "}
               <span>
                 {downloadQueueGroups.reduce(
                   (count, group) => count + group.taskIds.length,
@@ -3025,7 +3112,7 @@ export default function OnlineNovels({
                 className="button secondary"
                 disabled={
                   !details.chapters.length ||
-                  details.chapters.every((c) => taskOf(details, c.id))
+                  !details.chapters.some((c) => canDownload(details, c.id))
                 }
                 onClick={() =>
                   void act(() =>
@@ -3037,21 +3124,20 @@ export default function OnlineNovels({
                 }
               >
                 {details.chapters.length &&
-                details.chapters.every((c) => taskOf(details, c.id)) ? (
+                details.chapters.every((c) => isDownloaded(details, c.id)) ? (
                   <Check size={15} />
                 ) : (
                   <Download size={15} />
                 )}
-                {details.chapters.length &&
-                details.chapters.every((c) => taskOf(details, c.id))
-                  ? "已下载"
+                {details.chapters.length
+                  ? groupDownloadLabel(details, details.chapters, "下载全书")
                   : "下载全书"}
               </button>
               <button
                 className="button secondary"
                 disabled={
                   !details.chapters.some(
-                    (c) => !c.progress?.completed && !taskOf(details, c.id),
+                    (c) => !c.progress?.completed && canDownload(details, c.id),
                   )
                 }
                 onClick={() =>
@@ -3061,7 +3147,8 @@ export default function OnlineNovels({
                       details.chapters
                         .filter(
                           (c) =>
-                            !c.progress?.completed && !taskOf(details, c.id),
+                            !c.progress?.completed &&
+                            canDownload(details, c.id),
                         )
                         .map((c) => c.id),
                     ),
@@ -3094,9 +3181,11 @@ export default function OnlineNovels({
                       <h3>{volume.title || "正文"}</h3>
                       <button
                         className="text-button"
-                        disabled={volume.chapters.every((chapter) =>
-                          taskOf(details, chapter.id),
-                        )}
+                        disabled={
+                          !volume.chapters.some((chapter) =>
+                            canDownload(details, chapter.id),
+                          )
+                        }
                         onClick={() =>
                           void act(() =>
                             api().enqueue(
@@ -3107,17 +3196,17 @@ export default function OnlineNovels({
                         }
                       >
                         {volume.chapters.every((chapter) =>
-                          taskOf(details, chapter.id),
+                          isDownloaded(details, chapter.id),
                         ) ? (
                           <Check size={14} />
                         ) : (
                           <Download size={14} />
                         )}
-                        {volume.chapters.every((chapter) =>
-                          taskOf(details, chapter.id),
-                        )
-                          ? "已下载"
-                          : "下载整卷"}
+                        {groupDownloadLabel(
+                          details,
+                          volume.chapters,
+                          "下载整卷",
+                        )}
                       </button>
                     </div>
                     <div className="online-chapters">
@@ -3142,31 +3231,34 @@ export default function OnlineNovels({
                             onClick={() => void act(() => read(chapter.id))}
                           >
                             <span>{chapter.title}</span>
-                            <small>
-                              {taskOf(details, chapter.id)
-                                ? "已下载"
-                                : chapter.progress?.completed
+                            <small title={taskOf(details, chapter.id)?.error}>
+                              {novelDownloadLabel(
+                                taskOf(details, chapter.id),
+                              ) ||
+                                (chapter.progress?.completed
                                   ? "已读"
                                   : chapter.progress
                                     ? "阅读中"
-                                    : "未读"}
+                                    : "未读")}
                             </small>
                           </button>
                           <IconButton
                             label={
-                              taskOf(details, chapter.id)
-                                ? `${chapter.title} 已下载`
-                                : `下载 ${chapter.title}`
+                              canDownload(details, chapter.id)
+                                ? `${taskOf(details, chapter.id) ? "重试下载" : "下载"} ${chapter.title}`
+                                : `${chapter.title} ${novelDownloadLabel(taskOf(details, chapter.id))}`
                             }
-                            disabled={!!taskOf(details, chapter.id)}
+                            disabled={!canDownload(details, chapter.id)}
                             onClick={() =>
                               void act(() =>
                                 api().enqueue(details, [chapter.id]),
                               )
                             }
                           >
-                            {taskOf(details, chapter.id) ? (
+                            {isDownloaded(details, chapter.id) ? (
                               <Check size={14} />
+                            ) : !canDownload(details, chapter.id) ? (
+                              <Clock3 size={14} />
                             ) : (
                               <Download size={14} />
                             )}
@@ -3231,7 +3323,27 @@ export default function OnlineNovels({
       )}
       {downloadQueueOpen && (
         <DownloadQueueModal
+          title="下载队列"
           groups={downloadQueueGroups}
+          retryAll={() =>
+            void act(async () => {
+              const count = await api().retryFailed();
+              useApp.getState().notify(`已重新排队 ${count} 个失败章节`);
+            })
+          }
+          concurrency={downloadConcurrency}
+          onConcurrencyChange={(value) =>
+            void act(async () => {
+              setDownloadConcurrency(await api().setDownloadConcurrency(value));
+            })
+          }
+          retry={(taskIds) =>
+            void act(() =>
+              Promise.all(
+                taskIds.map((id) => api().downloadAction(id, "resume")),
+              ),
+            )
+          }
           close={() => setDownloadQueueOpen(false)}
           pause={(taskIds) =>
             void act(() =>

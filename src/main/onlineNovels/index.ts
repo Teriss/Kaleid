@@ -15,14 +15,26 @@ import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
-import { HubConnectionBuilder, HttpClient, HttpResponse, HttpTransportType, LogLevel, type HubConnection, type HttpRequest } from "@microsoft/signalr";
+import {
+  HubConnectionBuilder,
+  HttpClient,
+  HttpResponse,
+  HttpTransportType,
+  LogLevel,
+  type HubConnection,
+  type HttpRequest,
+} from "@microsoft/signalr";
 import { MessagePackHubProtocol } from "@microsoft/signalr-protocol-msgpack";
 import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { unzipSync, strFromU8 } from "fflate";
 import { NETWORK_PROXY_KEYS } from "../../shared/networkProxy";
 import type { NetworkProxyManager } from "../networkProxy";
-import type { MediaItem, OnlineChangeEvent, Progress } from "../../shared/types";
+import type {
+  MediaItem,
+  OnlineChangeEvent,
+  Progress,
+} from "../../shared/types";
 import {
   NOVEL_API_METHODS,
   type NovelSourceId,
@@ -40,7 +52,11 @@ import {
   type NovelExportQuote,
   type NovelReaderState,
 } from "../../shared/onlineNovels";
-import { NovelScriptRuntime, type NovelRuntimeMeta, type NovelRuntimeState } from "./novelRuntime";
+import {
+  NovelScriptRuntime,
+  type NovelRuntimeMeta,
+  type NovelRuntimeState,
+} from "./novelRuntime";
 import {
   chapterEpub,
   checkResponse,
@@ -49,11 +65,8 @@ import {
   type ChapterBundle,
 } from "./content";
 import { NovelStore } from "./store";
-import {
-  folderName,
-  movePath,
-  pruneEmptyFolders,
-} from "../downloadPaths";
+import { ChapterRequests, rateLimitDelay } from "./chapterRequests";
+import { folderName, movePath, pruneEmptyFolders } from "../downloadPaths";
 import { createChangeSender, type ChangeSender } from "../onlineChange";
 
 interface SavedNovel extends OnlineNovelDetails {
@@ -102,6 +115,7 @@ interface ProgressRecord {
 interface SavedTask extends NovelDownloadTask {
   directory: string;
   bundle?: BundleRecord;
+  retryCount?: number;
 }
 const bookKey = (ref: OnlineNovelRef) =>
   hash(JSON.stringify([ref.sourceId, ref.novelId]));
@@ -115,9 +129,14 @@ export class OnlineNovelService {
   private sessions = new Map<NovelSourceId, Session>();
   private sourcesById = new Map<NovelSourceId, SavedSource>();
   private active = new Map<NovelSourceId, ActiveSource>();
-  private hubs = new Map<NovelSourceId, { hub: HubConnection; token: string; client: HttpClient }>();
+  private hubs = new Map<
+    NovelSourceId,
+    { hub: HubConnection; token: string; client: HttpClient }
+  >();
   private logins = new Map<NovelSourceId, BrowserWindow>();
   private jobs = new Map<string, AbortController>();
+  private chapterRequests = new ChapterRequests();
+  private pumpTimer?: ReturnType<typeof setTimeout>;
   private builds = new Map<string, Promise<BundleRecord>>();
   private detailRequests = new Map<string, Promise<SavedNovel>>();
   private closed = false;
@@ -134,7 +153,12 @@ export class OnlineNovelService {
     this.store = new NovelStore(path.join(this.root, "library.sqlite"));
     for (const raw of this.store.all<SavedSource>("source-script")) {
       try {
-        if (raw?.meta?.apiVersion !== 1 || raw.id !== raw.meta.id || typeof raw.script !== "string") continue;
+        if (
+          raw?.meta?.apiVersion !== 1 ||
+          raw.id !== raw.meta.id ||
+          typeof raw.script !== "string"
+        )
+          continue;
         this.sourcesById.set(raw.id, raw);
         this.ensureSession(raw.id);
       } catch {}
@@ -142,6 +166,7 @@ export class OnlineNovelService {
     for (const task of this.store.all<SavedTask>("download"))
       if (["queued", "downloading"].includes(task.state)) {
         task.state = "paused";
+        task.retryAt = undefined;
         this.store.set("download", task.id, task);
       }
     void this.migrateDownloadFiles().catch(() => {});
@@ -150,21 +175,32 @@ export class OnlineNovelService {
     this.change.send(event);
   }
   private source(id: NovelSourceId) {
-    if (typeof id !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(id) || !this.sourcesById.has(id))
+    if (
+      typeof id !== "string" ||
+      !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(id) ||
+      !this.sourcesById.has(id)
+    )
       throw new Error("无效小说源");
     return id;
   }
   private ref<T extends OnlineNovelRef>(ref: T): T {
     if (!ref || typeof ref !== "object") throw new Error("无效作品引用");
-    if (typeof ref.sourceId !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(ref.sourceId))
+    if (
+      typeof ref.sourceId !== "string" ||
+      !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(ref.sourceId)
+    )
       throw new Error("无效作品来源标识");
     if (
-      typeof ref.novelId !== "string" || !ref.novelId.trim() || ref.novelId.length > 4096
+      typeof ref.novelId !== "string" ||
+      !ref.novelId.trim() ||
+      ref.novelId.length > 4096
     )
       throw new Error("无效作品标识");
     if (
       "chapterId" in ref &&
-      (typeof ref.chapterId !== "string" || !ref.chapterId.trim() || ref.chapterId.length > 4096)
+      (typeof ref.chapterId !== "string" ||
+        !ref.chapterId.trim() ||
+        ref.chapterId.length > 4096)
     )
       throw new Error("无效章节标识");
     return {
@@ -176,7 +212,9 @@ export class OnlineNovelService {
   private config(id: NovelSourceId): SourceSettings {
     this.source(id);
     const saved = this.store.get<SourceSettings>("source", id);
-    return saved ? { ...saved, enabled: saved.enabled !== false } : { enabled: true };
+    return saved
+      ? { ...saved, enabled: saved.enabled !== false }
+      : { enabled: true };
   }
   private async scriptRuntime(id: NovelSourceId) {
     this.source(id);
@@ -188,94 +226,216 @@ export class OnlineNovelService {
     const settings = this.config(id);
     let credentials: Record<string, unknown> = {};
     if (settings.credentials) {
-      try { credentials = JSON.parse(safeStorage.decryptString(Buffer.from(settings.credentials, "base64"))); } catch {}
+      try {
+        credentials = JSON.parse(
+          safeStorage.decryptString(
+            Buffer.from(settings.credentials, "base64"),
+          ),
+        );
+      } catch {}
     }
-    const state: NovelRuntimeState = { data: this.store.get("source-data", id) || {}, settings: { ...settings }, credentials };
-    const runtime = new NovelScriptRuntime(record.script, state, (message) => this.runtimeHost(id, message));
+    const state: NovelRuntimeState = {
+      data: this.store.get("source-data", id) || {},
+      settings: { ...settings },
+      credentials,
+    };
+    const runtime = new NovelScriptRuntime(record.script, state, (message) =>
+      this.runtimeHost(id, message),
+    );
     try {
       const meta = await runtime.open();
       if (meta.id !== id) throw new Error("小说源脚本标识与已安装来源不匹配");
-      const active = { ...record, meta, runtime, runtimeState: state, logged: false };
+      const active = {
+        ...record,
+        meta,
+        runtime,
+        runtimeState: state,
+        logged: false,
+      };
       this.active.set(id, active);
       return active;
-    } catch (error) { runtime.dispose(); throw error; }
+    } catch (error) {
+      runtime.dispose();
+      throw error;
+    }
   }
-  private sourcePage(id: NovelSourceId, value: any, page: number): NovelSearchPage {
-    if (!value || !Array.isArray(value.novels) || value.novels.length > 300 || typeof value.hasMore !== "boolean")
+  private sourcePage(
+    id: NovelSourceId,
+    value: any,
+    page: number,
+  ): NovelSearchPage {
+    if (
+      !value ||
+      !Array.isArray(value.novels) ||
+      value.novels.length > 300 ||
+      typeof value.hasMore !== "boolean"
+    )
       throw new Error("[parse] 小说源列表返回格式无效");
     const novels = value.novels.map((item: any) => {
-      if (!item || typeof item !== "object" || item.novelId == null || typeof item.title !== "string" || !item.title.trim())
+      if (
+        !item ||
+        typeof item !== "object" ||
+        item.novelId == null ||
+        typeof item.title !== "string" ||
+        !item.title.trim()
+      )
         throw new Error("[parse] 小说源列表包含无效作品");
       const novelId = String(item.novelId);
       if (!novelId.trim() || novelId.length > 4096 || item.title.length > 1000)
         throw new Error("[parse] 小说源作品标识或标题无效");
-      const cover = typeof item.cover === "string" && item.cover ? safeRemote(item.cover, this.sourcesById.get(id)!.meta.url) : undefined;
+      const cover =
+        typeof item.cover === "string" && item.cover
+          ? safeRemote(item.cover, this.sourcesById.get(id)!.meta.url)
+          : undefined;
       return {
-        sourceId: id, novelId, title: item.title,
+        sourceId: id,
+        novelId,
+        title: item.title,
         author: typeof item.author === "string" ? item.author : undefined,
         cover,
-        description: typeof item.description === "string" ? item.description : undefined,
-        updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : undefined,
+        description:
+          typeof item.description === "string" ? item.description : undefined,
+        updatedAt:
+          typeof item.updatedAt === "string" ? item.updatedAt : undefined,
       } satisfies OnlineNovel;
     });
     return { novels, page, hasMore: value.hasMore };
   }
-  private sourceDetails(id: NovelSourceId, novelId: string, value: any): OnlineNovelDetails {
-    if (!value || typeof value !== "object" || typeof value.title !== "string" || !value.title.trim() ||
-      !Array.isArray(value.chapters) || value.chapters.length > 100_000)
+  private sourceDetails(
+    id: NovelSourceId,
+    novelId: string,
+    value: any,
+  ): OnlineNovelDetails {
+    if (
+      !value ||
+      typeof value !== "object" ||
+      typeof value.title !== "string" ||
+      !value.title.trim() ||
+      !Array.isArray(value.chapters) ||
+      value.chapters.length > 100_000
+    )
       throw new Error("[parse] 小说源详情返回格式无效");
     const chapters = value.chapters.map((chapter: any) => {
-      if (!chapter || typeof chapter !== "object" || chapter.id == null || typeof chapter.title !== "string")
+      if (
+        !chapter ||
+        typeof chapter !== "object" ||
+        chapter.id == null ||
+        typeof chapter.title !== "string"
+      )
         throw new Error("[parse] 小说源目录包含无效章节");
       const id = String(chapter.id);
       if (!id.trim() || id.length > 4096 || chapter.title.length > 1000)
         throw new Error("[parse] 小说源章节标识或标题无效");
       return {
-        id, title: chapter.title, volume: typeof chapter.volume === "string" ? chapter.volume : "正文",
+        id,
+        title: chapter.title,
+        volume: typeof chapter.volume === "string" ? chapter.volume : "正文",
         url: typeof chapter.url === "string" ? chapter.url : undefined,
-        order: typeof chapter.order === "number" && Number.isFinite(chapter.order) ? chapter.order : undefined,
-        revision: typeof chapter.revision === "string" ? chapter.revision : undefined,
+        order:
+          typeof chapter.order === "number" && Number.isFinite(chapter.order)
+            ? chapter.order
+            : undefined,
+        revision:
+          typeof chapter.revision === "string" ? chapter.revision : undefined,
       } satisfies NovelChapter;
     });
-    const cover = typeof value.cover === "string" && value.cover ? safeRemote(value.cover, this.sourcesById.get(id)!.meta.url) : undefined;
+    const cover =
+      typeof value.cover === "string" && value.cover
+        ? safeRemote(value.cover, this.sourcesById.get(id)!.meta.url)
+        : undefined;
     return {
-      sourceId: id, novelId, title: value.title,
+      sourceId: id,
+      novelId,
+      title: value.title,
       author: typeof value.author === "string" ? value.author : undefined,
-      cover, description: typeof value.description === "string" ? value.description : undefined,
-      updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : undefined,
+      cover,
+      description:
+        typeof value.description === "string" ? value.description : undefined,
+      updatedAt:
+        typeof value.updatedAt === "string" ? value.updatedAt : undefined,
       canExport: value.canExport === true,
-      exportCost: Number.isSafeInteger(value.exportCost) && value.exportCost >= 0 ? value.exportCost : undefined,
+      exportCost:
+        Number.isSafeInteger(value.exportCost) && value.exportCost >= 0
+          ? value.exportCost
+          : undefined,
       chapters,
     };
   }
   private sourceChapter(id: NovelSourceId, value: any) {
-    if (!value || typeof value !== "object" || typeof value.title !== "string" ||
-      typeof value.html !== "string" || value.html.length > 64 * 1024 * 1024)
+    if (
+      !value ||
+      typeof value !== "object" ||
+      typeof value.title !== "string" ||
+      typeof value.html !== "string" ||
+      value.html.length > 64 * 1024 * 1024
+    )
       throw new Error("[parse] 小说源正文返回格式无效或内容过大");
-    const base = safeRemote(typeof value.base === "string" ? value.base : "", this.sourcesById.get(id)!.meta.url);
+    const base = safeRemote(
+      typeof value.base === "string" ? value.base : "",
+      this.sourcesById.get(id)!.meta.url,
+    );
     return {
-      title: value.title.slice(0, 1000), html: value.html, base,
-      font: typeof value.font === "string" && value.font ? safeRemote(value.font, base) : undefined,
+      title: value.title.slice(0, 1000),
+      html: value.html,
+      base,
+      font:
+        typeof value.font === "string" && value.font
+          ? safeRemote(value.font, base)
+          : undefined,
     };
   }
   private provider(id: NovelSourceId) {
     return {
-      search: async (keyword: string, page: number) => this.sourcePage(id, await (await this.scriptRuntime(id)).runtime.call("search", [keyword, page]), page),
-      discover: async (kind: "latest" | "popular", page: number) => this.sourcePage(id, await (await this.scriptRuntime(id)).runtime.call("discover", [kind, page]), page),
-      details: async (novelId: string) => this.sourceDetails(id, novelId, await (await this.scriptRuntime(id)).runtime.call("details", [novelId])),
-      chapter: async (novelId: string, chapter: NovelChapter) => this.sourceChapter(id, await (await this.scriptRuntime(id)).runtime.call("chapter", [novelId, chapter])),
+      search: async (keyword: string, page: number) =>
+        this.sourcePage(
+          id,
+          await (
+            await this.scriptRuntime(id)
+          ).runtime.call("search", [keyword, page]),
+          page,
+        ),
+      discover: async (kind: "latest" | "popular", page: number) =>
+        this.sourcePage(
+          id,
+          await (
+            await this.scriptRuntime(id)
+          ).runtime.call("discover", [kind, page]),
+          page,
+        ),
+      details: async (novelId: string) =>
+        this.sourceDetails(
+          id,
+          novelId,
+          await (
+            await this.scriptRuntime(id)
+          ).runtime.call("details", [novelId]),
+        ),
+      chapter: async (novelId: string, chapter: NovelChapter) =>
+        this.sourceChapter(
+          id,
+          await (
+            await this.scriptRuntime(id)
+          ).runtime.call("chapter", [novelId, chapter]),
+        ),
       close: async () => this.closeSourceRuntime(id),
     };
   }
   private async closeSourceRuntime(id: NovelSourceId) {
     const current = this.active.get(id);
     if (current) {
-      try { await current.runtime.evaluate("typeof __source.close === 'function' ? Promise.resolve(__source.close()) : true"); } catch {}
+      try {
+        await current.runtime.evaluate(
+          "typeof __source.close === 'function' ? Promise.resolve(__source.close()) : true",
+        );
+      } catch {}
       this.active.delete(id);
       current.runtime.dispose();
     }
     const connection = this.hubs.get(id);
-    if (connection) { this.hubs.delete(id); await connection.hub.stop().catch(() => {}); }
+    if (connection) {
+      this.hubs.delete(id);
+      await connection.hub.stop().catch(() => {});
+    }
   }
   private ensureSession(id: NovelSourceId) {
     let current = this.sessions.get(id);
@@ -285,7 +445,9 @@ export class OnlineNovelService {
       NETWORK_PROXY_KEYS.novel.source(id),
       NETWORK_PROXY_KEYS.novel.default,
     );
-    current.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+    current.setPermissionRequestHandler((_contents, _permission, callback) =>
+      callback(false),
+    );
     this.sessions.set(id, current);
     return current;
   }
@@ -309,15 +471,29 @@ export class OnlineNovelService {
       throw new Error(`[network] ${message(error)}`);
     }
   }
-  private async runtimeHost(id: NovelSourceId, message: Record<string, any>): Promise<any> {
-    if (!message || typeof message !== "object") throw new Error("无效小说源宿主请求");
-    if (id.startsWith("staging-")) throw new Error("小说源校验期间不能调用宿主接口");
+  private async runtimeHost(
+    id: NovelSourceId,
+    message: Record<string, any>,
+  ): Promise<any> {
+    if (!message || typeof message !== "object")
+      throw new Error("无效小说源宿主请求");
+    if (id.startsWith("staging-"))
+      throw new Error("小说源校验期间不能调用宿主接口");
     if (message.op === "credentials") {
-      const value = message.value && typeof message.value === "object" ? message.value : {};
-      if (Object.values(value).some((item) => !["string", "number", "boolean"].includes(typeof item))) throw new Error("登录凭据格式无效");
-      if (Object.keys(value).length && !safeStorage.isEncryptionAvailable()) throw new Error("系统凭据加密不可用，无法保存登录");
+      const value =
+        message.value && typeof message.value === "object" ? message.value : {};
+      if (
+        Object.values(value).some(
+          (item) => !["string", "number", "boolean"].includes(typeof item),
+        )
+      )
+        throw new Error("登录凭据格式无效");
+      if (Object.keys(value).length && !safeStorage.isEncryptionAvailable())
+        throw new Error("系统凭据加密不可用，无法保存登录");
       const config = this.config(id);
-      config.credentials = Object.keys(value).length ? safeStorage.encryptString(JSON.stringify(value)).toString("base64") : undefined;
+      config.credentials = Object.keys(value).length
+        ? safeStorage.encryptString(JSON.stringify(value)).toString("base64")
+        : undefined;
       this.store.set("source", id, config);
       this.active.get(id)!.runtimeState.credentials = value;
       this.changed();
@@ -333,158 +509,319 @@ export class OnlineNovelService {
       return true;
     }
     if (message.op === "request") {
-      if (typeof message.url !== "string") throw new Error("小说源请求网址无效");
-      const response = await this.request(id, message.url, message.options || {});
+      if (typeof message.url !== "string")
+        throw new Error("小说源请求网址无效");
+      const response = await this.request(
+        id,
+        message.url,
+        message.options || {},
+      );
       const bytes = new Uint8Array(await response.arrayBuffer());
       return {
         status: response.status,
         statusText: response.statusText,
         headers: Object.fromEntries(response.headers.entries()),
-        body: message.options?.responseType === "bytes" ? bytes : iconv.decode(Buffer.from(bytes), /charset=([\w-]+)/i.exec(response.headers.get("content-type") || "")?.[1] || "utf-8"),
+        body:
+          message.options?.responseType === "bytes"
+            ? bytes
+            : iconv.decode(
+                Buffer.from(bytes),
+                /charset=([\w-]+)/i.exec(
+                  response.headers.get("content-type") || "",
+                )?.[1] || "utf-8",
+              ),
       };
     }
     if (message.op === "query") {
-      if (typeof message.html !== "string" || message.html.length > 16 * 1024 * 1024) throw new Error("HTML 内容过大");
+      if (
+        typeof message.html !== "string" ||
+        message.html.length > 16 * 1024 * 1024
+      )
+        throw new Error("HTML 内容过大");
       const $ = cheerio.load(message.html);
-      if (Array.isArray(message.remove)) $(message.remove.filter((x: unknown) => typeof x === "string").join(",")).remove();
-      const selectors = Array.isArray(message.selectors) ? message.selectors : [];
-      if (selectors.length > 40 || selectors.some((item: unknown) => typeof item !== "string" || item.length > 512)) throw new Error("HTML 查询无效");
-      return Object.fromEntries(selectors.map((selector: string) => [selector, $(selector).toArray().slice(0, 1000).map((node) => ({
-        text: $(node).text().trim(), html: $(node).html() || "", tag: (node as any).name || "", attrs: { ...(node as any).attribs },
-      }))]));
+      if (Array.isArray(message.remove))
+        $(
+          message.remove
+            .filter((x: unknown) => typeof x === "string")
+            .join(","),
+        ).remove();
+      const selectors = Array.isArray(message.selectors)
+        ? message.selectors
+        : [];
+      if (
+        selectors.length > 40 ||
+        selectors.some(
+          (item: unknown) => typeof item !== "string" || item.length > 512,
+        )
+      )
+        throw new Error("HTML 查询无效");
+      return Object.fromEntries(
+        selectors.map((selector: string) => [
+          selector,
+          $(selector)
+            .toArray()
+            .slice(0, 1000)
+            .map((node) => ({
+              text: $(node).text().trim(),
+              html: $(node).html() || "",
+              tag: (node as any).name || "",
+              attrs: { ...(node as any).attribs },
+            })),
+        ]),
+      );
     }
-    if (message.op === "digest") return createHash("sha256").update(String(message.value || "")).digest("hex");
-    if (message.op === "gunzip") return new Uint8Array(gunzipSync(Buffer.from(message.value)));
-    if (message.op === "gunzipJson") return JSON.parse(gunzipSync(Buffer.from(message.value)).toString("utf8"));
+    if (message.op === "digest")
+      return createHash("sha256")
+        .update(String(message.value || ""))
+        .digest("hex");
+    if (message.op === "gunzip")
+      return new Uint8Array(gunzipSync(Buffer.from(message.value)));
+    if (message.op === "gunzipJson")
+      return JSON.parse(
+        gunzipSync(Buffer.from(message.value)).toString("utf8"),
+      );
     if (message.op === "visitor") {
       let visitor = this.store.get<string>("setting", "visitor");
-      if (!visitor) { visitor = randomUUID(); this.store.set("setting", "visitor", visitor); }
+      if (!visitor) {
+        visitor = randomUUID();
+        this.store.set("setting", "visitor", visitor);
+      }
       return visitor;
     }
     if (message.op === "cookieStatus") {
-      const url = safeRemote(String(message.url || ""), this.sourcesById.get(id)!.meta.url);
+      const url = safeRemote(
+        String(message.url || ""),
+        this.sourcesById.get(id)!.meta.url,
+      );
       const cookies = await this.ensureSession(id).cookies.get({ url });
-      const pattern = typeof message.pattern === "string" ? new RegExp(message.pattern, "i") : null;
+      const pattern =
+        typeof message.pattern === "string"
+          ? new RegExp(message.pattern, "i")
+          : null;
       return cookies.some((cookie) => !pattern || pattern.test(cookie.name));
     }
-    if (message.op === "signalr") return this.signalr(id, message.options || {});
-    if (message.op === "browser") return this.browser(id, message.options || {});
+    if (message.op === "signalr")
+      return this.signalr(id, message.options || {});
+    if (message.op === "browser")
+      return this.browser(id, message.options || {});
     throw new Error("未知小说源宿主接口");
   }
   private async signalr(id: NovelSourceId, options: Record<string, any>) {
-    if (typeof options.url !== "string" || typeof options.method !== "string") throw new Error("SignalR 请求参数无效");
+    if (typeof options.url !== "string" || typeof options.method !== "string")
+      throw new Error("SignalR 请求参数无效");
     let connection = this.hubs.get(id);
-    if (!connection || connection.token !== String(options.accessToken || "") || connection.hub.state !== "Connected") {
-      if (connection) { this.hubs.delete(id); await connection.hub.stop().catch(() => {}); }
+    if (
+      !connection ||
+      connection.token !== String(options.accessToken || "") ||
+      connection.hub.state !== "Connected"
+    ) {
+      if (connection) {
+        this.hubs.delete(id);
+        await connection.hub.stop().catch(() => {});
+      }
       const sourceId = id;
       const service = this;
-      const client = new class extends HttpClient {
+      const client = new (class extends HttpClient {
         async send(request: HttpRequest) {
           const controller = new AbortController();
           if (request.abortSignal?.aborted) controller.abort();
-          else if (request.abortSignal) request.abortSignal.onabort = () => controller.abort();
+          else if (request.abortSignal)
+            request.abortSignal.onabort = () => controller.abort();
           try {
             const response = await service.request(sourceId, request.url!, {
-              method: request.method, headers: request.headers, body: request.content, signal: controller.signal,
+              method: request.method,
+              headers: request.headers,
+              body: request.content,
+              signal: controller.signal,
             });
-            const body = request.responseType === "arraybuffer" ? await response.arrayBuffer() : await response.text();
+            const body =
+              request.responseType === "arraybuffer"
+                ? await response.arrayBuffer()
+                : await response.text();
             return new HttpResponse(response.status, response.statusText, body);
-          } finally { if (request.abortSignal) request.abortSignal.onabort = null; }
+          } finally {
+            if (request.abortSignal) request.abortSignal.onabort = null;
+          }
         }
-      }();
-      const hub = new HubConnectionBuilder().withUrl(options.url, {
-        accessTokenFactory: async () => String(options.accessToken || ""),
-        transport: HttpTransportType.LongPolling, httpClient: client,
-      }).withHubProtocol(new MessagePackHubProtocol()).configureLogging(LogLevel.None).build();
+      })();
+      const hub = new HubConnectionBuilder()
+        .withUrl(options.url, {
+          accessTokenFactory: async () => String(options.accessToken || ""),
+          transport: HttpTransportType.LongPolling,
+          httpClient: client,
+        })
+        .withHubProtocol(new MessagePackHubProtocol())
+        .configureLogging(LogLevel.None)
+        .build();
       hub.serverTimeoutInMilliseconds = 30_000;
-      try { await this.withTimeout(hub.start(), 30_000, "[network] SignalR 连接超时"); }
-      catch (error) { await hub.stop().catch(() => {}); throw error; }
+      try {
+        await this.withTimeout(
+          hub.start(),
+          30_000,
+          "[network] SignalR 连接超时",
+        );
+      } catch (error) {
+        await hub.stop().catch(() => {});
+        throw error;
+      }
       connection = { hub, token: String(options.accessToken || ""), client };
       this.hubs.set(id, connection);
     }
     return this.withTimeout(
-      connection.hub.invoke(options.method, options.params || {}, options.invokeOptions || { UseGzip: true }),
+      connection.hub.invoke(
+        options.method,
+        options.params || {},
+        options.invokeOptions || { UseGzip: true },
+      ),
       30_000,
       "[network] 轻书架请求超时，请重试",
     );
   }
-  private withTimeout<T>(promise: Promise<T>, ms: number, reason: string): Promise<T> {
+  private withTimeout<T>(
+    promise: Promise<T>,
+    ms: number,
+    reason: string,
+  ): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     return Promise.race([
       promise,
-      new Promise<T>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(reason)), ms); }),
-    ]).finally(() => { if (timer) clearTimeout(timer); });
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(reason)), ms);
+      }),
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
   }
   private async browser(id: NovelSourceId, options: Record<string, any>) {
-    const address = safeRemote(String(options.url || ""), this.sourcesById.get(id)!.meta.url);
+    const address = safeRemote(
+      String(options.url || ""),
+      this.sourcesById.get(id)!.meta.url,
+    );
     const base = new URL(address).origin;
     const sourceSession = this.ensureSession(id);
     await this.networkProxy.ready(sourceSession);
     const win = new BrowserWindow({
-      show: false, width: 1000, height: 800,
-      webPreferences: { session: sourceSession, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+      show: false,
+      width: 1000,
+      height: 800,
+      webPreferences: {
+        session: sourceSession,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false,
+      },
     });
     this.searchWindows.add(win);
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    win.webContents.on("will-navigate", (event, url) => { try { if (new URL(url).origin !== base) event.preventDefault(); } catch { event.preventDefault(); } });
-    const timer = setTimeout(() => { if (!win.isDestroyed()) win.destroy(); }, 45_000);
+    win.webContents.on("will-navigate", (event, url) => {
+      try {
+        if (new URL(url).origin !== base) event.preventDefault();
+      } catch {
+        event.preventDefault();
+      }
+    });
+    const timer = setTimeout(() => {
+      if (!win.isDestroyed()) win.destroy();
+    }, 45_000);
     try {
       await win.loadURL(address);
-      const initial = await win.webContents.executeJavaScript("document.documentElement.outerHTML");
+      const initial = await win.webContents.executeJavaScript(
+        "document.documentElement.outerHTML",
+      );
       checkResponse(200, initial);
-      const selectors = (Array.isArray(options.inputSelectors) ? options.inputSelectors : []).filter((x: unknown) => typeof x === "string");
-      const submitted = await win.webContents.executeJavaScript(`(()=>{const sels=${JSON.stringify(selectors)};let input=sels.map(s=>document.querySelector(s)).find(Boolean);if(!input)return false;const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(input,${JSON.stringify(String(options.keyword || ""))});input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));if(input.form)input.form.requestSubmit();else{const button=document.querySelector(${JSON.stringify(String(options.submitSelector || "button[type=submit],input[type=submit]"))});if(button)button.click();else input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));}return true;})()`);
+      const selectors = (
+        Array.isArray(options.inputSelectors) ? options.inputSelectors : []
+      ).filter((x: unknown) => typeof x === "string");
+      const submitted = await win.webContents.executeJavaScript(
+        `(()=>{const sels=${JSON.stringify(selectors)};let input=sels.map(s=>document.querySelector(s)).find(Boolean);if(!input)return false;const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(input,${JSON.stringify(String(options.keyword || ""))});input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));if(input.form)input.form.requestSubmit();else{const button=document.querySelector(${JSON.stringify(String(options.submitSelector || "button[type=submit],input[type=submit]"))});if(button)button.click();else input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));}return true;})()`,
+      );
       if (!submitted) throw new Error("[parse] 小说源搜索页面缺少搜索框");
       let html = "";
       const page = Math.max(1, Math.min(100, Number(options.page) || 1));
       for (let current = 1; current <= page; current++) {
         const deadline = Date.now() + 25_000;
         const previousHtml = html;
-        const previousUrl = current > 1 ? await win.webContents.executeJavaScript("location.href") : "";
+        const previousUrl =
+          current > 1
+            ? await win.webContents.executeJavaScript("location.href")
+            : "";
         while (Date.now() < deadline) {
           await new Promise((resolve) => setTimeout(resolve, 250));
-          if (win.isDestroyed()) throw new Error("[network] 小说源浏览器搜索超时");
-          html = await win.webContents.executeJavaScript("document.documentElement.outerHTML");
+          if (win.isDestroyed())
+            throw new Error("[network] 小说源浏览器搜索超时");
+          html = await win.webContents.executeJavaScript(
+            "document.documentElement.outerHTML",
+          );
           checkResponse(200, html);
-          const currentUrl = await win.webContents.executeJavaScript("location.href");
-          if (current > 1 && currentUrl === previousUrl && html === previousHtml) continue;
-          const ready = await win.webContents.executeJavaScript(`(()=>document.querySelector(${JSON.stringify(String(options.resultSelector || "a[href]"))})||/没有找到|未找到|暂无结果|无搜索结果/.test(document.body.innerText))()`);
+          const currentUrl =
+            await win.webContents.executeJavaScript("location.href");
+          if (
+            current > 1 &&
+            currentUrl === previousUrl &&
+            html === previousHtml
+          )
+            continue;
+          const ready = await win.webContents.executeJavaScript(
+            `(()=>document.querySelector(${JSON.stringify(String(options.resultSelector || "a[href]"))})||/没有找到|未找到|暂无结果|无搜索结果/.test(document.body.innerText))()`,
+          );
           if (ready) break;
         }
-        if (!html || Date.now() >= deadline) throw new Error("[network] 小说源搜索未返回结果");
+        if (!html || Date.now() >= deadline)
+          throw new Error("[network] 小说源搜索未返回结果");
         if (current === page) return html;
-        const clicked = await win.webContents.executeJavaScript(`(()=>{const n=document.querySelector(${JSON.stringify(String(options.nextSelector || "a[rel=next]"))});if(!n)return false;n.click();return true})()`);
+        const clicked = await win.webContents.executeJavaScript(
+          `(()=>{const n=document.querySelector(${JSON.stringify(String(options.nextSelector || "a[rel=next]"))});if(!n)return false;n.click();return true})()`,
+        );
         if (!clicked) throw new Error("[parse] 已到搜索末页");
       }
       return html;
     } finally {
-      clearTimeout(timer); this.searchWindows.delete(win); if (!win.isDestroyed()) win.destroy();
+      clearTimeout(timer);
+      this.searchWindows.delete(win);
+      if (!win.isDestroyed()) win.destroy();
     }
   }
   async sources() {
-    return Promise.all([...this.sourcesById.values()].map(async (source) => {
-      const config = this.config(source.id);
-      const cookies = await this.ensureSession(source.id).cookies.get({ url: source.meta.url });
-      let logged = Boolean(config.credentials);
-      try {
-        const active = await this.scriptRuntime(source.id);
-        logged = Boolean(await active.runtime.call("isLogged"));
-      } catch { logged ||= cookies.some((cookie) => /uid|user|login|auth/i.test(cookie.name)); }
-      const settingValues = Object.fromEntries(Object.entries(source.meta.settings).flatMap(([key, schema]) => {
-        const value = (config as Record<string, unknown>)[key] ?? schema.default;
-        return value === undefined ? [] : [[key, value]];
-      }));
-      return {
-        id: source.id, name: source.meta.name, url: source.meta.url,
-        version: source.meta.version, enabled: config.enabled, logged,
-        apiNode: typeof config.apiNode === "string" ? config.apiNode : undefined,
-        error: (source as any).error,
-        update: Boolean(config.update),
-        settings: source.meta.settings,
-        settingValues,
-        capabilities: source.meta.capabilities,
-      };
-    }));
+    return Promise.all(
+      [...this.sourcesById.values()].map(async (source) => {
+        const config = this.config(source.id);
+        const cookies = await this.ensureSession(source.id).cookies.get({
+          url: source.meta.url,
+        });
+        let logged = Boolean(config.credentials);
+        try {
+          const active = await this.scriptRuntime(source.id);
+          logged = Boolean(await active.runtime.call("isLogged"));
+        } catch {
+          logged ||= cookies.some((cookie) =>
+            /uid|user|login|auth/i.test(cookie.name),
+          );
+        }
+        const settingValues = Object.fromEntries(
+          Object.entries(source.meta.settings).flatMap(([key, schema]) => {
+            const value =
+              (config as Record<string, unknown>)[key] ?? schema.default;
+            return value === undefined ? [] : [[key, value]];
+          }),
+        );
+        return {
+          id: source.id,
+          name: source.meta.name,
+          url: source.meta.url,
+          version: source.meta.version,
+          enabled: config.enabled,
+          logged,
+          apiNode:
+            typeof config.apiNode === "string" ? config.apiNode : undefined,
+          error: (source as any).error,
+          update: Boolean(config.update),
+          settings: source.meta.settings,
+          settingValues,
+          capabilities: source.meta.capabilities,
+        };
+      }),
+    );
   }
   async settings(
     id: NovelSourceId,
@@ -502,17 +839,36 @@ export class OnlineNovelService {
     for (const [key, settingValue] of Object.entries(value)) {
       if (key === "enabled") continue;
       const schema = metadata.settings[key];
-      if (!schema || ["__proto__", "constructor", "prototype"].includes(key)) throw new Error("未知小说源设置");
-      if (schema.type === "input" && typeof settingValue !== "string") throw new Error(`${schema.title || key} 必须是文本`);
-      if (schema.type === "switch" && typeof settingValue !== "boolean") throw new Error(`${schema.title || key} 必须是开关`);
-      if (schema.type === "select" && !(schema.options || []).some((option: any) => (typeof option === "string" ? option : option?.value) === settingValue)) throw new Error(`${schema.title || key} 选项无效`);
-      if (typeof settingValue === "string" && settingValue.length > 2048) throw new Error(`${schema.title || key} 内容过长`);
-      if (schema.validator && typeof settingValue === "string" && !new RegExp(schema.validator).test(settingValue)) throw new Error(`${schema.title || key} 格式无效`);
+      if (!schema || ["__proto__", "constructor", "prototype"].includes(key))
+        throw new Error("未知小说源设置");
+      if (schema.type === "input" && typeof settingValue !== "string")
+        throw new Error(`${schema.title || key} 必须是文本`);
+      if (schema.type === "switch" && typeof settingValue !== "boolean")
+        throw new Error(`${schema.title || key} 必须是开关`);
+      if (
+        schema.type === "select" &&
+        !(schema.options || []).some(
+          (option: any) =>
+            (typeof option === "string" ? option : option?.value) ===
+            settingValue,
+        )
+      )
+        throw new Error(`${schema.title || key} 选项无效`);
+      if (typeof settingValue === "string" && settingValue.length > 2048)
+        throw new Error(`${schema.title || key} 内容过长`);
+      if (
+        schema.validator &&
+        typeof settingValue === "string" &&
+        !new RegExp(schema.validator).test(settingValue)
+      )
+        throw new Error(`${schema.title || key} 格式无效`);
     }
     this.store.set("source", id, {
       ...config,
       enabled: value.enabled ?? config.enabled,
-      ...Object.fromEntries(Object.entries(value).filter(([key]) => key !== "enabled")),
+      ...Object.fromEntries(
+        Object.entries(value).filter(([key]) => key !== "enabled"),
+      ),
     });
     await this.closeSourceRuntime(id);
     this.changed();
@@ -529,7 +885,8 @@ export class OnlineNovelService {
     )
       throw new Error("请输入邮箱和密码");
     const active = await this.scriptRuntime(id);
-    if (!active.meta.capabilities.login.includes("password")) throw new Error("此小说源不支持邮箱密码登录");
+    if (!active.meta.capabilities.login.includes("password"))
+      throw new Error("此小说源不支持邮箱密码登录");
     await active.runtime.call("login", [email, password]);
     this.changed();
   }
@@ -582,9 +939,10 @@ export class OnlineNovelService {
   private async fetchSource(url: string) {
     const parsed = new URL(url);
     const githubBlob = /^\/([^/]+)\/([^/]+)\/blob\/(.+)$/.exec(parsed.pathname);
-    const normalized = parsed.hostname === "github.com" && githubBlob
-      ? `https://raw.githubusercontent.com/${githubBlob[1]}/${githubBlob[2]}/${githubBlob[3]}`
-      : url;
+    const normalized =
+      parsed.hostname === "github.com" && githubBlob
+        ? `https://raw.githubusercontent.com/${githubBlob[1]}/${githubBlob[2]}/${githubBlob[3]}`
+        : url;
     const address = safeRemote(normalized, normalized);
     const repositorySession = this.networkProxy.getSession(
       "novel-source-repositories",
@@ -592,38 +950,69 @@ export class OnlineNovelService {
     );
     await this.networkProxy.ready(repositorySession);
     const response = await repositorySession.fetch(address, {
-      signal: AbortSignal.timeout(30_000), cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
+      cache: "no-store",
     });
     if (!response.ok) throw new Error(`小说源请求失败 (${response.status})`);
     const text = await response.text();
-    if (Buffer.byteLength(text, "utf8") > 4 * 1024 * 1024) throw new Error("小说源文件超过 4 MiB");
-    if (/^\s*(?:<!doctype html|<html\b)/i.test(text)) throw new Error("链接返回网页，请使用 JS 原始文件地址");
+    if (Buffer.byteLength(text, "utf8") > 4 * 1024 * 1024)
+      throw new Error("小说源文件超过 4 MiB");
+    if (/^\s*(?:<!doctype html|<html\b)/i.test(text))
+      throw new Error("链接返回网页，请使用 JS 原始文件地址");
     return { text, url: response.url || address };
   }
   private async sourceIndex(text: string, base: string) {
     let entries: any;
-    try { entries = JSON.parse(text); } catch { throw new Error("小说源仓库不是有效 JSON"); }
-    if (!Array.isArray(entries) && entries && Array.isArray(entries.sources)) entries = entries.sources;
-    if (!Array.isArray(entries) || !entries.length || entries.length > 5000) throw new Error("小说源仓库格式无效");
+    try {
+      entries = JSON.parse(text);
+    } catch {
+      throw new Error("小说源仓库不是有效 JSON");
+    }
+    if (!Array.isArray(entries) && entries && Array.isArray(entries.sources))
+      entries = entries.sources;
+    if (!Array.isArray(entries) || !entries.length || entries.length > 5000)
+      throw new Error("小说源仓库格式无效");
     return entries.map((entry: any) => {
-      if (!entry || typeof entry !== "object") throw new Error("小说源仓库包含无效条目");
+      if (!entry || typeof entry !== "object")
+        throw new Error("小说源仓库包含无效条目");
       const raw = entry.url || entry.fileName || entry.filename;
-      if (typeof raw !== "string" || !raw) throw new Error("小说源仓库条目缺少 JS 地址");
+      if (typeof raw !== "string" || !raw)
+        throw new Error("小说源仓库条目缺少 JS 地址");
       const url = safeRemote(new URL(raw, base).href, base);
-      const existing = [...this.sourcesById.values()].find((source) => source.url === url || (entry.id && source.id === entry.id));
-      return { name: String(entry.name || entry.id || raw), url, id: typeof entry.id === "string" ? entry.id : undefined,
+      const existing = [...this.sourcesById.values()].find(
+        (source) => source.url === url || (entry.id && source.id === entry.id),
+      );
+      return {
+        name: String(entry.name || entry.id || raw),
+        url,
+        id: typeof entry.id === "string" ? entry.id : undefined,
         version: typeof entry.version === "string" ? entry.version : undefined,
-        description: typeof entry.description === "string" ? entry.description : undefined, installedId: existing?.id };
+        description:
+          typeof entry.description === "string" ? entry.description : undefined,
+        installedId: existing?.id,
+      };
     });
   }
   async openAddress(address: string) {
-    if (typeof address !== "string" || !address.trim() || address.length > 16_384) throw new Error("请输入有效小说源网址");
+    if (
+      typeof address !== "string" ||
+      !address.trim() ||
+      address.length > 16_384
+    )
+      throw new Error("请输入有效小说源网址");
     const fetched = await this.fetchSource(address.trim());
     const text = fetched.text.trimStart();
-    if (text.startsWith("[") || (text.startsWith("{") && /\"sources\"\s*:/.test(text))) {
+    if (
+      text.startsWith("[") ||
+      (text.startsWith("{") && /\"sources\"\s*:/.test(text))
+    ) {
       const entries = await this.sourceIndex(fetched.text, fetched.url);
       const repositories = await this.repositories();
-      if (!repositories.includes(fetched.url)) this.store.set("setting", "repositories", [...repositories, fetched.url]);
+      if (!repositories.includes(fetched.url))
+        this.store.set("setting", "repositories", [
+          ...repositories,
+          fetched.url,
+        ]);
       return { kind: "repository" as const, entries };
     }
     const source = await this.installScript(fetched.text, fetched.url);
@@ -631,7 +1020,11 @@ export class OnlineNovelService {
   }
   async install(address: string) {
     const fetched = await this.fetchSource(address);
-    if (fetched.text.trimStart().startsWith("[") || /\"sources\"\s*:/.test(fetched.text.slice(0, 4096))) throw new Error("这是仓库索引，请先读取并选择一个来源");
+    if (
+      fetched.text.trimStart().startsWith("[") ||
+      /\"sources\"\s*:/.test(fetched.text.slice(0, 4096))
+    )
+      throw new Error("这是仓库索引，请先读取并选择一个来源");
     return this.installScript(fetched.text, fetched.url);
   }
   async importFile() {
@@ -647,15 +1040,23 @@ export class OnlineNovelService {
     if (stat.size > 4 * 1024 * 1024) throw new Error("小说源文件超过 4 MiB");
 
     if (path.extname(file).toLowerCase() === ".js") {
-      const source = await this.installScript(await fs.readFile(file, "utf8"), "");
+      const source = await this.installScript(
+        await fs.readFile(file, "utf8"),
+        "",
+      );
       return { sources: [source], errors: [] };
     }
 
     let entries: any;
-    try { entries = JSON.parse(await fs.readFile(file, "utf8")); }
-    catch { throw new Error("本地小说源集合不是有效 JSON"); }
-    if (!Array.isArray(entries) && entries && Array.isArray(entries.sources)) entries = entries.sources;
-    if (!Array.isArray(entries) || !entries.length || entries.length > 5000) throw new Error("本地小说源集合格式无效");
+    try {
+      entries = JSON.parse(await fs.readFile(file, "utf8"));
+    } catch {
+      throw new Error("本地小说源集合不是有效 JSON");
+    }
+    if (!Array.isArray(entries) && entries && Array.isArray(entries.sources))
+      entries = entries.sources;
+    if (!Array.isArray(entries) || !entries.length || entries.length > 5000)
+      throw new Error("本地小说源集合格式无效");
 
     const baseDirectory = path.dirname(file);
     const realBaseDirectory = await fs.realpath(baseDirectory);
@@ -663,24 +1064,46 @@ export class OnlineNovelService {
     const errors: string[] = [];
     const importedFiles = new Set<string>();
     for (const [index, entry] of entries.entries()) {
-      const label = entry && typeof entry === "object"
-        ? String(entry.name || entry.id || entry.fileName || entry.filename || `第 ${index + 1} 个来源`)
-        : `第 ${index + 1} 个来源`;
+      const label =
+        entry && typeof entry === "object"
+          ? String(
+              entry.name ||
+                entry.id ||
+                entry.fileName ||
+                entry.filename ||
+                `第 ${index + 1} 个来源`,
+            )
+          : `第 ${index + 1} 个来源`;
       try {
         const relativeFile = entry?.fileName || entry?.filename;
-        if (typeof relativeFile !== "string" || !relativeFile.trim() || path.isAbsolute(relativeFile)) {
+        if (
+          typeof relativeFile !== "string" ||
+          !relativeFile.trim() ||
+          path.isAbsolute(relativeFile)
+        ) {
           throw new Error("缺少有效的相对 JS 文件名");
         }
         const resolvedFile = path.resolve(baseDirectory, relativeFile);
         const relativeToBase = path.relative(baseDirectory, resolvedFile);
-        if (!relativeToBase || relativeToBase === ".." || relativeToBase.startsWith(`..${path.sep}`) || path.isAbsolute(relativeToBase)) {
+        if (
+          !relativeToBase ||
+          relativeToBase === ".." ||
+          relativeToBase.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relativeToBase)
+        ) {
           throw new Error("JS 文件必须位于集合 JSON 所在目录内");
         }
-        if (path.extname(resolvedFile).toLowerCase() !== ".js") throw new Error("集合条目必须指向 .js 文件");
+        if (path.extname(resolvedFile).toLowerCase() !== ".js")
+          throw new Error("集合条目必须指向 .js 文件");
 
         const realFile = await fs.realpath(resolvedFile);
         const realRelativeFile = path.relative(realBaseDirectory, realFile);
-        if (!realRelativeFile || realRelativeFile === ".." || realRelativeFile.startsWith(`..${path.sep}`) || path.isAbsolute(realRelativeFile)) {
+        if (
+          !realRelativeFile ||
+          realRelativeFile === ".." ||
+          realRelativeFile.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(realRelativeFile)
+        ) {
           throw new Error("JS 文件必须位于集合 JSON 所在目录内");
         }
         if (importedFiles.has(realFile)) continue;
@@ -688,8 +1111,11 @@ export class OnlineNovelService {
 
         const scriptStat = await fs.stat(realFile);
         if (!scriptStat.isFile()) throw new Error("JS 来源不是文件");
-        if (scriptStat.size > 4 * 1024 * 1024) throw new Error("小说源脚本超过 4 MiB");
-        sources.push(await this.installScript(await fs.readFile(realFile, "utf8"), ""));
+        if (scriptStat.size > 4 * 1024 * 1024)
+          throw new Error("小说源脚本超过 4 MiB");
+        sources.push(
+          await this.installScript(await fs.readFile(realFile, "utf8"), ""),
+        );
       } catch (error) {
         errors.push(`${label}：${message(error)}`);
       }
@@ -698,13 +1124,27 @@ export class OnlineNovelService {
   }
   private async installScript(script: string, url: string, updateId?: string) {
     const stageId = `staging-${randomUUID()}`;
-    const stage: SavedSource = { id: stageId, script, url, hash: hash(script), meta: {} as NovelRuntimeMeta, settings: { enabled: true } };
+    const stage: SavedSource = {
+      id: stageId,
+      script,
+      url,
+      hash: hash(script),
+      meta: {} as NovelRuntimeMeta,
+      settings: { enabled: true },
+    };
     this.sourcesById.set(stageId, stage);
-    const state: NovelRuntimeState = { data: {}, settings: {}, credentials: {} };
-    const runtime = new NovelScriptRuntime(script, state, (message) => this.runtimeHost(stageId, message));
+    const state: NovelRuntimeState = {
+      data: {},
+      settings: {},
+      credentials: {},
+    };
+    const runtime = new NovelScriptRuntime(script, state, (message) =>
+      this.runtimeHost(stageId, message),
+    );
     let meta: NovelRuntimeMeta;
-    try { meta = await runtime.open(); }
-    finally {
+    try {
+      meta = await runtime.open();
+    } finally {
       runtime.dispose();
       this.sourcesById.delete(stageId);
       const stageSession = this.sessions.get(stageId);
@@ -713,38 +1153,77 @@ export class OnlineNovelService {
     }
     const id = meta.id;
     const old = this.sourcesById.get(id);
-    if (updateId && updateId !== id) throw new Error("更新脚本的小说源标识发生变化");
-    const config = old ? { ...this.config(id), update: undefined } : { enabled: true };
-    const record: SavedSource = { id, script, url: url || meta.url, hash: hash(script), meta, settings: config };
-    this.store.set("source-script", id, { id, script, url: record.url, hash: record.hash, meta });
+    if (updateId && updateId !== id)
+      throw new Error("更新脚本的小说源标识发生变化");
+    const config = old
+      ? { ...this.config(id), update: undefined }
+      : { enabled: true };
+    const record: SavedSource = {
+      id,
+      script,
+      url: url || meta.url,
+      hash: hash(script),
+      meta,
+      settings: config,
+    };
+    this.store.set("source-script", id, {
+      id,
+      script,
+      url: record.url,
+      hash: record.hash,
+      meta,
+    });
     if (!old) this.store.set("source", id, config);
-    this.sourcesById.set(id, record); this.ensureSession(id); await this.closeSourceRuntime(id); this.changed();
+    this.sourcesById.set(id, record);
+    this.ensureSession(id);
+    await this.closeSourceRuntime(id);
+    this.changed();
     return (await this.sources()).find((source) => source.id === id)!;
   }
   async checkUpdates() {
-    await Promise.all([...this.sourcesById.values()].map(async (source) => {
-      const updateUrl = source.meta.updateUrl || source.url;
-      if (!updateUrl) return;
-      try { const { text } = await this.fetchSource(updateUrl); const config = this.config(source.id); config.update = hash(text) !== source.hash; this.store.set("source", source.id, config); }
-      catch (error) { (source as any).error = message(error); }
-    }));
-    this.changed(); return this.sources();
+    await Promise.all(
+      [...this.sourcesById.values()].map(async (source) => {
+        const updateUrl = source.meta.updateUrl || source.url;
+        if (!updateUrl) return;
+        try {
+          const { text } = await this.fetchSource(updateUrl);
+          const config = this.config(source.id);
+          config.update = hash(text) !== source.hash;
+          this.store.set("source", source.id, config);
+        } catch (error) {
+          (source as any).error = message(error);
+        }
+      }),
+    );
+    this.changed();
+    return this.sources();
   }
   async update(id: NovelSourceId) {
     const source = this.sourcesById.get(this.source(id))!;
     const updateUrl = source.meta.updateUrl || source.url;
-    if (!updateUrl) throw new Error("此本地来源没有更新地址，请从新脚本文件重新导入");
+    if (!updateUrl)
+      throw new Error("此本地来源没有更新地址，请从新脚本文件重新导入");
     const { text, url } = await this.fetchSource(updateUrl);
     return this.installScript(text, url, id);
   }
   async uninstall(id: NovelSourceId) {
     this.source(id);
-    for (const task of this.store.all<SavedTask>("download")) if (task.sourceId === id && ["queued", "downloading"].includes(task.state)) {
-      this.jobs.get(task.id)?.abort(); task.state = "paused"; task.error = undefined; this.store.set("download", task.id, task);
-    }
+    for (const task of this.store.all<SavedTask>("download"))
+      if (
+        task.sourceId === id &&
+        ["queued", "downloading"].includes(task.state)
+      ) {
+        this.jobs.get(task.id)?.abort();
+        task.state = "paused";
+        task.error = undefined;
+        this.store.set("download", task.id, task);
+      }
     await this.closeSourceRuntime(id);
     await this.ensureSession(id).clearStorageData();
-    this.sourcesById.delete(id); this.store.delete("source-script", id); this.store.delete("source", id); this.store.delete("source-data", id);
+    this.sourcesById.delete(id);
+    this.store.delete("source-script", id);
+    this.store.delete("source", id);
+    this.store.delete("source-data", id);
     this.changed();
   }
   private searchWindows = new Set<BrowserWindow>();
@@ -761,8 +1240,12 @@ export class OnlineNovelService {
     if (typeof keyword !== "string" || !keyword.trim() || keyword.length > 300)
       throw new Error("请输入搜索内容");
     this.page(page);
-    if (!this.sourcesById.get(this.source(id))!.meta.capabilities.search) throw new Error("此小说源不支持搜索");
-    const result = await this.provider(id).search(keyword.trim(), page) as NovelSearchPage;
+    if (!this.sourcesById.get(this.source(id))!.meta.capabilities.search)
+      throw new Error("此小说源不支持搜索");
+    const result = (await this.provider(id).search(
+      keyword.trim(),
+      page,
+    )) as NovelSearchPage;
     result.novels.forEach((n) => this.cacheSummary(n));
     return { ...result, novels: result.novels.map((n) => this.present(n)) };
   }
@@ -773,8 +1256,14 @@ export class OnlineNovelService {
   async discover(id: NovelSourceId, kind: "latest" | "popular", page: number) {
     this.page(page);
     if (!["latest", "popular"].includes(kind)) throw new Error("无效发现栏目");
-    if (!this.sourcesById.get(this.source(id))!.meta.capabilities[kind]) throw new Error(`此小说源不支持${kind === "latest" ? "最近更新" : "热门作品"}`);
-    const result = await this.provider(id).discover(kind, page) as NovelSearchPage;
+    if (!this.sourcesById.get(this.source(id))!.meta.capabilities[kind])
+      throw new Error(
+        `此小说源不支持${kind === "latest" ? "最近更新" : "热门作品"}`,
+      );
+    const result = (await this.provider(id).discover(
+      kind,
+      page,
+    )) as NovelSearchPage;
     result.novels.forEach((n) => this.cacheSummary(n));
     return { ...result, novels: result.novels.map((n) => this.present(n)) };
   }
@@ -802,7 +1291,10 @@ export class OnlineNovelService {
               fetched.updatedAt &&
               saved.updatedAt !== fetched.updatedAt))
         )
-          this.store.delete("cache", chapterKey({ ...ref, chapterId: chapter.id }));
+          this.store.delete(
+            "cache",
+            chapterKey({ ...ref, chapterId: chapter.id }),
+          );
       }
       const record = { ...saved, ...fetched };
       this.store.set("book", key, record);
@@ -831,9 +1323,7 @@ export class OnlineNovelService {
     }
     const tasks = this.store.all<SavedTask>("download");
     const downloaded = new Set(
-      tasks
-        .filter((task) => task.state === "completed")
-        .map((task) => task.id),
+      tasks.filter((task) => task.state === "completed").map((task) => task.id),
     );
     return this.present({
       ...saved!,
@@ -846,9 +1336,7 @@ export class OnlineNovelService {
           "progress",
           chapterKey({ ...ref, chapterId: c.id }),
         )?.progress,
-        downloaded: downloaded.has(
-          chapterKey({ ...ref, chapterId: c.id }),
-        ),
+        downloaded: downloaded.has(chapterKey({ ...ref, chapterId: c.id })),
       })),
     });
   }
@@ -861,7 +1349,7 @@ export class OnlineNovelService {
       throw new Error("无效书架栏目");
     const refs =
       section === "downloads"
-      ? this.store
+        ? this.store
             .all<SavedTask>("download")
             .filter((t) => t.state === "completed")
         : this.store.all<OnlineNovelRef>(section);
@@ -889,7 +1377,9 @@ export class OnlineNovelService {
       : novels;
   }
   async removeHistory(ref?: OnlineNovelRef) {
-    const refs = ref ? [this.ref(ref)] : this.store.all<OnlineNovelRef>("history");
+    const refs = ref
+      ? [this.ref(ref)]
+      : this.store.all<OnlineNovelRef>("history");
     for (const item of refs) {
       const key = bookKey(item);
       this.store.delete("history", key);
@@ -1024,9 +1514,10 @@ export class OnlineNovelService {
     const details = await this.details(ref);
     const chapter = details.chapters.find((c) => c.id === ref.chapterId);
     if (!chapter) throw new Error("章节已被移除，请刷新目录");
-    const content = await this.provider(ref.sourceId).chapter(
-      ref.novelId,
-      chapter,
+    const content = await this.chapterRequests.run(
+      ref.sourceId,
+      () => this.provider(ref.sourceId).chapter(ref.novelId, chapter),
+      signal,
     );
     signal?.throwIfAborted();
     const bundle: ChapterBundle = await chapterEpub(content, (url) =>
@@ -1168,7 +1659,7 @@ export class OnlineNovelService {
   async downloads() {
     return this.store
       .all<SavedTask>("download")
-      .map(({ directory: _d, bundle: _b, ...task }) => task);
+      .map(({ directory: _d, bundle: _b, retryCount: _r, ...task }) => task);
   }
   async revealDownload(id: string) {
     const task = this.store.get<SavedTask>("download", id);
@@ -1248,11 +1739,19 @@ export class OnlineNovelService {
       root = await this.downloadDirectory();
     // Readable layout: <download root>/<source name>/<novel title>/<chapter>.epub
     const directory = this.novelFolderFor(root, ref, details.title);
-    for (const chapterId of [...new Set(chapterIds)]) {
+    const chapters = [...new Set(chapterIds)].map((chapterId) => {
       const chapter = details.chapters.find((c) => c.id === chapterId);
       if (!chapter) throw new Error("下载列表包含无效章节");
+      return chapter;
+    });
+    for (const chapter of chapters) {
+      const chapterId = chapter.id;
       const id = chapterKey({ ...ref, chapterId });
-      if (this.store.get("download", id)) continue;
+      const existing = this.store.get<SavedTask>("download", id);
+      if (existing) {
+        if (existing.state === "failed") this.requeue(existing);
+        continue;
+      }
       this.store.set("download", id, {
         ...ref,
         chapterId,
@@ -1266,6 +1765,36 @@ export class OnlineNovelService {
     }
     this.changed();
     this.pump();
+  }
+  private requeue(task: SavedTask) {
+    task.state = "queued";
+    task.error = undefined;
+    task.retryAt = undefined;
+    task.retryCount = 0;
+    this.store.set("download", task.id, task);
+  }
+  async retryFailed() {
+    const failed = this.store
+      .all<SavedTask>("download")
+      .filter((task) => task.state === "failed");
+    for (const task of failed) this.requeue(task);
+    this.changed();
+    this.pump();
+    return failed.length;
+  }
+  getDownloadConcurrency() {
+    const saved = Number(
+      this.store.get<number>("setting", "download-concurrency"),
+    );
+    return Number.isInteger(saved) && saved >= 1 && saved <= 5 ? saved : 1;
+  }
+  setDownloadConcurrency(value: number) {
+    if (!Number.isInteger(value) || value < 1 || value > 5)
+      throw new Error("并发下载数必须在 1 到 5 之间");
+    this.store.set("setting", "download-concurrency", value);
+    this.changed();
+    this.pump();
+    return value;
   }
   async downloadAction(
     id: string,
@@ -1290,6 +1819,8 @@ export class OnlineNovelService {
       if (task.state === "completed") return;
       task.state = action === "pause" ? "paused" : "queued";
       task.error = undefined;
+      task.retryAt = undefined;
+      task.retryCount = 0;
       this.store.set("download", id, task);
     }
     this.changed();
@@ -1297,8 +1828,11 @@ export class OnlineNovelService {
   }
   private pump() {
     if (this.closed) return;
+    clearTimeout(this.pumpTimer);
+    this.pumpTimer = undefined;
+    let nextWake = Infinity;
     for (const task of this.store.all<SavedTask>("download").reverse()) {
-      if (this.jobs.size >= 2) break;
+      if (this.jobs.size >= this.getDownloadConcurrency()) break;
       if (task.state !== "queued" || this.jobs.has(task.id)) continue;
       if (
         [...this.jobs.keys()].some(
@@ -1308,15 +1842,31 @@ export class OnlineNovelService {
         )
       )
         continue;
+      const readyAt = Math.max(
+        task.retryAt || 0,
+        this.chapterRequests.availableAt(task.sourceId),
+      );
+      if (readyAt > Date.now()) {
+        nextWake = Math.min(nextWake, readyAt);
+        continue;
+      }
       const controller = new AbortController();
       this.jobs.set(task.id, controller);
       task.state = "downloading";
+      task.retryAt = undefined;
       this.store.set("download", task.id, task);
       this.changed();
       void this.runDownload(task, controller.signal).finally(() => {
         this.jobs.delete(task.id);
         this.pump();
       });
+    }
+    if (Number.isFinite(nextWake)) {
+      this.pumpTimer = setTimeout(
+        () => this.pump(),
+        Math.max(1, nextWake - Date.now()),
+      );
+      this.pumpTimer.unref();
     }
   }
   /** `<chapter title>.epub`, kept unique against the novel's other chapters. */
@@ -1428,11 +1978,17 @@ export class OnlineNovelService {
       task.size = record.size;
       task.state = "completed";
       task.error = undefined;
+      task.retryAt = undefined;
+      task.retryCount = undefined;
       this.store.set("download", task.id, task);
       this.changed();
     } catch (error) {
       if (!signal.aborted && !this.closed) {
-        task.state = "failed";
+        const delay = rateLimitDelay(error);
+        const retry = delay !== undefined && (task.retryCount || 0) < 3;
+        task.state = retry ? "queued" : "failed";
+        task.retryAt = retry ? Date.now() + delay! : undefined;
+        if (retry) task.retryCount = (task.retryCount || 0) + 1;
         task.error = message(error);
         this.store.set("download", task.id, task);
         this.changed();
@@ -1499,8 +2055,13 @@ export class OnlineNovelService {
     )
       throw new Error("下载费用、权限或报价有效期发生变化，请重新确认");
     const source = await this.scriptRuntime(quote.sourceId);
-    const downloaded = await source.runtime.call("downloadEpub", [quote.novelId]);
-    const data = downloaded instanceof ArrayBuffer ? new Uint8Array(downloaded) : new Uint8Array(downloaded);
+    const downloaded = await source.runtime.call("downloadEpub", [
+      quote.novelId,
+    ]);
+    const data =
+      downloaded instanceof ArrayBuffer
+        ? new Uint8Array(downloaded)
+        : new Uint8Array(downloaded);
     if (!data.length) throw new Error("源站返回了空 EPUB");
     let validEpub = false;
     try {
@@ -1594,9 +2155,12 @@ export class OnlineNovelService {
   }
   close() {
     this.closed = true;
+    clearTimeout(this.pumpTimer);
+    this.chapterRequests.close();
     this.change.dispose();
     for (const c of this.jobs.values()) c.abort();
-    for (const id of this.active.keys()) void this.closeSourceRuntime(id).catch(() => {});
+    for (const id of this.active.keys())
+      void this.closeSourceRuntime(id).catch(() => {});
     for (const win of this.logins.values()) win.destroy();
     for (const win of this.searchWindows) win.destroy();
     this.store.close();
@@ -1606,7 +2170,11 @@ export function installOnlineNovels(
   getWindow: () => BrowserWindow | null,
   networkProxy: NetworkProxyManager,
 ) {
-  const service = new OnlineNovelService(getWindow, app.getPath("userData"), networkProxy);
+  const service = new OnlineNovelService(
+    getWindow,
+    app.getPath("userData"),
+    networkProxy,
+  );
   const allowed = new Set<string>(NOVEL_API_METHODS);
   ipcMain.handle("novel:call", (event, method: string, args: unknown[]) => {
     if (

@@ -4,6 +4,7 @@ import {
   BrowserWindow,
   ipcMain,
   protocol,
+  screen,
   safeStorage,
   session,
   shell,
@@ -876,9 +877,53 @@ export function installMusic(
         return;
       }
       const main = getMain()!;
+      const defaultSize =
+        name === "mini"
+          ? { width: 480, height: 72 }
+          : { width: 900, height: 150 };
+      const minimumSize =
+        name === "mini"
+          ? { width: 360, height: 64 }
+          : { width: 320, height: 96 };
+      const savedBounds = disk[`window:${name}`];
+      let bounds: { x?: number; y?: number; width: number; height: number } = {
+        ...defaultSize,
+      };
+      if (
+        savedBounds &&
+        [
+          savedBounds.x,
+          savedBounds.y,
+          savedBounds.width,
+          savedBounds.height,
+        ].every(Number.isFinite)
+      ) {
+        const workArea = screen.getDisplayMatching(savedBounds).workArea;
+        const width = Math.min(
+          Math.max(savedBounds.width, minimumSize.width),
+          workArea.width,
+        );
+        const height = Math.min(
+          Math.max(savedBounds.height, minimumSize.height),
+          workArea.height,
+        );
+        bounds = {
+          x: Math.max(
+            workArea.x,
+            Math.min(savedBounds.x, workArea.x + workArea.width - width),
+          ),
+          y: Math.max(
+            workArea.y,
+            Math.min(savedBounds.y, workArea.y + workArea.height - height),
+          ),
+          width,
+          height,
+        };
+      }
       const win = new BrowserWindow({
-        width: name === "mini" ? 380 : 900,
-        height: name === "mini" ? 180 : 150,
+        ...bounds,
+        minWidth: minimumSize.width,
+        minHeight: minimumSize.height,
         icon: app.isPackaged
           ? path.join(process.resourcesPath, "kaleid-icon.png")
           : path.resolve(projectRoot, "build/kaleid-icon.png"),
@@ -900,7 +945,28 @@ export function installMusic(
         },
       });
       windows.set(name, win);
-      win.on("closed", () => windows.delete(name));
+      let boundsTimer: ReturnType<typeof setTimeout> | undefined;
+      const persistBounds = () => {
+        if (win.isDestroyed()) return;
+        const rectangle = win.getBounds();
+        store.set(`window:${name}`, {
+          x: rectangle.x,
+          y: rectangle.y,
+          width: rectangle.width,
+          height: rectangle.height,
+        });
+      };
+      const scheduleBoundsSave = () => {
+        clearTimeout(boundsTimer);
+        boundsTimer = setTimeout(persistBounds, 250);
+      };
+      win.on("resize", scheduleBoundsSave);
+      win.on("move", scheduleBoundsSave);
+      win.on("close", persistBounds);
+      win.on("closed", () => {
+        clearTimeout(boundsTimer);
+        windows.delete(name);
+      });
       win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       const base = process.env.ELECTRON_RENDERER_URL || "app://local/";
       await win.loadURL(`${base}#music-${name}`);

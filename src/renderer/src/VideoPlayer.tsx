@@ -36,6 +36,7 @@ import type {
   VideoTrack,
 } from "../../shared/video";
 import { report, useApp } from "./store";
+import { isPlaybackSpaceShortcut } from "./playbackSpace";
 import { useVideoChrome } from "./useVideoChrome";
 import { useVideoOverlay } from "./useVideoOverlay";
 import "./video.css";
@@ -329,14 +330,18 @@ export default function VideoPlayer({
         )
       )
         return;
+      if (event.code === "Space" || event.key === " ") {
+        const current = latest.current.state;
+        if (!current || !isPlaybackSpaceShortcut(event)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void command({ type: "pause", value: !current.paused });
+        return;
+      }
       const current = latest.current.state;
       if (!current) return;
       let action: (() => void) | undefined;
       switch (event.key.toLowerCase()) {
-        case " ":
-          action = () =>
-            void command({ type: "pause", value: !current.paused });
-          break;
         case "arrowleft":
           action = () =>
             void command({

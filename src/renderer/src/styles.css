@@ -2504,19 +2504,9 @@ select {
 .stage-content .stage-album h1 {
   font-size: 25px;
 }
-.stage-controls .transport {
-  gap: 25px;
-}
-.stage-controls .transport .icon-button > svg {
-  height: 19px;
-  width: 19px;
-}
-.stage-controls .transport .play-button > svg {
-  height: 20px;
-  width: 20px;
-}
 .stage-options {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 12px;
@@ -3161,15 +3151,18 @@ select {
   background: light-dark(var(--app-surface), #242427);
   padding: 20px;
   border-radius: 16px;
+  -webkit-app-region: no-drag;
 }
 .companion-drag {
   position: absolute;
-  inset: 0;
+  inset: 8px;
+  z-index: 0;
   -webkit-app-region: drag;
 }
 .companion-window button {
   -webkit-app-region: no-drag;
   position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3180,8 +3173,8 @@ select {
 }
 .companion-close {
   position: absolute !important;
-  top: 6px;
-  right: 6px;
+  top: 12px;
+  right: 12px;
 }
 .companion-controls {
   display: flex;
@@ -3195,7 +3188,7 @@ select {
   text-overflow: ellipsis;
 }
 .desktop-lyrics {
-  background: light-dark(color-mix(in srgb, var(--app-surface) 75%, transparent), rgba(20, 20, 22, 0.75));
+  background: transparent;
 }
 .desktop-lyrics p {
   font-size: 30px;
@@ -3207,9 +3200,103 @@ select {
 }
 .folia-lyrics-stage {
   position: absolute;
-  inset: 80px 0 0;
+  inset: 0;
   overflow: hidden;
   isolation: isolate;
+}
+.companion-mini {
+  display: block;
+  padding: 0;
+  border-radius: 0;
+}
+.companion-mini-row {
+  position: absolute;
+  inset: 8px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  z-index: 1;
+  -webkit-app-region: drag;
+}
+.companion-cover {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--app-surface);
+}
+.companion-cover-empty {
+  display: grid;
+  place-items: center;
+  color: var(--app-muted);
+}
+.companion-track-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 550;
+}
+.companion-mini .companion-controls {
+  align-items: center;
+  gap: 2px;
+}
+.companion-mini .companion-controls button {
+  width: 32px;
+  height: 34px;
+  padding: 4px;
+  border-radius: 8px;
+}
+.companion-mini .companion-controls button:hover {
+  background: var(--ui-ffffff12);
+}
+.companion-progress {
+  position: absolute;
+  left: 59px;
+  right: 2px;
+  bottom: 0;
+  height: 12px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.companion-progress::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 3px;
+  background: linear-gradient(
+    to right,
+    var(--ui-eee) var(--companion-progress),
+    var(--ui-ffffff25) var(--companion-progress)
+  );
+}
+.companion-progress::-webkit-slider-thumb {
+  width: 8px;
+  height: 8px;
+  margin-top: -2.5px;
+  appearance: none;
+  border-radius: 50%;
+  background: var(--ui-fff);
+}
+.desktop-lyrics.companion-window {
+  padding: 12px 40px;
+  border-radius: 0;
+}
+.desktop-lyrics p {
+  margin: 0;
+  max-width: 100%;
+  text-align: center;
+  -webkit-app-region: drag;
+}
+html[data-music-window="lyrics"],
+html[data-music-window="lyrics"] body,
+html[data-music-window="lyrics"] #root {
+  width: 100%;
+  height: 100%;
+  background: transparent !important;
 }
 .folia-stage-options {
   position: absolute;
@@ -3239,15 +3326,116 @@ select {
   padding: 0;
 }
 .music-stage > header {
-  position: relative;
+  position: absolute;
+  top: max(10px, env(safe-area-inset-top));
+  left: var(--music-stage-edge-x);
+  right: var(--music-stage-edge-x);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 0;
+  padding: 0;
   z-index: 80;
 }
-.folia-stage-transport {
+.music-stage > header .eyebrow {
+  flex: 0 0 auto;
+}
+.music-stage .stage-header-actions {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: clamp(4px, 1.5vw, 16px);
+  max-width: calc(100vw - 120px);
+}
+.music-stage .stage-header-actions > button {
+  white-space: nowrap;
+}
+.music-stage .stage-header-actions > .text-button:first-child {
+  flex: 0 0 clamp(104px, 8vw, 124px);
+  width: clamp(104px, 8vw, 124px);
+  text-align: center;
+}
+.music-stage.lyrics-only {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+.music-stage {
+  --music-stage-edge-x: clamp(14px, 3vw, 36px);
+}
+.music-stage.lyrics-only .folia-lyrics-stage {
+  width: 100%;
+  height: 100%;
+}
+.music-stage.lyrics-only .folia-lyrics-stage > .relative.w-full.h-full {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+}
+.music-stage.lyrics-only .folia-stage-options {
+  right: var(--music-stage-edge-x);
+  bottom: max(10px, env(safe-area-inset-bottom));
+  max-width: min(
+    calc(50vw - 12px),
+    calc(100vw - var(--music-stage-edge-x) - var(--music-stage-edge-x))
+  );
+  overflow-x: auto;
+}
+.music-stage:not(.lyrics-only) .stage-content {
+  padding: clamp(96px, calc(3vh + 88px), 136px) 9% max(180px, 18vh);
+}
+.music-stage:not(.lyrics-only) .stage-controls {
+  position: absolute;
+  z-index: 2;
+  left: 9%;
+  bottom: clamp(96px, 9vh, 132px);
+  width: min(38vw, 640px);
+  max-width: calc(41vw - 90px);
+  margin: 0;
+}
+@media (max-width: 900px) {
+  .music-stage:not(.lyrics-only) .stage-controls {
+    left: var(--music-stage-edge-x);
+    right: var(--music-stage-edge-x);
+    width: auto;
+    max-width: none;
+    bottom: max(100px, calc(72px + env(safe-area-inset-bottom)));
+  }
+}
+@media (max-width: 760px) {
+  .music-stage > header {
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .music-stage .stage-header-actions {
+    gap: 2px;
+    max-width: calc(100vw - 100px);
+  }
+  .music-stage .stage-header-actions .text-button {
+    padding: 5px;
+    font-size: 11px;
+  }
+  .music-stage .stage-header-actions > .text-button:first-child {
+    flex-basis: 94px;
+    width: 94px;
+  }
+  .music-stage.lyrics-only .folia-stage-options {
+    bottom: max(70px, calc(10px + env(safe-area-inset-bottom)));
+    max-width: calc(100vw - var(--music-stage-edge-x) - var(--music-stage-edge-x));
+  }
+}
+.music-stage-transport {
   position: absolute;
   z-index: 65;
   left: 50%;
-  bottom: 24px;
+  bottom: max(10px, env(safe-area-inset-bottom));
   transform: translateX(-50%);
+  max-width: calc(100vw - 24px);
   background: var(--ui-222d);
   padding: 8px 20px;
   border-radius: 30px;

@@ -7,6 +7,10 @@ import "./styles.css";
 import "./reader.css";
 import "./theme.css";
 import { initializeTheme } from "./theme";
+if (location.hash === "#music-lyrics")
+  document.documentElement.dataset.musicWindow = "lyrics";
+else if (location.hash === "#music-mini")
+  document.documentElement.dataset.musicWindow = "mini";
 initializeTheme();
 
 class ErrorBoundary extends React.Component<

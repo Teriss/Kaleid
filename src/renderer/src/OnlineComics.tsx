@@ -1570,7 +1570,21 @@ export default function OnlineComics({
     [onlineFavorites, setOnlineFavorites] = useState<OnlineComic[]>([]),
     [downloaded, setDownloaded] = useState<OnlineComic[]>([]);
   const [downloadSourceFilter, setDownloadSourceFilter] = useState("all");
-  const [downloadSort, setDownloadSort] = useState("download-newest");
+  const [downloadSort, setDownloadSort] = useState(() => {
+    const saved = localStorage.getItem("comic:downloads-sort");
+    return [
+      "download-newest",
+      "download-oldest",
+      "title-asc",
+      "title-desc",
+      "pages-desc",
+      "pages-asc",
+      "rating-desc",
+      "rating-asc",
+    ].includes(saved || "")
+      ? saved!
+      : "download-newest";
+  });
   const [downloadSearchOpen, setDownloadSearchOpen] = useState(false);
   const [downloadSearch, setDownloadSearch] = useState("");
   const downloadSearchInput = useRef<HTMLInputElement>(null);
@@ -1866,8 +1880,12 @@ export default function OnlineComics({
             return -titleOrder || a.index - b.index;
           case "pages-desc":
             return (b.comic.maxPage || 0) - (a.comic.maxPage || 0) || a.index - b.index;
+          case "pages-asc":
+            return (a.comic.maxPage || 0) - (b.comic.maxPage || 0) || a.index - b.index;
           case "rating-desc":
             return (b.comic.stars || 0) - (a.comic.stars || 0) || a.index - b.index;
+          case "rating-asc":
+            return (a.comic.stars || 0) - (b.comic.stars || 0) || a.index - b.index;
           case "download-newest":
           default:
             return (
@@ -4532,14 +4550,20 @@ export default function OnlineComics({
                     className="comic-download-sort"
                     aria-label="已下载漫画排序方式"
                     value={downloadSort}
-                    onChange={(event) => setDownloadSort(event.target.value)}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setDownloadSort(value);
+                      localStorage.setItem("comic:downloads-sort", value);
+                    }}
                   >
                     <option value="download-newest">下载时间（新到旧）</option>
                     <option value="download-oldest">下载时间（旧到新）</option>
                     <option value="title-asc">标题升序</option>
                     <option value="title-desc">标题降序</option>
                     <option value="pages-desc">页数（多到少）</option>
+                    <option value="pages-asc">页数（少到多）</option>
                     <option value="rating-desc">评分（高到低）</option>
+                    <option value="rating-asc">评分（低到高）</option>
                   </select>
                 )}
                 {section === "downloads" && (

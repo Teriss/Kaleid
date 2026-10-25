@@ -409,6 +409,8 @@ export interface DownloadQueueGroup {
   activeTaskIds: string[];
   /** Tasks the user paused; they stay listed so they can be resumed. */
   pausedTaskIds: string[];
+  failedTaskIds?: string[];
+  failures?: { title: string; error: string }[];
   downloading: number;
   queued: number;
   paused: number;
@@ -422,12 +424,22 @@ export function DownloadQueueModal({
   pause,
   resume,
   cancel,
+  retry,
+  retryAll,
+  concurrency,
+  onConcurrencyChange,
+  title = "下载中",
 }: {
   groups: DownloadQueueGroup[];
   close(): void;
   pause(taskIds: string[]): void;
   resume(taskIds: string[]): void;
   cancel(taskIds: string[]): void;
+  retry?(taskIds: string[]): void;
+  retryAll?(): void;
+  concurrency?: number;
+  onConcurrencyChange?(value: number): void;
+  title?: string;
 }) {
   const activeTasks = groups.reduce(
     (sum, group) => sum + group.activeTaskIds.length,
@@ -437,19 +449,51 @@ export function DownloadQueueModal({
     (sum, group) => sum + group.pausedTaskIds.length,
     0,
   );
+  const failedTasks = groups.reduce(
+    (sum, group) => sum + (group.failedTaskIds?.length || 0),
+    0,
+  );
   return (
     <Modal
-      title="下载中"
+      title={title}
       subtitle={[
         `${groups.length} 部作品`,
         activeTasks ? `${activeTasks} 个章节任务` : "",
         pausedTasks ? `${pausedTasks} 个已暂停` : "",
+        failedTasks ? `${failedTasks} 个失败` : "",
       ]
         .filter(Boolean)
         .join(" · ")}
       className="download-queue-modal"
       close={close}
     >
+      {((retryAll && failedTasks > 0) || onConcurrencyChange) && (
+        <div className="download-queue-tools">
+          {retryAll && failedTasks > 0 && (
+            <button className="button secondary" onClick={retryAll}>
+              重试全部失败（{failedTasks}）
+            </button>
+          )}
+          {onConcurrencyChange && (
+            <label className="download-queue-concurrency">
+              同时下载章节
+              <select
+                aria-label="小说同时下载章节数"
+                value={concurrency ?? 1}
+                onChange={(event) =>
+                  onConcurrencyChange(Number(event.target.value))
+                }
+              >
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
       {groups.length ? (
         <div className="download-queue-list">
           {groups.map((group) => (
@@ -472,8 +516,28 @@ export function DownloadQueueModal({
                   )}
                   <small>{group.progressLabel}</small>
                 </div>
+                {!!group.failures?.length && (
+                  <details className="download-queue-failures">
+                    <summary>查看失败原因</summary>
+                    <ul>
+                      {group.failures.map((failure, index) => (
+                        <li key={index}>
+                          {failure.title}：{failure.error}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </div>
               <div className="download-queue-actions">
+                {retry && !!group.failedTaskIds?.length && (
+                  <button
+                    className="button secondary"
+                    onClick={() => retry(group.failedTaskIds!)}
+                  >
+                    重试失败
+                  </button>
+                )}
                 {group.activeTaskIds.length > 0 && (
                   <button
                     className="button secondary"
@@ -501,7 +565,9 @@ export function DownloadQueueModal({
           ))}
         </div>
       ) : (
-        <p className="download-queue-empty">当前没有正在下载或排队的内容。</p>
+        <p className="download-queue-empty">
+          {retry ? "当前没有未完成的下载。" : "当前没有正在下载或排队的内容。"}
+        </p>
       )}
     </Modal>
   );
