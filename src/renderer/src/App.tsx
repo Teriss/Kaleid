@@ -121,6 +121,7 @@ import {
 } from "./music/catalog";
 import Viewer from "./Viewers";
 import SettingsPanel from "./SettingsPanel";
+import AppUpdatePrompt from "./AppUpdatePrompt";
 import useBrowseTransition from "./layouts/useBrowseTransition";
 import {
   hideVideo,
@@ -3292,6 +3293,7 @@ export default function App() {
           </button>
         </div>
       )}
+      <AppUpdatePrompt />
     </div>
   );
 }

@@ -9,10 +9,11 @@ import {
   shell,
   utilityProcess,
 } from "electron";
+import electronUpdater from "electron-updater";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
 import { byteRange, isWithin, normalized } from "./core";
@@ -30,6 +31,7 @@ import { validateNetworkProxy } from "../shared/networkProxy";
 import { installWindowControls } from "./windowControls";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const { autoUpdater } = electronUpdater;
 const testUserDataPath = process.env.MEDIA_BROWSER_TEST_DATA;
 const appDataPath = app.getPath("appData");
 const userDataPath = testUserDataPath || path.join(appDataPath, "Kaleid");
@@ -66,6 +68,132 @@ protocol.registerSchemesAsPrivileged([
 let window: BrowserWindow | null = null;
 const bindWindowControls = installWindowControls(() => window);
 let appTheme: Settings["theme"] = "dark";
+const updatesSupported = app.isPackaged && process.platform === "win32";
+let ignoredUpdateVersion: string | undefined;
+let updateCheckPending = false;
+let autoUpdateDelay: ReturnType<typeof setTimeout> | undefined;
+let autoUpdateInterval: ReturnType<typeof setInterval> | undefined;
+let updateState: import("../shared/types").AppUpdateState = {
+  supported: updatesSupported,
+  currentVersion: app.getVersion(),
+  status: "idle",
+};
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = false;
+autoUpdater.allowPrerelease = true;
+if (
+  updatesSupported &&
+  !existsSync(path.join(process.resourcesPath, "app-update.yml"))
+)
+  autoUpdater.setFeedURL({
+    provider: "github",
+    owner: "Teriss",
+    repo: "Kaleid",
+  });
+const publishUpdateState = (
+  patch: Partial<typeof updateState>,
+) => {
+  updateState = { ...updateState, ...patch, currentVersion: app.getVersion() };
+  for (const win of BrowserWindow.getAllWindows())
+    if (!win.isDestroyed()) win.webContents.send("app:update-state", updateState);
+};
+autoUpdater.on("checking-for-update", () =>
+  publishUpdateState({
+    status: "checking",
+    message: undefined,
+    percent: undefined,
+    version: undefined,
+  }),
+);
+autoUpdater.on("update-available", (info) => {
+  if (info.version === ignoredUpdateVersion) {
+    publishUpdateState({
+      status: "ignored",
+      version: info.version,
+      percent: undefined,
+      message: undefined,
+    });
+    return;
+  }
+  publishUpdateState({
+    status: "available",
+    version: info.version,
+    message: "发现新版本",
+    percent: undefined,
+  });
+});
+autoUpdater.on("update-not-available", (info) =>
+  publishUpdateState({
+    status: "not-available",
+    version: info.version,
+    percent: undefined,
+    message: "当前已是最新版本",
+  }),
+);
+autoUpdater.on("download-progress", (progress) =>
+  publishUpdateState({
+    status: "downloading",
+    percent: progress.percent,
+    message: `正在下载更新（${Math.floor(progress.percent)}%）`,
+  }),
+);
+autoUpdater.on("update-downloaded", (info) =>
+  publishUpdateState({
+    status: "downloaded",
+    version: info.version,
+    percent: 100,
+    message: "更新已下载，重启后安装",
+  }),
+);
+autoUpdater.on("error", (error) =>
+  publishUpdateState({ status: "error", message: error.message }),
+);
+async function checkForAppUpdates(): Promise<typeof updateState> {
+  if (!updatesSupported) {
+    publishUpdateState({
+      status: "error",
+      message: "仅 Windows 安装版支持更新",
+    });
+    return updateState;
+  }
+  if (
+    updateCheckPending ||
+    ["available", "downloading", "downloaded"].includes(updateState.status) ||
+    (updateState.status === "error" && Boolean(updateState.version))
+  )
+    return updateState;
+  updateCheckPending = true;
+  publishUpdateState({
+    status: "checking",
+    message: "正在检查更新…",
+    percent: undefined,
+    version: undefined,
+  });
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    publishUpdateState({
+      status: "error",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    updateCheckPending = false;
+  }
+  return updateState;
+}
+function configureAutomaticUpdates(enabled: boolean) {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  if (autoUpdateDelay) clearTimeout(autoUpdateDelay);
+  if (autoUpdateInterval) clearInterval(autoUpdateInterval);
+  autoUpdateDelay = undefined;
+  autoUpdateInterval = undefined;
+  if (!enabled || !updatesSupported) return;
+  autoUpdateDelay = setTimeout(() => void checkForAppUpdates(), 3000);
+  autoUpdateDelay.unref?.();
+  autoUpdateInterval = setInterval(() => void checkForAppUpdates(), 6 * 60 * 60 * 1000);
+  autoUpdateInterval.unref?.();
+}
 const networkProxy = new NetworkProxyManager(DEFAULT_SETTINGS.networkProxy);
 function synchronizeTheme(theme: Settings["theme"]) {
   appTheme = theme === "light" ? "light" : "dark";
@@ -196,6 +324,11 @@ function validateSettings(input: Settings): Settings {
     input as Settings & { readerBackgroundColor?: unknown },
   );
   return {
+    autoUpdate: input.autoUpdate !== false,
+    ignoredUpdateVersion:
+      typeof input.ignoredUpdateVersion === "string"
+        ? input.ignoredUpdateVersion.slice(0, 80)
+        : undefined,
     networkProxy: validateNetworkProxy(input.networkProxy),
     theme: input.theme === "light" ? "light" : "dark",
     navigationAutoHide: input.navigationAutoHide !== false,
@@ -630,6 +763,8 @@ void app
           theme: args[0]?.theme === "light" ? "light" : "dark",
         };
         const previous = (await call("settings")) as Settings;
+        if (!args[0].ignoredUpdateVersion && previous.ignoredUpdateVersion)
+          args[0].ignoredUpdateVersion = previous.ignoredUpdateVersion;
         await networkProxy.setSettings(args[0].networkProxy);
         try {
           await call(method, ...args);
@@ -637,6 +772,8 @@ void app
           await networkProxy.setSettings(previous.networkProxy).catch(() => {});
           throw error;
         }
+        if (previous.autoUpdate !== args[0].autoUpdate)
+          configureAutomaticUpdates(args[0].autoUpdate);
         synchronizeTheme(args[0].theme);
         return;
       }
@@ -659,7 +796,63 @@ void app
         throw new Error("无效主题来源");
       return appTheme;
     });
+    const assertAppUpdateSender = (event: Electron.IpcMainInvokeEvent) => {
+      if (
+        !BrowserWindow.fromWebContents(event.sender) ||
+        event.senderFrame !== event.sender.mainFrame
+      )
+        throw new Error("无效更新操作来源");
+    };
+    ipcMain.handle("app:update-state", (event) => {
+      assertAppUpdateSender(event);
+      return updateState;
+    });
+    ipcMain.handle("app:update-check", async (event) => {
+      assertAppUpdateSender(event);
+      return checkForAppUpdates();
+    });
+    ipcMain.handle("app:update-download", async (event) => {
+      assertAppUpdateSender(event);
+      if (
+        !updatesSupported ||
+        !updateState.version ||
+        !["available", "error"].includes(updateState.status)
+      )
+        return updateState;
+      publishUpdateState({ status: "downloading", percent: 0, message: "正在下载更新（0%）" });
+      try {
+        await autoUpdater.downloadUpdate();
+      } catch (error) {
+        publishUpdateState({
+          status: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return updateState;
+    });
+    ipcMain.handle("app:update-ignore", async (event, version: unknown) => {
+      assertAppUpdateSender(event);
+      if (typeof version !== "string" || !version || version !== updateState.version)
+        throw new Error("无效的更新版本");
+      const settings = (await call("settings")) as Settings;
+      await call("saveSettings", { ...settings, ignoredUpdateVersion: version });
+      ignoredUpdateVersion = version;
+      publishUpdateState({
+        status: "ignored",
+        version,
+        percent: undefined,
+        message: undefined,
+      });
+    });
+    ipcMain.handle("app:update-install", (event) => {
+      assertAppUpdateSender(event);
+      if (updateState.status !== "downloaded")
+        throw new Error("更新尚未下载完成");
+      autoUpdater.quitAndInstall();
+    });
     const startupSettings = (await call("settings")) as Settings;
+    ignoredUpdateVersion = startupSettings.ignoredUpdateVersion;
+    configureAutomaticUpdates(startupSettings.autoUpdate);
     await networkProxy.setSettings(startupSettings.networkProxy);
     appTheme = startupSettings.theme === "light" ? "light" : "dark";
     function createWindow() {
@@ -720,6 +913,9 @@ void app
         void call("reconcile").catch((error) =>
           console.error("Media reconcile failed:", error),
         );
+      });
+      window.on("close", (event) => {
+        if (updateState.status === "downloading") event.preventDefault();
       });
       window.on("closed", () => {
         musicService.closeWindows();

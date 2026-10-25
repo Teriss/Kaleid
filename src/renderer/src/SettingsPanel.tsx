@@ -11,11 +11,13 @@ import {
   Video,
   Search,
   Globe,
+  RefreshCw,
 } from "lucide-react";
 import { IconButton, Modal } from "./components";
 import { act, useApp } from "./store";
 import ReaderPreferences from "./ReaderPreferences";
 import type { ComicSourceInfo } from "../../shared/onlineComics";
+import type { AppUpdateState } from "../../shared/types";
 import NetworkProxySettingsPanel from "./NetworkProxySettings";
 
 export default function SettingsPanel({
@@ -32,12 +34,20 @@ export default function SettingsPanel({
   const [search, setSearch] = useState("");
   const [confirm, setConfirm] = useState(false);
   const [comicSources, setComicSources] = useState<ComicSourceInfo[]>([]);
+  const [updateState, setUpdateState] = useState<AppUpdateState>();
   useEffect(() => {
     let live = true;
+    const unsubscribeUpdate = window.media.onUpdateState((state) => {
+      if (live) setUpdateState(state);
+    });
+    void window.media
+      .updateState()
+      .then((state) => { if (live) setUpdateState(state); })
+      .catch(() => {});
     void window.media.onlineComics.sources()
       .then((sources) => { if (live) setComicSources(sources); })
       .catch(() => { if (live) setComicSources([]); });
-    return () => { live = false; };
+    return () => { live = false; unsubscribeUpdate(); };
   }, []);
   const groups = [
     { id: "appearance", label: "外观", icon: Monitor },
@@ -48,10 +58,16 @@ export default function SettingsPanel({
     { id: "music", label: "音乐", icon: AudioLines },
     { id: "video", label: "视频", icon: Video },
     { id: "network-proxy", label: "网络与代理", icon: Globe },
+    { id: "updates", label: "更新", icon: RefreshCw },
   ];
   const active = search
     ? (groups.find((group) => group.label.includes(search))?.id ?? section)
     : section;
+  const updatePromptActive = Boolean(
+    updateState &&
+      (["available", "downloading", "downloaded"].includes(updateState.status) ||
+        (updateState.status === "error" && updateState.version)),
+  );
   return (
     <Modal title="设置" close={close} className="settings-modal">
       <aside className="settings-navigation">
@@ -74,7 +90,9 @@ export default function SettingsPanel({
               {group.label}
             </button>
           ))}
-        <span className="settings-version">Kaleid 0.4.0 preview 5</span>
+        <span className="settings-version">
+          Kaleid {updateState?.currentVersion || ""}
+        </span>
       </aside>
       <main className="settings-body">
         <div className="settings-heading">
@@ -113,6 +131,62 @@ export default function SettingsPanel({
           </div>
         )}
         {active === "network-proxy" && <NetworkProxySettingsPanel />}
+        {active === "updates" && (
+          <div className="settings-group settings-update-group">
+            <div className="setting-row">
+              <span>
+                <strong>自动检测更新</strong>
+                <small>启动时和每 6 小时检测一次</small>
+              </span>
+              <button
+                role="switch"
+                aria-label="自动检测更新"
+                aria-checked={settings.autoUpdate}
+                disabled={!updateState?.supported}
+                className={`switch ${settings.autoUpdate ? "on" : ""}`}
+                onClick={() =>
+                  void act(() =>
+                    setSettings({ ...settings, autoUpdate: !settings.autoUpdate }),
+                  )
+                }
+              >
+                <span />
+              </button>
+            </div>
+            <div className="setting-row settings-update-row">
+              <div>
+                <strong>当前版本 {updateState?.currentVersion || "读取中…"}</strong>
+                {updateState?.message && (
+                  <p role="status">{updateState.message}</p>
+                )}
+              </div>
+              <div className="settings-update-actions">
+                <button
+                  className="button secondary"
+                  disabled={
+                    !updateState?.supported ||
+                    updateState?.status === "checking" ||
+                    updatePromptActive
+                  }
+                  onClick={() =>
+                    void act(async () =>
+                      setUpdateState(await window.media.checkForUpdates()),
+                    )
+                  }
+                >
+                  <RefreshCw size={15} />检查更新
+                </button>
+              </div>
+            </div>
+            {!updateState?.supported && (
+              <p className="settings-update-unavailable" role="status">
+                {updateState
+                  ? "更新仅支持 Windows 安装版，当前运行模式不可用。"
+                  : "正在读取更新支持状态…"}
+              </p>
+            )}
+          </div>
+        )}
         {active === "appearance" && (
           <>
             <h3>显示与动效</h3>

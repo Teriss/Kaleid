@@ -206,6 +206,8 @@ export interface ComicContext {
   bookmarks: ComicBookmark[];
 }
 export interface Settings {
+  autoUpdate: boolean;
+  ignoredUpdateVersion?: string;
   networkProxy: import("./networkProxy").NetworkProxySettings;
   theme: "dark" | "light";
   videoAutoPictureInPicture: boolean;
@@ -230,6 +232,7 @@ export interface Settings {
   lyricsPresentation: "split" | "fullscreen" | "wall";
 }
 export const DEFAULT_SETTINGS: Settings = {
+  autoUpdate: true,
   networkProxy: {
     profiles: [],
     defaultRoute: { mode: "system" },
@@ -266,6 +269,12 @@ export interface OnlineChangeEvent {
   download?: boolean;
 }
 export interface AppAPI {
+  updateState(): Promise<AppUpdateState>;
+  checkForUpdates(): Promise<AppUpdateState>;
+  downloadUpdate(): Promise<AppUpdateState>;
+  ignoreUpdate(version: string): Promise<void>;
+  installUpdate(): Promise<void>;
+  onUpdateState(callback: (state: AppUpdateState) => void): () => void;
   windowState(): Promise<import("./windowControls").MainWindowState>;
   windowCommand(command: import("./windowControls").MainWindowCommand): Promise<void>;
   windowDrag(value: import("./windowControls").MainWindowDrag): Promise<void>;
@@ -358,6 +367,22 @@ export interface AppAPI {
   onHistoryChange(callback: () => void): () => void;
   onIndexChange(callback: (change: IndexChange) => void): () => void;
   onScan(callback: (status: ScanStatus) => void): () => void;
+}
+export interface AppUpdateState {
+  supported: boolean;
+  currentVersion: string;
+  status:
+    | "idle"
+    | "checking"
+    | "not-available"
+    | "available"
+    | "ignored"
+    | "downloading"
+    | "downloaded"
+    | "error";
+  version?: string;
+  percent?: number;
+  message?: string;
 }
 export interface MusicMetadataCandidate {
   source: "netease" | "qq" | "kugou" | "amll";

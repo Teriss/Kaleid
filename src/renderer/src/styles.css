@@ -1536,6 +1536,70 @@ select {
   color: light-dark(var(--app-muted), #818186);
   margin-top: 5px;
 }
+.settings-update-row {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.settings-update-row > div:first-child {
+  min-width: min(100%, 260px);
+}
+.settings-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-update-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.settings-update-group .setting-row:first-child > span {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.settings-update-group .setting-row:first-child small {
+  color: light-dark(var(--app-muted), #818186);
+  font-size: 10px;
+}
+.settings-update-unavailable {
+  color: light-dark(#b42318, #f28b82);
+  font-size: 10px;
+  line-height: 1.6;
+  margin: 10px 14px 12px;
+}
+.app-update-modal {
+  width: 430px;
+  padding-bottom: 22px;
+}
+.app-update-modal > header {
+  margin-bottom: 18px;
+}
+.app-update-content > p {
+  color: light-dark(var(--app-muted), #aaa);
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 0 0 18px;
+}
+.app-update-content > progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  accent-color: var(--app-accent);
+}
+.app-update-content > small {
+  display: block;
+  color: light-dark(var(--app-muted), #888);
+  font-size: 10px;
+  margin-top: 8px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.app-update-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
 .setting-row select {
   max-width: 150px;
   padding: 6px 25px 6px 10px;

@@ -221,6 +221,18 @@ api.comicHub = {
     api.onlineComics.onChange(callback),
 };
 api.appTheme = () => ipcRenderer.invoke("app:theme");
+api.updateState = () => ipcRenderer.invoke("app:update-state");
+api.checkForUpdates = () => ipcRenderer.invoke("app:update-check");
+api.downloadUpdate = () => ipcRenderer.invoke("app:update-download");
+api.ignoreUpdate = (version: string) =>
+  ipcRenderer.invoke("app:update-ignore", version);
+api.installUpdate = () => ipcRenderer.invoke("app:update-install");
+api.onUpdateState = (callback: Parameters<AppAPI["onUpdateState"]>[0]) => {
+  const listener = (_event: unknown, state: Parameters<typeof callback>[0]) =>
+    callback(state);
+  ipcRenderer.on("app:update-state", listener);
+  return () => ipcRenderer.removeListener("app:update-state", listener);
+};
 api.windowState = () => ipcRenderer.invoke("app:window-state");
 api.windowCommand = (command: Parameters<AppAPI["windowCommand"]>[0]) => ipcRenderer.invoke("app:window-command", command);
 api.windowDrag = (value: Parameters<AppAPI["windowDrag"]>[0]) => ipcRenderer.invoke("app:window-drag", value);
