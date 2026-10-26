@@ -860,30 +860,6 @@ export default function NovelViewer({
   useEffect(() => {
     if (!showChrome) return;
     setSeekDraft((actualProgressValue / 10).toFixed(1));
-    const node = panel.current;
-    node
-      ?.querySelector<HTMLButtonElement>("button")
-      ?.focus({ preventScroll: true });
-    const key = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") return;
-      const controls = Array.from(
-        node?.querySelectorAll<HTMLElement>("button,input,select") || [],
-      ).filter((el) => !(el as HTMLButtonElement).disabled);
-      if (
-        document.activeElement ===
-        (event.shiftKey ? controls[0] : controls.at(-1))
-      ) {
-        event.preventDefault();
-        (event.shiftKey ? controls.at(-1) : controls[0])?.focus();
-      }
-    };
-    node?.addEventListener("keydown", key);
-    return () => {
-      node?.removeEventListener("keydown", key);
-      (container.current || epubHost.current?.querySelector("iframe"))?.focus({
-        preventScroll: true,
-      });
-    };
   }, [showChrome]);
   async function crossChapter(direction: number) {
     const context = onlineRef.current;

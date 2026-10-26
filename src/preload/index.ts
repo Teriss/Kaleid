@@ -217,8 +217,9 @@ api.comicHub = {
   following: () => api.onlineComics.following(),
   checkFollowing: (ref?: import("../shared/onlineComics").OnlineComicRef) =>
     api.onlineComics.checkFollowing(ref),
-  onChange: (callback: (event?: import("../shared/types").OnlineChangeEvent) => void) =>
-    api.onlineComics.onChange(callback),
+  onChange: (
+    callback: (event?: import("../shared/types").OnlineChangeEvent) => void,
+  ) => api.onlineComics.onChange(callback),
 };
 api.appTheme = () => ipcRenderer.invoke("app:theme");
 api.updateState = () => ipcRenderer.invoke("app:update-state");
@@ -237,19 +238,34 @@ api.onUpdateState = (callback: Parameters<AppAPI["onUpdateState"]>[0]) => {
   return () => ipcRenderer.removeListener("app:update-state", listener);
 };
 api.windowState = () => ipcRenderer.invoke("app:window-state");
-api.windowCommand = (command: Parameters<AppAPI["windowCommand"]>[0]) => ipcRenderer.invoke("app:window-command", command);
-api.windowDrag = (value: Parameters<AppAPI["windowDrag"]>[0]) => ipcRenderer.invoke("app:window-drag", value);
+api.windowCommand = (command: Parameters<AppAPI["windowCommand"]>[0]) =>
+  ipcRenderer.invoke("app:window-command", command);
+api.windowDrag = (value: Parameters<AppAPI["windowDrag"]>[0]) =>
+  ipcRenderer.invoke("app:window-drag", value);
 api.onWindowState = (callback: Parameters<AppAPI["onWindowState"]>[0]) => {
-  const listener = (_event: unknown, state: Parameters<typeof callback>[0]) => callback(state);
+  const listener = (_event: unknown, state: Parameters<typeof callback>[0]) =>
+    callback(state);
   ipcRenderer.on("app:window-state", listener);
   return () => ipcRenderer.removeListener("app:window-state", listener);
 };
-api.onWindowChromePointer = (callback: Parameters<AppAPI["onWindowChromePointer"]>[0]) => {
+api.onWindowChromePointer = (
+  callback: Parameters<AppAPI["onWindowChromePointer"]>[0],
+) => {
   let active = true;
-  const listener = (_event: unknown, state: Parameters<typeof callback>[0]) => { if (active) callback(state); };
+  const listener = (_event: unknown, state: Parameters<typeof callback>[0]) => {
+    if (active) callback(state);
+  };
   ipcRenderer.on("app:window-chrome-pointer", listener);
-  void ipcRenderer.invoke("app:window-chrome-pointer").then((state) => { if (active) callback(state); }).catch(() => {});
-  return () => { active = false; ipcRenderer.removeListener("app:window-chrome-pointer", listener); };
+  void ipcRenderer
+    .invoke("app:window-chrome-pointer")
+    .then((state) => {
+      if (active) callback(state);
+    })
+    .catch(() => {});
+  return () => {
+    active = false;
+    ipcRenderer.removeListener("app:window-chrome-pointer", listener);
+  };
 };
 api.onTheme = (callback: (theme: "dark" | "light") => void) => {
   const listener = (_event: unknown, theme: "dark" | "light") =>
@@ -309,9 +325,18 @@ const music: Record<string, any> = Object.fromEntries(
 music.publish = (state: unknown) => ipcRenderer.send("music:publish", state);
 music.command = (command: string, value?: number) =>
   ipcRenderer.send("music:command", command, value);
+music.windowSnapshot = () => ipcRenderer.invoke("music:window-snapshot");
+music.windowInitial = () => null;
+music.windowBootstrap = () => ipcRenderer.invoke("music:window-bootstrap");
+music.windowReady = () => ipcRenderer.send("music:window-ready");
+music.windowPin = (value?: boolean) =>
+  ipcRenderer.invoke("music:window-pin", value);
+music.windowInteraction = (active: boolean) =>
+  ipcRenderer.send("music:window-interaction", active);
 for (const [method, channel] of [
   ["onState", "music:state"],
   ["onCommand", "music:command"],
+  ["onWindowPointer", "music:window-pointer"],
 ])
   music[method] = (callback: (...args: any[]) => void) => {
     const listener = (_event: unknown, ...args: any[]) => callback(...args);

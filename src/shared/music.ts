@@ -99,23 +99,64 @@ export interface MusicAPI {
   items(ids: string[]): Promise<MediaItem[]>;
   session(): Promise<{ session: MusicSession; items: MediaItem[] } | null>;
   saveSession(session: MusicSession, items: MediaItem[]): Promise<void>;
-  window(
-    action: "mini" | "lyrics" | "close-mini" | "close-lyrics",
-  ): Promise<void>;
-  publish(state: MusicWindowState): void;
-  onState(callback: (state: MusicWindowState) => void): () => void;
+  window(action: "mini" | "close-mini"): Promise<void>;
+  windowSnapshot(): Promise<MusicWindowState>;
+  windowInitial(): MusicWindowBootstrap | null;
+  windowBootstrap(): Promise<MusicWindowBootstrap>;
+  windowReady(): void;
+  windowPin(value?: boolean): Promise<boolean>;
+  windowInteraction(active: boolean): void;
+  onWindowPointer(callback: (inside: boolean) => void): () => void;
+  publish(state: Partial<MusicWindowState>): void;
+  onState(callback: (state: Partial<MusicWindowState>) => void): () => void;
   command(command: string, value?: number): void;
   onCommand(callback: (command: string, value?: number) => void): () => void;
 }
 export interface MusicWindowState {
+  trackId: string;
   title: string;
   artist: string;
-  lyric: string;
   playing: boolean;
   position: number;
   duration: number;
   cover?: string;
+  updatedAt: number;
+  volume: number;
+  muted: boolean;
+  repeat: import("./types").MusicRepeat;
+  order: import("./types").MusicOrder;
+  favorite: boolean;
+  reducedMotion: boolean;
+  lyrics: MusicWindowLyric[];
 }
+export interface MusicWindowBootstrap {
+  state: MusicWindowState;
+  pinned: boolean;
+  theme: "dark" | "light";
+}
+export interface MusicWindowLyric {
+  time: number;
+  text: string;
+  translation?: string;
+  romanization?: string;
+  words?: { time: number; duration: number; text: string }[];
+}
+export const EMPTY_MUSIC_WINDOW_STATE: MusicWindowState = {
+  trackId: "",
+  title: "",
+  artist: "",
+  playing: false,
+  position: 0,
+  duration: 0,
+  updatedAt: 0,
+  volume: 0.7,
+  muted: false,
+  repeat: "off",
+  order: "sequential",
+  favorite: false,
+  reducedMotion: false,
+  lyrics: [],
+};
 declare global {
   interface Window {
     music: MusicAPI;

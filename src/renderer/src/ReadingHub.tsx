@@ -225,36 +225,8 @@ export function ReadingHubMenu({
   items: { section: string; label: string; Icon: LucideIcon }[];
   navigate(section: string): void;
 }) {
-  const layer = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const previous = document.activeElement;
-    layer.current
-      ?.querySelector<HTMLButtonElement>("aside button")
-      ?.focus({ preventScroll: true });
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") return;
-      const buttons = Array.from(
-        layer.current?.querySelectorAll<HTMLButtonElement>("aside button") ||
-          [],
-      );
-      const edge = event.shiftKey ? buttons[0] : buttons.at(-1);
-      if (document.activeElement === edge) {
-        event.preventDefault();
-        (event.shiftKey ? buttons.at(-1) : buttons[0])?.focus();
-      }
-    };
-    const node = layer.current;
-    node?.addEventListener("keydown", keydown);
-    return () => {
-      node?.removeEventListener("keydown", keydown);
-      if (previous instanceof HTMLElement && previous.isConnected)
-        previous.focus({ preventScroll: true });
-    };
-  }, [open]);
   return (
     <div
-      ref={layer}
       className={`comic-main-menu-layer ${open ? "is-open" : ""}`}
       aria-hidden={!open}
       inert={!open}
@@ -598,9 +570,6 @@ export function HubContextMenu({
     const rect = node.getBoundingClientRect();
     node.style.left = `${Math.max(8, Math.min(point.x, window.innerWidth - rect.width - 8))}px`;
     node.style.top = `${Math.max(8, Math.min(point.y, window.innerHeight - rect.height - 8))}px`;
-    node.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus({
-      preventScroll: true,
-    });
   }, [point.x, point.y, items.length]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
@@ -633,22 +602,6 @@ export function HubContextMenu({
         aria-label="内容操作"
         style={{ left: point.x, top: point.y }}
         onMouseDown={(event) => event.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-          event.preventDefault();
-          const buttons = [
-            ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-              "[role=menuitem]",
-            ),
-          ];
-          const current = buttons.indexOf(
-            document.activeElement as HTMLButtonElement,
-          );
-          buttons[
-            (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) %
-              buttons.length
-          ]?.focus();
-        }}
       >
         {heading && <div className="context-heading">{heading}</div>}
         {items.map((item) => (

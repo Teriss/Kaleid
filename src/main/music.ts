@@ -4,7 +4,6 @@ import {
   BrowserWindow,
   ipcMain,
   protocol,
-  screen,
   safeStorage,
   session,
   shell,
@@ -16,6 +15,8 @@ import { randomUUID, createHash, randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { MediaItem } from "../shared/types";
 import type { MusicWindowState } from "../shared/music";
+import { EMPTY_MUSIC_WINDOW_STATE } from "../shared/music";
+import { installMusicMiniWindow } from "./musicMiniWindow";
 import { NETWORK_PROXY_KEYS } from "../shared/networkProxy";
 import type { NetworkProxyManager } from "./networkProxy";
 
@@ -411,15 +412,15 @@ export function installMusic(
     protocol.handle(`folia-${provider}`, (request) =>
       bridge(provider).handleAudioRequest(request),
     );
-  let current: MusicWindowState = {
-    title: "",
-    artist: "",
-    lyric: "",
-    playing: false,
-    position: 0,
-    duration: 0,
-  };
-  const windows = new Map<string, BrowserWindow>();
+  let current: MusicWindowState = { ...EMPTY_MUSIC_WINDOW_STATE };
+  const mini = installMusicMiniWindow({
+    getMain,
+    projectRoot,
+    read: (key) => store.get(key),
+    write: (key, value) => store.set(key, value),
+    snapshot: () => current,
+    theme: getTheme,
+  });
   const trusted = (
     event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent,
     auxiliary = false,
@@ -427,10 +428,7 @@ export function installMusic(
     if (
       event.senderFrame !== event.sender.mainFrame ||
       (event.sender !== getMain()?.webContents &&
-        !(
-          auxiliary &&
-          [...windows.values()].some((w) => event.sender === w.webContents)
-        ))
+        !(auxiliary && mini.isSender(event.sender)))
     )
       throw new Error("音乐接口访问被拒绝");
   };
@@ -865,121 +863,16 @@ export function installMusic(
       return;
     }
     if (method === "window") {
-      const action = args[0];
-      const name = action.replace("close-", "");
-      if (!["mini", "lyrics"].includes(name)) throw new Error("无效的音乐窗口");
-      if (action.startsWith("close-")) {
-        windows.get(name)?.close();
-        return;
-      }
-      if (windows.has(name)) {
-        windows.get(name)!.show();
-        return;
-      }
-      const main = getMain()!;
-      const defaultSize =
-        name === "mini"
-          ? { width: 480, height: 72 }
-          : { width: 900, height: 150 };
-      const minimumSize =
-        name === "mini"
-          ? { width: 360, height: 64 }
-          : { width: 320, height: 96 };
-      const savedBounds = disk[`window:${name}`];
-      let bounds: { x?: number; y?: number; width: number; height: number } = {
-        ...defaultSize,
-      };
-      if (
-        savedBounds &&
-        [
-          savedBounds.x,
-          savedBounds.y,
-          savedBounds.width,
-          savedBounds.height,
-        ].every(Number.isFinite)
-      ) {
-        const workArea = screen.getDisplayMatching(savedBounds).workArea;
-        const width = Math.min(
-          Math.max(savedBounds.width, minimumSize.width),
-          workArea.width,
-        );
-        const height = Math.min(
-          Math.max(savedBounds.height, minimumSize.height),
-          workArea.height,
-        );
-        bounds = {
-          x: Math.max(
-            workArea.x,
-            Math.min(savedBounds.x, workArea.x + workArea.width - width),
-          ),
-          y: Math.max(
-            workArea.y,
-            Math.min(savedBounds.y, workArea.y + workArea.height - height),
-          ),
-          width,
-          height,
-        };
-      }
-      const win = new BrowserWindow({
-        ...bounds,
-        minWidth: minimumSize.width,
-        minHeight: minimumSize.height,
-        icon: app.isPackaged
-          ? path.join(process.resourcesPath, "kaleid-icon.png")
-          : path.resolve(projectRoot, "build/kaleid-icon.png"),
-        frame: false,
-        transparent: name === "lyrics",
-        backgroundColor:
-          name === "lyrics"
-            ? "#00000000"
-            : getTheme() === "light"
-              ? "#eeefec"
-              : "#141414",
-        alwaysOnTop: true,
-        resizable: true,
-        webPreferences: {
-          preload: path.join(projectRoot, "out/preload/index.cjs"),
-          sandbox: true,
-          contextIsolation: true,
-          nodeIntegration: false,
-        },
-      });
-      windows.set(name, win);
-      let boundsTimer: ReturnType<typeof setTimeout> | undefined;
-      const persistBounds = () => {
-        if (win.isDestroyed()) return;
-        const rectangle = win.getBounds();
-        store.set(`window:${name}`, {
-          x: rectangle.x,
-          y: rectangle.y,
-          width: rectangle.width,
-          height: rectangle.height,
-        });
-      };
-      const scheduleBoundsSave = () => {
-        clearTimeout(boundsTimer);
-        boundsTimer = setTimeout(persistBounds, 250);
-      };
-      win.on("resize", scheduleBoundsSave);
-      win.on("move", scheduleBoundsSave);
-      win.on("close", persistBounds);
-      win.on("closed", () => {
-        clearTimeout(boundsTimer);
-        windows.delete(name);
-      });
-      win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-      const base = process.env.ELECTRON_RENDERER_URL || "app://local/";
-      await win.loadURL(`${base}#music-${name}`);
-      win.webContents.send("music:state", current);
-      return;
+      if (args[0] === "mini") return mini.open();
+      if (args[0] === "close-mini") return mini.close();
+      throw new Error("无效的音乐窗口");
     }
     throw new Error("未知的音乐接口");
   });
-  ipcMain.on("music:publish", (event, state: MusicWindowState) => {
+  ipcMain.on("music:publish", (event, state: Partial<MusicWindowState>) => {
     trusted(event);
-    current = state;
-    for (const win of windows.values())
-      win.webContents.send("music:state", current);
+    current = { ...current, ...state };
+    mini.publish(state);
   });
   ipcMain.on("music:command", (event, command: string, value?: number) => {
     trusted(event, true);
@@ -993,15 +886,19 @@ export function installMusic(
         "seek",
         "expand",
         "close",
+        "favorite",
+        "repeat",
+        "order",
+        "volume",
+        "mute",
+        "queue",
       ].includes(command)
     ) {
       if (command === "close") {
-        [...windows.values()]
-          .find((w) => event.sender === w.webContents)
-          ?.close();
+        mini.close();
         return;
       }
-      if (command === "expand") {
+      if (command === "expand" || command === "queue") {
         const main = getMain();
         if (main?.isMinimized()) main.restore();
         main?.show();
@@ -1014,14 +911,14 @@ export function installMusic(
   app.on("before-quit", () => {
     if (quitting) return;
     quitting = true;
-    for (const win of windows.values()) win.destroy();
+    mini.destroy();
     void bridges.get("qq-backend")?.stop();
     void bridges.get("ytm")?.shutdown();
     catalog.close();
   });
   return {
     closeWindows() {
-      for (const win of windows.values()) win.close();
+      mini.close();
     },
     clearRecent(id?: string) {
       if (id !== undefined && !remoteItem(id))

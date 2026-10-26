@@ -93,7 +93,11 @@ import {
 } from "./layouts/memory";
 import { PagedMediaSource, useMediaSource } from "./layouts/source";
 import { singleCollectionMedia } from "./layouts/collectionActivation";
-import { isPlaybackSpaceShortcut } from "./playbackSpace";
+import {
+  isPlaybackSpaceShortcut,
+  shouldPreventPlaybackSpace,
+} from "./playbackSpace";
+import { isTextEntryTarget } from "./desktopInteraction";
 import BravaisWall from "./layouts/BravaisWall";
 import SpatialGrid from "./layouts/SpatialGrid";
 import LibraryCarousel from "./layouts/LibraryCarousel";
@@ -182,7 +186,6 @@ export default function App() {
   );
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [settingsSection, setSettingsSection] = useState("appearance");
-  const [musicPreview, setMusicPreview] = useState<MediaItem | null>(null);
   const parents = useRef(new ParentNavigationStack());
   const suspendedSearches = useRef(new SuspendedSearchSessions());
   const parentStackRollback = useRef<NavigationSnapshot[] | null>(null);
@@ -727,7 +730,6 @@ export default function App() {
       current?.source?.dispose();
       return null;
     });
-    setMusicPreview(null);
     usePlayback.setState({
       expanded: false,
       queueVisible: false,
@@ -1028,7 +1030,6 @@ export default function App() {
     if (item.type === "music") {
       musicDestination.current = { open: true, id: item.id };
       if (viewer?.item.type === "video") setViewer(null);
-      setMusicPreview(null);
       const playback = usePlayback.getState();
       if (playback.track?.id !== item.id) playback.play(item, origin.items);
       usePlayback.setState({ expanded: true, queueVisible: false });
@@ -1237,7 +1238,6 @@ export default function App() {
       return;
     }
     closeSurface(() => {
-      setMusicPreview(null);
       usePlayback.setState({ expanded: false });
     });
   };
@@ -1290,7 +1290,7 @@ export default function App() {
     window.dispatchEvent(new Event("wall:flush"));
     const active: NavigationSurface[] = [];
     if (viewer || presentationSnapshot.current?.viewer) active.push("viewer");
-    if (playerExpanded || musicPreview) active.push("music");
+    if (playerExpanded) active.push("music");
     if (queueVisible) active.push("queue");
     if (matchOpen) active.push("match");
     if (overlay && overlay !== "layout") active.push("overlay");
@@ -1312,10 +1312,8 @@ export default function App() {
         : viewer
           ? { id: viewer.item.id, index: viewer.index }
           : undefined,
-      musicDetailId:
-        musicPreview?.id ??
-        (playerExpanded ? musicDestination.current.id : undefined),
-      musicExpanded: playerExpanded || Boolean(musicPreview),
+      musicDetailId: playerExpanded ? musicDestination.current.id : undefined,
+      musicExpanded: playerExpanded,
       queueOpen: queueVisible,
       matchOpen,
       createType,
@@ -1345,7 +1343,6 @@ export default function App() {
     settingsSection,
     viewer?.item.id,
     playerExpanded,
-    musicPreview?.id,
     queueVisible,
     matchOpen,
     createType,
@@ -1428,10 +1425,10 @@ export default function App() {
             cachedMusic(entry.musicDetailId) ??
             (await musicItems([entry.musicDetailId]))[0];
           if (!item) throw new Error("歌曲不可用");
-          if (usePlayback.getState().track?.id === item.id) {
-            musicDestination.current = { open: true, id: item.id };
-            usePlayback.setState({ expanded: true, queueVisible: false });
-          } else setMusicPreview(item);
+          musicDestination.current = { open: true, id: item.id };
+          const playback = usePlayback.getState();
+          if (playback.track?.id !== item.id) playback.play(item);
+          usePlayback.setState({ expanded: true, queueVisible: false });
         } catch {
           useApp.getState().notify("该歌曲已不可用");
         }
@@ -1514,10 +1511,6 @@ export default function App() {
       closeViewer();
       return;
     }
-    if (musicPreview) {
-      closeSurface(() => setMusicPreview(null));
-      return;
-    }
     if (playerExpanded) {
       closeSurface(() => usePlayback.setState({ expanded: false }));
       return;
@@ -1562,6 +1555,10 @@ export default function App() {
       if (isRemote(item)) await favoriteRemote(item, !item.favorite);
       else await window.media.favorite(item.id, !item.favorite);
       media.source.patch(item.id, { favorite: !item.favorite });
+      usePlayback.setState((current) => ({
+        track: current.track?.id === item.id ? { ...current.track, favorite: !item.favorite } : current.track,
+        queue: current.queue.map((song) => song.id === item.id ? { ...song, favorite: !item.favorite } : song),
+      }));
       if (scope.view === "favorites") useApp.getState().touch();
     });
   }
@@ -1596,7 +1593,6 @@ export default function App() {
     createType ||
     manage ||
     viewer ||
-    musicPreview ||
     playerExpanded ||
     contextMenu ||
     trashOpen ||
@@ -1742,20 +1738,12 @@ export default function App() {
     }
   }
   useEffect(() => {
-    if (!contextMenu) return;
-    requestAnimationFrame(() =>
-      document
-        .querySelector<HTMLButtonElement>(".media-context-menu [role=menuitem]")
-        ?.focus(),
-    );
-  }, [contextMenu]);
-  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (scope.view === "comic" || scope.view === "novel") return;
       const target = event.target as HTMLElement;
       const typing =
-        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName) ||
-        target?.isContentEditable;
+        isTextEntryTarget(event.target) ||
+        !!target?.closest("select");
       if (
         (event.ctrlKey || event.metaKey) &&
         ["k", "f"].includes(event.key.toLowerCase()) &&
@@ -1868,16 +1856,18 @@ export default function App() {
         }
       }
       if (
-        isPlaybackSpaceShortcut(event) &&
+        shouldPreventPlaybackSpace(event) &&
         !viewer &&
         !overlay &&
         !createType &&
         !manage &&
-        !blocked &&
+        (!blocked ||
+          (playerExpanded && !contextMenu && !trashOpen && !renameItem)) &&
         usePlayback.getState().track
       ) {
+        const shouldToggle = isPlaybackSpaceShortcut(event);
         event.preventDefault();
-        usePlayback.getState().toggle();
+        if (shouldToggle) usePlayback.getState().toggle();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -2290,8 +2280,8 @@ export default function App() {
   const persistentWall = (
     <div
       className="layout-surface"
-      inert={Boolean(viewer || playerExpanded || musicPreview)}
-      data-background-locked={Boolean(viewer || playerExpanded || musicPreview)}
+      inert={Boolean(viewer || playerExpanded)}
+      data-background-locked={Boolean(viewer || playerExpanded)}
     >
       <ContentNavigationContext.Provider value={wallNavigation}>
         <BravaisWall {...layoutProps} />
@@ -2473,11 +2463,10 @@ export default function App() {
             inert={Boolean(
               viewer ||
               playerExpanded ||
-              musicPreview ||
               (browseTransition.pending && !media.ready),
             )}
             data-background-locked={Boolean(
-              viewer || playerExpanded || musicPreview,
+              viewer || playerExpanded,
             )}
             key={
               memory.layout === "bravais"
@@ -2636,24 +2625,6 @@ export default function App() {
             aria-label="文件操作"
             style={{ left: contextMenu.x, top: contextMenu.y }}
             onMouseDown={(event) => event.stopPropagation()}
-            onKeyDown={(event) => {
-              if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-              event.preventDefault();
-              const buttons = [
-                ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                  "[role=menuitem]",
-                ),
-              ];
-              const current = buttons.indexOf(
-                document.activeElement as HTMLButtonElement,
-              );
-              buttons[
-                (current +
-                  (event.key === "ArrowDown" ? 1 : -1) +
-                  buttons.length) %
-                  buttons.length
-              ]?.focus();
-            }}
           >
             <div className="context-heading">{contextMenu.item.title}</div>
             {contextMenu.item.type === "comic" && !contextMenu.item.kind && (
@@ -2917,38 +2888,11 @@ export default function App() {
         libraries={libraries}
       />
       <Player
-        browseMusic={(next) => navigate(next, true, false, "push")}
         closeUI={closeSurface}
         closeDetail={() =>
           closeSurface(() => usePlayback.setState({ expanded: false }))
         }
       />
-      {musicPreview && (
-        <div className="music-stage music-detail-preview">
-          <header>
-            <button
-              className="back-button"
-              onClick={() => closeSurface(() => setMusicPreview(null))}
-            >
-              <ChevronLeft />
-              返回
-            </button>
-          </header>
-          <Cover item={musicPreview} />
-          <h1>{musicPreview.title}</h1>
-          <p>{musicPreview.artist}</p>
-          <button
-            className="button primary"
-            onClick={() => {
-              usePlayback.getState().play(musicPreview);
-              setMusicPreview(null);
-              usePlayback.setState({ expanded: true, queueVisible: false });
-            }}
-          >
-            播放此曲
-          </button>
-        </div>
-      )}
       {activeVideo && (
         <VideoPlayer
           item={activeVideo}

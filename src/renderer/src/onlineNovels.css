@@ -1,12 +1,6 @@
 .online-novels {
   color: var(--app-text);
 }
-.online-novels button:focus-visible,
-.online-novels input:focus-visible,
-.online-novels select:focus-visible {
-  outline: 2px solid var(--app-muted);
-  outline-offset: 3px;
-}
 .reading-menu-trigger {
   position: fixed;
   z-index: 46;
@@ -15,8 +9,7 @@
   opacity: 0;
   -webkit-app-region: no-drag;
 }
-.reading-menu-trigger:hover,
-.reading-menu-trigger:focus-visible {
+.reading-menu-trigger:hover {
   opacity: 1;
 }
 .online-novels input:not([type="checkbox"]),

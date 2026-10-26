@@ -326,7 +326,6 @@ export function useShowcase(props: LayoutProps, kind: ShowcaseKind) {
       return;
     if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
       event.preventDefault();
-      ref.current?.focus({ preventScroll: true });
       if (event.key === "Home") centre(0);
       else if (event.key === "End") centre(source.total - 1);
       else step(event.key === "ArrowLeft" ? -1 : 1);

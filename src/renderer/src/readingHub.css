@@ -515,8 +515,7 @@
   right: 5px;
   opacity: 0;
 }
-.comic-hub-card:hover > .icon-button,
-.comic-hub-card:focus-within > .icon-button {
+.comic-hub-card:hover > .icon-button {
   opacity: 1;
 }
 .comic-hub-empty,

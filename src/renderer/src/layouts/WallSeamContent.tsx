@@ -15,8 +15,7 @@ export default function WallSeamContent(props: Props) {
     latest = useRef(props);
   latest.current = props;
   const [shown, setShown] = useState(props);
-  const pending = useRef(false),
-    animations = useRef<Animation[]>([]);
+  const animations = useRef<Animation[]>([]);
   useLayoutEffect(() => {
     if (!element.current) return;
     animations.current.forEach((a) => a.cancel());
@@ -24,10 +23,8 @@ export default function WallSeamContent(props: Props) {
     if (shown.identity === props.identity) {
       el.inert = false;
       delete el.dataset.seamFlip;
-      pending.current = false;
       return;
     }
-    const restoreFocus = el.contains(document.activeElement);
     el.inert = true;
     el.dataset.seamFlip = "out";
     const out = el.animate(
@@ -45,7 +42,6 @@ export default function WallSeamContent(props: Props) {
     );
     animations.current = [out];
     out.onfinish = () => {
-      pending.current = restoreFocus;
       setShown(latest.current);
     };
     return () => {
@@ -74,11 +70,6 @@ export default function WallSeamContent(props: Props) {
     incoming.onfinish = () => {
       el.inert = false;
       delete el.dataset.seamFlip;
-      if (pending.current)
-        el.querySelector<HTMLElement>(
-          "button:not(:disabled),input,select",
-        )?.focus({ preventScroll: true });
-      pending.current = false;
     };
   }, [shown]);
   useLayoutEffect(

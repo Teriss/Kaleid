@@ -77,10 +77,6 @@
 .showcase-hit:disabled {
   opacity: 1;
 }
-.showcase-hit:focus-visible {
-  outline: 2px solid var(--showcase-ink);
-  outline-offset: 8px;
-}
 .showcase-cover,
 .showcase-placeholder,
 .showcase-collection {

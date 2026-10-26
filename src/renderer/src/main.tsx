@@ -1,17 +1,14 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
-import MusicWindow from "./music/MusicWindow";
 import "./music/folia.css";
 import "./styles.css";
 import "./reader.css";
 import "./theme.css";
 import { initializeTheme } from "./theme";
-if (location.hash === "#music-lyrics")
-  document.documentElement.dataset.musicWindow = "lyrics";
-else if (location.hash === "#music-mini")
-  document.documentElement.dataset.musicWindow = "mini";
+import { installDesktopInteractionPolicy } from "./desktopInteraction";
 initializeTheme();
+installDesktopInteractionPolicy();
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -35,6 +32,6 @@ class ErrorBoundary extends React.Component<
 }
 createRoot(document.getElementById("root")!).render(
   <ErrorBoundary>
-    {location.hash.startsWith("#music-") ? <MusicWindow /> : <App />}
+    <App />
   </ErrorBoundary>,
 );

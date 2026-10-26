@@ -844,14 +844,6 @@ export default function OnlineNovels({
     if (!node) return;
     // A loaded list or detail can grow after initial restoration.
     node.scrollTop = hubMemory.current.scrollTop || 0;
-    if (hubMemory.current.focusId?.startsWith("hub:")) {
-      const target = Array.from(
-        node.querySelectorAll<HTMLElement>("[data-hub-id]"),
-      ).find((el) => `hub:${el.dataset.hubId}` === hubMemory.current.focusId);
-      target
-        ?.querySelector<HTMLButtonElement>("button")
-        ?.focus({ preventScroll: true });
-    }
   }, [
     locationKey,
     sources.length,

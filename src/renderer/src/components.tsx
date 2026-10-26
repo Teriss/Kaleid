@@ -142,7 +142,6 @@ export function Modal({
         ],
         { duration: 160, easing: "ease-out" },
       );
-    if (dialog.classList.contains("settings-modal")) dialog.focus();
     return () => {
       if (dialog.open) dialog.close();
     };

@@ -36,7 +36,11 @@ import type {
   VideoTrack,
 } from "../../shared/video";
 import { report, useApp } from "./store";
-import { isPlaybackSpaceShortcut } from "./playbackSpace";
+import {
+  isPlaybackSpaceShortcut,
+  shouldPreventPlaybackSpace,
+} from "./playbackSpace";
+import { isTextEntryTarget } from "./desktopInteraction";
 import { useVideoChrome } from "./useVideoChrome";
 import { useVideoOverlay } from "./useVideoOverlay";
 import "./video.css";
@@ -317,6 +321,21 @@ export default function VideoPlayer({
         );
     });
     const key = (event: KeyboardEvent) => {
+      if (event.code === "Space" || event.key === " ") {
+        if (
+          isTextEntryTarget(event.target) ||
+          document.querySelector("dialog[open],.modal-backdrop")
+        )
+          return;
+        const current = latest.current.state;
+        if (!current || !shouldPreventPlaybackSpace(event)) return;
+        const shouldToggle = isPlaybackSpaceShortcut(event);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!shouldToggle) return;
+        void command({ type: "pause", value: !current.paused });
+        return;
+      }
       if (
         (event.target as HTMLElement)?.closest(".music-unified-dock") ||
         surface?.querySelector(".music-quick-panel")
@@ -330,14 +349,6 @@ export default function VideoPlayer({
         )
       )
         return;
-      if (event.code === "Space" || event.key === " ") {
-        const current = latest.current.state;
-        if (!current || !isPlaybackSpaceShortcut(event)) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        void command({ type: "pause", value: !current.paused });
-        return;
-      }
       const current = latest.current.state;
       if (!current) return;
       let action: (() => void) | undefined;

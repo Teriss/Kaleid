@@ -517,26 +517,6 @@ export default function SettingsPanel({
                   <span />
                 </button>
               </div>
-              <div className="setting-row">
-                <strong>歌词呈现</strong>
-                <select
-                  aria-label="歌词呈现"
-                  value={settings.lyricsPresentation}
-                  onChange={(event) =>
-                    void act(() =>
-                      setSettings({
-                        ...settings,
-                        lyricsPresentation: event.target
-                          .value as typeof settings.lyricsPresentation,
-                      }),
-                    )
-                  }
-                >
-                  <option value="split">封面与双栏歌词</option>
-                  <option value="fullscreen">全屏歌词</option>
-                  <option value="wall">墙面卡片歌词</option>
-                </select>
-              </div>
             </div>
           </>
         )}

@@ -52,7 +52,12 @@ protocol.registerSchemesAsPrivileged([
   })),
   {
     scheme: "app",
-    privileges: { standard: true, secure: true, supportFetchAPI: true },
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      codeCache: true,
+    },
   },
   {
     scheme: "media",
@@ -70,7 +75,8 @@ const bindWindowControls = installWindowControls(() => window);
 let appTheme: Settings["theme"] = "dark";
 const updatesSupported = app.isPackaged && process.platform === "win32";
 const updateCacheBase =
-  process.env.LOCALAPPDATA || path.join(app.getPath("home"), "AppData", "Local");
+  process.env.LOCALAPPDATA ||
+  path.join(app.getPath("home"), "AppData", "Local");
 const updateCacheDirectories = async () => {
   let cacheName = app.getName();
   try {
@@ -78,10 +84,15 @@ const updateCacheDirectories = async () => {
       path.join(process.resourcesPath, "app-update.yml"),
       "utf8",
     );
-    const configured = config.match(/^updaterCacheDirName:\s*([^\r\n#]+)/m)?.[1]
+    const configured = config
+      .match(/^updaterCacheDirName:\s*([^\r\n#]+)/m)?.[1]
       ?.trim()
-      .replace(/^(?:"(.*)"|'(.*)')$/, (_match, doubleQuoted, singleQuoted) => doubleQuoted ?? singleQuoted);
-    if (configured && path.basename(configured) === configured) cacheName = configured;
+      .replace(
+        /^(?:"(.*)"|'(.*)')$/,
+        (_match, doubleQuoted, singleQuoted) => doubleQuoted ?? singleQuoted,
+      );
+    if (configured && path.basename(configured) === configured)
+      cacheName = configured;
   } catch {
     // Unpackaged builds have no updater config; use electron-updater's app-name fallback.
   }
@@ -109,12 +120,11 @@ if (
     owner: "Teriss",
     repo: "Kaleid",
   });
-const publishUpdateState = (
-  patch: Partial<typeof updateState>,
-) => {
+const publishUpdateState = (patch: Partial<typeof updateState>) => {
   updateState = { ...updateState, ...patch, currentVersion: app.getVersion() };
   for (const win of BrowserWindow.getAllWindows())
-    if (!win.isDestroyed()) win.webContents.send("app:update-state", updateState);
+    if (!win.isDestroyed())
+      win.webContents.send("app:update-state", updateState);
 };
 autoUpdater.on("checking-for-update", () =>
   publishUpdateState({
@@ -210,14 +220,18 @@ function configureAutomaticUpdates(enabled: boolean) {
   if (!enabled || !updatesSupported) return;
   autoUpdateDelay = setTimeout(() => void checkForAppUpdates(), 3000);
   autoUpdateDelay.unref?.();
-  autoUpdateInterval = setInterval(() => void checkForAppUpdates(), 6 * 60 * 60 * 1000);
+  autoUpdateInterval = setInterval(
+    () => void checkForAppUpdates(),
+    6 * 60 * 60 * 1000,
+  );
   autoUpdateInterval.unref?.();
 }
 const networkProxy = new NetworkProxyManager(DEFAULT_SETTINGS.networkProxy);
 async function listCachedUpdatePackages() {
   const { root, pending } = await updateCacheDirectories();
   const helper = (autoUpdater as any).downloadedUpdateHelper;
-  const activeFile = typeof helper?.file === "string" ? path.resolve(helper.file) : "";
+  const activeFile =
+    typeof helper?.file === "string" ? path.resolve(helper.file) : "";
   const files: {
     id: string;
     name: string;
@@ -225,7 +239,10 @@ async function listCachedUpdatePackages() {
     modifiedAt: number;
     canDelete: boolean;
   }[] = [];
-  for (const [directory, prefix] of [[root, ""], [pending, "pending/"]] as const) {
+  for (const [directory, prefix] of [
+    [root, ""],
+    [pending, "pending/"],
+  ] as const) {
     let entries;
     try {
       entries = await fs.readdir(directory, { withFileTypes: true });
@@ -242,7 +259,9 @@ async function listCachedUpdatePackages() {
         name: entry.name,
         size: info.size,
         modifiedAt: info.mtimeMs,
-        canDelete: updateState.status !== "downloading" && path.resolve(fullPath) !== activeFile,
+        canDelete:
+          updateState.status !== "downloading" &&
+          path.resolve(fullPath) !== activeFile,
       });
     }
   }
@@ -255,7 +274,7 @@ function synchronizeTheme(theme: Settings["theme"]) {
     if (win === window) {
       win.setBackgroundColor(appTheme === "light" ? "#eeefec" : "#141414");
     } else if (win.webContents.getURL().endsWith("#music-mini")) {
-      win.setBackgroundColor(appTheme === "light" ? "#eeefec" : "#141414");
+      win.setBackgroundColor("#00000000");
     }
     win.webContents.send("app:theme", appTheme);
   }
@@ -427,11 +446,6 @@ function validateSettings(input: Settings): Settings {
       0,
       Math.min(480, Math.round(Number(input.sleepTimerMinutes) || 0)),
     ),
-    lyricsPresentation: ["split", "fullscreen", "wall"].includes(
-      input.lyricsPresentation,
-    )
-      ? input.lyricsPresentation
-      : "split",
   };
 }
 void app
@@ -561,7 +575,16 @@ void app
             ),
         );
         if (!isWithin(root, target)) return new Response(null, { status: 403 });
-        return await serveFile(target, request);
+        const response = await serveFile(target, request);
+        // Hashed production assets are immutable across renderer windows. Keep
+        // the HTML fresh so upgrades always pick up the new asset filenames.
+        response.headers.set(
+          "Cache-Control",
+          /^\/assets\/.*-[\w-]{8,}\.(?:js|css)$/.test(url.pathname)
+            ? "public, max-age=31536000, immutable"
+            : "no-cache",
+        );
+        return response;
       } catch {
         return new Response(null, { status: 404 });
       }
@@ -845,7 +868,8 @@ void app
           throw new Error("无效查询");
       }
       const result = await call(method, ...args);
-      if (method === "opened") window?.webContents.send("library:history-change");
+      if (method === "opened")
+        window?.webContents.send("library:history-change");
       return result;
     });
     ipcMain.handle("app:theme", (event) => {
@@ -873,7 +897,10 @@ void app
     });
     ipcMain.handle("app:update-package-delete", async (event, id: unknown) => {
       assertAppUpdateSender(event);
-      if (typeof id !== "string" || !/^(?:pending\/)?[^\\/]+\.(?:exe|msi)$/i.test(id))
+      if (
+        typeof id !== "string" ||
+        !/^(?:pending\/)?[^\\/]+\.(?:exe|msi)$/i.test(id)
+      )
         throw new Error("无效的安装包标识");
       if (updateState.status === "downloading")
         throw new Error("更新下载期间无法删除安装包");
@@ -881,9 +908,15 @@ void app
       const name = pending ? id.slice("pending/".length) : id;
       if (path.basename(name) !== name) throw new Error("无效的安装包标识");
       const directories = await updateCacheDirectories();
-      const fullPath = path.resolve(pending ? directories.pending : directories.root, name);
+      const fullPath = path.resolve(
+        pending ? directories.pending : directories.root,
+        name,
+      );
       const activeFile = (autoUpdater as any).downloadedUpdateHelper?.file;
-      if (typeof activeFile === "string" && path.resolve(activeFile) === fullPath)
+      if (
+        typeof activeFile === "string" &&
+        path.resolve(activeFile) === fullPath
+      )
         throw new Error("此安装包正在用于安装更新，暂时无法删除");
       const info = await fs.lstat(fullPath);
       if (!info.isFile()) throw new Error("目标不是安装包文件");
@@ -901,7 +934,11 @@ void app
         !["available", "error"].includes(updateState.status)
       )
         return updateState;
-      publishUpdateState({ status: "downloading", percent: 0, message: "正在下载更新（0%）" });
+      publishUpdateState({
+        status: "downloading",
+        percent: 0,
+        message: "正在下载更新（0%）",
+      });
       try {
         await autoUpdater.downloadUpdate();
       } catch (error) {
@@ -914,10 +951,17 @@ void app
     });
     ipcMain.handle("app:update-ignore", async (event, version: unknown) => {
       assertAppUpdateSender(event);
-      if (typeof version !== "string" || !version || version !== updateState.version)
+      if (
+        typeof version !== "string" ||
+        !version ||
+        version !== updateState.version
+      )
         throw new Error("无效的更新版本");
       const settings = (await call("settings")) as Settings;
-      await call("saveSettings", { ...settings, ignoredUpdateVersion: version });
+      await call("saveSettings", {
+        ...settings,
+        ignoredUpdateVersion: version,
+      });
       ignoredUpdateVersion = version;
       publishUpdateState({
         status: "ignored",

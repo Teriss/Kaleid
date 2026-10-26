@@ -232,7 +232,6 @@ export interface Settings {
   loudnessNormalization: boolean;
   audioOutputDeviceId: string;
   sleepTimerMinutes: number;
-  lyricsPresentation: "split" | "fullscreen" | "wall";
 }
 export const DEFAULT_SETTINGS: Settings = {
   autoUpdate: true,
@@ -264,7 +263,6 @@ export const DEFAULT_SETTINGS: Settings = {
   loudnessNormalization: false,
   audioOutputDeviceId: "",
   sleepTimerMinutes: 0,
-  lyricsPresentation: "split",
 };
 /**
  * Payload of the `comic:change` / `novel:change` events. `download` marks pure

@@ -25,13 +25,17 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: resolve("src/preload/index.ts"),
-        output: { format: "cjs", entryFileNames: "index.cjs" },
+        input: {
+          index: resolve("src/preload/index.ts"),
+          musicMini: resolve("src/preload/musicMini.ts"),
+        },
+        output: { format: "cjs", entryFileNames: "[name].cjs" },
       },
     },
   },
   renderer: {
     root: "src/renderer",
+    server: { warmup: { clientFiles: ["./src/music/mini.tsx"] } },
     resolve: {
       // Folia source files use @/ paths relative to vendor/folia/src.
       alias: { "@": resolve("vendor/folia/src") },
@@ -51,6 +55,14 @@ export default defineConfig({
         },
       },
     ],
-    build: { rollupOptions: { input: resolve("src/renderer/index.html") } },
+    build: {
+      minify: true,
+      rollupOptions: {
+        input: {
+          index: resolve("src/renderer/index.html"),
+          musicMini: resolve("src/renderer/music-mini.html"),
+        },
+      },
+    },
   },
 });

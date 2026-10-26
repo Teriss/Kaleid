@@ -20,13 +20,6 @@
 .browser-shell:has(.online-comics .comic-viewer) .main-chrome {
   visibility: hidden;
 }
-.online-comics button:focus-visible,
-.online-comics input:focus-visible,
-.online-comics select:focus-visible,
-.online-source-manager :focus-visible {
-  outline: 2px solid var(--app-muted);
-  outline-offset: 3px;
-}
 .online-row {
   display: flex;
   align-items: center;
@@ -894,10 +887,6 @@
 .comic-preview-open:hover .comic-preview-image {
   border-color: var(--app-accent);
 }
-.comic-preview-open:focus-visible {
-  outline: 2px solid var(--app-accent);
-  outline-offset: 4px;
-}
 .comic-preview-retry {
   margin-top: 4px;
   font-size: 12px;
@@ -957,12 +946,6 @@
   border-color: var(--app-line);
   background: color-mix(in srgb, var(--app-surface) 86%, transparent);
   color: var(--app-text);
-}
-.comic-download-source-tabs button:focus-visible,
-.comic-download-search button:focus-visible,
-.comic-download-search input:focus-visible {
-  outline: 2px solid var(--app-accent);
-  outline-offset: 2px;
 }
 .comic-download-source-tabs button span {
   color: var(--app-muted);

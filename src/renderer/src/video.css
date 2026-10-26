@@ -179,12 +179,6 @@
   opacity: 0.3;
   cursor: default;
 }
-.video-player button:focus-visible,
-.video-player select:focus-visible,
-.video-player input:focus-visible {
-  outline: 2px solid var(--ui-e5e5e5);
-  outline-offset: 3px;
-}
 .video-header {
   position: absolute;
   top: 48px;
@@ -390,8 +384,7 @@
   box-shadow: 0 1px 4px var(--ui-0005);
   transition: transform 160ms ease;
 }
-.video-player
-  input[type="range"]:is(:hover, :focus-visible)::-webkit-slider-thumb {
+.video-player input[type="range"]:hover::-webkit-slider-thumb {
   transform: scale(1.2);
 }
 .video-player input[type="range"]:disabled {

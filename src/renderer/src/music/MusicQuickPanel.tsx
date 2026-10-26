@@ -567,19 +567,6 @@ export default function MusicQuickPanel({
           {tab === "外观" && (
             <div className="quick-fields">
               <label>
-                歌词呈现
-                <select
-                  value={settings.lyricsPresentation}
-                  onChange={(e) =>
-                    update({ lyricsPresentation: e.target.value as any })
-                  }
-                >
-                  <option value="split">封面与歌词</option>
-                  <option value="fullscreen">全屏歌词</option>
-                  <option value="wall">卡片歌词</option>
-                </select>
-              </label>
-              <label>
                 歌词样式
                 <select
                   aria-label="快捷歌词样式"

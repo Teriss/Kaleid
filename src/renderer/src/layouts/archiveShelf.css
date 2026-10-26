@@ -54,10 +54,6 @@
 .archive-face:disabled {
   opacity: 1;
 }
-.archive-face:focus-visible {
-  outline: 1.5px solid #f1ead7;
-  outline-offset: 1px;
-}
 .archive-spine {
   display: flex;
   align-items: center;

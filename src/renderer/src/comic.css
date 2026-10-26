@@ -71,7 +71,6 @@
   opacity: 0;
   pointer-events: none;
 }
-.comic-chrome:focus-within,
 .comic-chrome:hover {
   opacity: 1;
   pointer-events: auto;
@@ -172,8 +171,7 @@
   color: #ddd;
   background: #2229;
 }
-.comic-page-zone:hover,
-.comic-page-zone:focus-visible {
+.comic-page-zone:hover {
   opacity: 1;
 }
 .comic-page-zone.left {

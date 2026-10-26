@@ -30,12 +30,6 @@
   background: color-mix(in srgb, var(--reader-accent) 13%, transparent);
   border-color: var(--reader-border);
 }
-.reader .icon-button:focus-visible,
-.reader button:focus-visible,
-.reader select:focus-visible,
-.reader input:focus-visible {
-  outline-color: var(--reader-accent);
-}
 .reader-exit-button {
   position: absolute;
   z-index: 13;
@@ -57,8 +51,7 @@
     opacity 140ms ease,
     background-color 140ms ease;
 }
-.reader-exit-button:hover,
-.reader-exit-button:focus-visible {
+.reader-exit-button:hover {
   color: var(--reader-fg);
   background: color-mix(in srgb, var(--reader-accent) 13%, var(--reader-panel));
   opacity: 1;

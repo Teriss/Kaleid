@@ -3,7 +3,11 @@ import { createPortal } from "react-dom";
 import { Maximize2, Pause, Play, X } from "lucide-react";
 import type { MediaItem } from "../../shared/types";
 import { report, time } from "./store";
-import { isPlaybackSpaceShortcut } from "./playbackSpace";
+import {
+  isPlaybackSpaceShortcut,
+  shouldPreventPlaybackSpace,
+} from "./playbackSpace";
+import { isTextEntryTarget } from "./desktopInteraction";
 import { useVideoOverlay } from "./useVideoOverlay";
 import { hideVideo, useVideoSession, videoBounds } from "./videoSession";
 
@@ -106,6 +110,22 @@ export default function CardVideo({
   }, [blocked]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
+      if (event.code === "Space" || event.key === " ") {
+        if (
+          isTextEntryTarget(event.target) ||
+          document.querySelector("dialog[open],.media-context-menu") ||
+          latest.current.blocked
+        )
+          return;
+        const current = latest.current.state;
+        if (!current || !shouldPreventPlaybackSpace(event)) return;
+        const shouldToggle = isPlaybackSpaceShortcut(event);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!shouldToggle) return;
+        void command({ type: "pause", value: !current.paused });
+        return;
+      }
       if (
         (event.target as HTMLElement)?.closest(
           "input,select,textarea,.music-unified-dock",
@@ -120,11 +140,6 @@ export default function CardVideo({
         if (latest.current.state?.fullscreen)
           void command({ type: "fullscreen", value: false });
         else latest.current.stop();
-      } else if (event.code === "Space" || event.key === " ") {
-        if (!isPlaybackSpaceShortcut(event)) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        void command({ type: "pause", value: !latest.current.state?.paused });
       } else if (event.key === "Enter") {
         if ((event.target as HTMLElement)?.closest("button")) return;
         event.preventDefault();

@@ -350,7 +350,6 @@ body {
     .music-dock-controls,
     .queue-panel,
     .media-context-menu,
-    .companion-mini,
     .wall-menu-panel
   ) {
   background-color: var(--app-surface);

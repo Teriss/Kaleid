@@ -110,7 +110,6 @@ export default function MusicSources({
         event.preventDefault();
         event.stopPropagation();
         menu.open = false;
-        menu.querySelector<HTMLElement>("summary")?.focus();
       }
     };
     document.addEventListener("pointerdown", outside, true);

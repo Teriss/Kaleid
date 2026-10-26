@@ -1,35 +1,26 @@
 import { createEffects, useMusicEffects } from "./music/effects";
 import { publishLyrics, startLyricClock } from "./music/lyricPresentation";
-import PlatformActions from "./music/PlatformActions";
 import {
   isRemote,
   resolveAudio,
   onlineLyrics,
   musicItems,
+  favoriteRemote,
 } from "./music/catalog";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
-  AudioLines,
   Check,
   ChevronDown,
-  Heart,
-  ListMusic,
-  Maximize2,
   Music2,
   Pause,
   Play,
-  Repeat,
   SkipBack,
   SkipForward,
-  Volume2,
-  VolumeX,
-  Search,
-  Timer,
   Trash2,
   X,
 } from "lucide-react";
 import { Cover, IconButton, Modal } from "./components";
-import { act, report, resource, time, useApp, usePlayback } from "./store";
+import { act, report, resource, useApp, usePlayback } from "./store";
 import type {
   MediaItem,
   MusicMetadataCandidate,
@@ -252,13 +243,9 @@ export function parseLrc(text: string): LyricLine[] {
 export default function Player({
   closeDetail,
   closeUI,
-  browseMusic,
 }: {
   closeDetail?: () => void;
   closeUI?: (fallback: () => void) => void;
-  browseMusic?: (
-    scope: import("../../shared/navigation").BrowseLocation,
-  ) => void;
 }) {
   const state = usePlayback();
   const effectsState = useMusicEffects();
@@ -323,12 +310,6 @@ export default function Player({
     window.addEventListener("music-stop-and-clear", clear);
     return () => window.removeEventListener("music-stop-and-clear", clear);
   }, []);
-  const wasExpanded = useRef(false);
-  useEffect(() => {
-    if (state.expanded && !wasExpanded.current)
-      usePlayback.setState({ queueVisible: false });
-    wasExpanded.current = state.expanded;
-  }, [state.expanded]);
   const audioGraph = useRef<{
     context: AudioContext;
     filters: BiquadFilterNode[];
@@ -361,6 +342,7 @@ export default function Player({
       live = false;
     };
   }, [state.track?.id]);
+  const remoteFavoriteBusy = useRef(false);
   useEffect(
     () =>
       window.music.onCommand((command, value) => {
@@ -370,27 +352,50 @@ export default function Player({
           usePlayback.setState({ playing: command === "play" });
         if (command === "next" || command === "previous")
           void p.next(command === "next" ? 1 : -1);
-        if (command === "seek" && Number.isFinite(value)) p.seekTo(value!);
-        if (command === "expand") usePlayback.setState({ expanded: true });
+        if (command === "seek" && Number.isFinite(value))
+          p.seekTo(Math.max(0, Math.min(p.duration || value!, value!)));
+        if (command === "expand")
+          usePlayback.setState({ expanded: true, queueVisible: false });
+        if (command === "queue")
+          usePlayback.setState({ expanded: true, queueVisible: true });
+        if (command === "repeat")
+          usePlayback.setState({
+            repeat:
+              p.repeat === "off" ? "all" : p.repeat === "all" ? "one" : "off",
+          });
+        if (command === "order")
+          usePlayback.setState({
+            order: p.order === "sequential" ? "shuffle" : "sequential",
+          });
+        if (command === "mute") usePlayback.setState({ muted: !p.muted });
+        if (command === "volume" && Number.isFinite(value))
+          usePlayback.setState({ volume: Math.max(0, Math.min(1, value!)) });
+        if (command === "favorite" && p.track && !remoteFavoriteBusy.current) {
+          const item = p.track;
+          const favorite = !item.favorite;
+          remoteFavoriteBusy.current = true;
+          void (async () => {
+            if (isRemote(item)) await favoriteRemote(item, favorite);
+            else await window.media.favorite(item.id, favorite);
+            usePlayback.setState((current) => ({
+              track:
+                current.track?.id === item.id
+                  ? { ...current.track, favorite }
+                  : current.track,
+              queue: current.queue.map((song) =>
+                song.id === item.id ? { ...song, favorite } : song,
+              ),
+            }));
+            useApp.getState().touch();
+          })()
+            .catch(report)
+            .finally(() => {
+              remoteFavoriteBusy.current = false;
+            });
+        }
       }),
     [],
   );
-  useEffect(() => {
-    window.music.publish({
-      title: state.track?.title ?? "",
-      artist: state.track?.artist ?? "",
-      lyric: state.lyricPreview,
-      playing: state.playing,
-      position: state.position,
-      duration: state.duration,
-      cover: state.track?.cover ? resource(state.track, "cover") : undefined,
-    });
-  }, [
-    state.track?.id,
-    state.lyricPreview,
-    state.playing,
-    Math.floor(state.position),
-  ]);
   const [lyrics, setLyrics] = useState<ReturnType<typeof parseLrc>>([]);
   const queueVisible = state.queueVisible;
   const setQueueVisible = (queueVisible: boolean) =>
@@ -418,9 +423,7 @@ export default function Player({
     "lyric",
   ]);
   const [dragQueueIndex, setDragQueueIndex] = useState<number | null>(null);
-  const [stageLyricsOnly, setStageLyricsOnly] = useState(false);
   const [analyzedGainDb, setAnalyzedGainDb] = useState<number | null>(null);
-  const currentLine = useRef<HTMLParagraphElement>(null);
   const track = state.track;
   useEffect(() => {
     setAnalyzedGainDb(null);
@@ -540,23 +543,6 @@ export default function Player({
     [],
   );
   useEffect(() => {
-    if (!navigator.mediaDevices?.enumerateDevices) return;
-    const load = () =>
-      void navigator.mediaDevices
-        .enumerateDevices()
-        .then((devices) => {
-          setOutputDevices(
-            devices.filter((device) => device.kind === "audiooutput"),
-          );
-        })
-        .catch(() => {});
-    load();
-    navigator.mediaDevices.addEventListener?.("devicechange", load);
-    return () =>
-      navigator.mediaDevices.removeEventListener?.("devicechange", load);
-  }, []);
-  const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
-  useEffect(() => {
     const element = audio.current as
       (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null;
     if (!element?.setSinkId) return;
@@ -626,9 +612,6 @@ export default function Player({
       }
     };
   }, [track?.id]);
-  useEffect(() => {
-    setStageLyricsOnly(settings.lyricsPresentation === "fullscreen");
-  }, [settings.lyricsPresentation]);
   useEffect(() => {
     if (!queueVisible || playlistTab) return;
     const start = queuePage * 100;
@@ -743,12 +726,50 @@ export default function Player({
     usePlayback.setState({ lyricPreview: lyrics[activeIndex]?.text ?? "" });
   }, [activeIndex, lyrics]);
   useEffect(() => {
-    if (stageLyricsOnly) return;
-    currentLine.current?.scrollIntoView({
-      behavior: useApp.getState().settings.reducedMotion ? "instant" : "smooth",
-      block: "center",
+    window.music.publish({
+      trackId: track?.id ?? "",
+      title: track?.title ?? "",
+      artist: track?.artist ?? "",
+      cover: track?.cover ? resource(track, "cover") : undefined,
+      favorite: !!track?.favorite,
+      volume: state.volume,
+      muted: state.muted,
+      repeat: state.repeat,
+      order: state.order,
+      reducedMotion: settings.reducedMotion,
+      duration: state.duration,
     });
-  }, [activeIndex, state.expanded, stageLyricsOnly]);
+  }, [
+    track?.id,
+    track?.title,
+    track?.artist,
+    track?.cover,
+    track?.favorite,
+    state.volume,
+    state.muted,
+    state.repeat,
+    state.order,
+    state.duration,
+    settings.reducedMotion,
+  ]);
+  useEffect(() => {
+    window.music.publish({
+      lyrics: lyricsOwner.current === track?.id ? lyrics : [],
+    });
+  }, [track?.id, lyrics]);
+  useEffect(() => {
+    const publish = () => {
+      const current = usePlayback.getState();
+      window.music.publish({
+        playing: current.playing,
+        position: current.position,
+        updatedAt: Date.now(),
+      });
+    };
+    publish();
+    const timer = window.setInterval(publish, 500);
+    return () => window.clearInterval(timer);
+  }, [track?.id, state.playing, state.seek.serial]);
   function tick() {
     if (
       !track ||
@@ -1124,7 +1145,7 @@ export default function Player({
         </aside>
       )}
       {state.expanded && track && (
-        <div className={`music-stage ${stageLyricsOnly ? "lyrics-only" : ""}`}>
+        <div className="music-stage lyrics-only">
           <div
             className="stage-light"
             style={
@@ -1136,26 +1157,6 @@ export default function Player({
           <header>
             <span className="eyebrow">正在播放</span>
             <div className="stage-header-actions">
-              <button
-                className="text-button"
-                onClick={() => {
-                  const next = stageLyricsOnly ? "split" : "fullscreen";
-                  setStageLyricsOnly(!stageLyricsOnly);
-                  void act(() =>
-                    useApp
-                      .getState()
-                      .setSettings({ ...settings, lyricsPresentation: next }),
-                  );
-                }}
-              >
-                {stageLyricsOnly ? "封面与歌词" : "全屏歌词"}
-              </button>
-              <button
-                className="text-button"
-                onClick={() => void window.music.window("lyrics").catch(report)}
-              >
-                桌面歌词
-              </button>
               <button
                 className="text-button"
                 onClick={() => void window.music.window("mini").catch(report)}
@@ -1174,285 +1175,24 @@ export default function Player({
               </IconButton>
             </div>
           </header>
-          {stageLyricsOnly ? (
-            <Suspense
-              fallback={<div className="scene-loading">加载歌词动画…</div>}
-            >
-              <FoliaStage
-                track={{
-                  ...track,
-                  coverUrl: track.cover ? resource(track, "cover") : undefined,
-                }}
-                lyrics={lyrics}
-                position={state.position}
-                duration={state.duration}
-                playing={state.playing}
-                reducedMotion={settings.reducedMotion}
-                seek={(value) => usePlayback.getState().seekTo(value)}
-                analyser={audioGraph.current?.analyser}
-              />
-            </Suspense>
-          ) : null}
+          <Suspense
+            fallback={<div className="scene-loading">加载歌词动画…</div>}
+          >
+            <FoliaStage
+              track={{
+                ...track,
+                coverUrl: track.cover ? resource(track, "cover") : undefined,
+              }}
+              lyrics={lyrics}
+              position={state.position}
+              duration={state.duration}
+              playing={state.playing}
+              reducedMotion={settings.reducedMotion}
+              seek={(value) => usePlayback.getState().seekTo(value)}
+              analyser={audioGraph.current?.analyser}
+            />
+          </Suspense>
           <div className="music-stage-transport">{controls}</div>
-          {!stageLyricsOnly && <div className="stage-content">
-            <div className="stage-album">
-              <Cover item={track} />
-              <h1>{track.title}</h1>
-              <p>
-                {track.sourceRef?.kind === "online" && browseMusic ? (
-                  <>
-                    {track.remoteData?.artists?.map(
-                      (artist: any, index: number) => (
-                        <button
-                          className="text-button"
-                          key={artist.id ?? index}
-                          onClick={() =>
-                            browseMusic({
-                              view: "music",
-                              type: "music",
-                              musicSource: "online",
-                              providerId:
-                                track.sourceRef?.kind === "online"
-                                  ? track.sourceRef.providerId
-                                  : undefined,
-                              section: "collection",
-                              remoteId: String(
-                                artist.catalogRef?.id ?? artist.id,
-                              ),
-                              remoteKind: "artist",
-                            })
-                          }
-                        >
-                          {artist.name}
-                        </button>
-                      ),
-                    )}
-                    {track.album && (
-                      <button
-                        className="text-button"
-                        onClick={() =>
-                          browseMusic({
-                            view: "music",
-                            type: "music",
-                            musicSource: "online",
-                            providerId:
-                              track.sourceRef?.kind === "online"
-                                ? track.sourceRef.providerId
-                                : undefined,
-                            section: "collection",
-                            remoteId: String(
-                              track.remoteData?.album?.catalogRef?.id ??
-                                track.remoteData?.album?.id,
-                            ),
-                            remoteKind: "album",
-                          })
-                        }
-                      >
-                        {track.album}
-                      </button>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    {track.artist || "未知艺术家"}
-                    {track.album && ` / ${track.album}`}
-                  </>
-                )}
-              </p>
-              <div className="stage-controls">
-                <div className="play-timeline">
-                  <span>{time(state.position)}</span>
-                  <input
-                    aria-label="音乐播放进度"
-                    type="range"
-                    min="0"
-                    max={state.duration || 1}
-                    step="0.1"
-                    value={Math.min(state.position, state.duration || 1)}
-                    onChange={(e) => state.seekTo(Number(e.target.value))}
-                  />
-                  <span>{time(state.duration)}</span>
-                </div>
-                <div className="stage-options">
-                  <IconButton
-                    label={
-                      state.repeat === "off"
-                        ? "列表循环"
-                        : state.repeat === "all"
-                          ? "单曲循环"
-                          : "关闭循环"
-                    }
-                    active={state.repeat !== "off"}
-                    onClick={() =>
-                      usePlayback.setState({
-                        repeat:
-                          state.repeat === "off"
-                            ? "all"
-                            : state.repeat === "all"
-                              ? "one"
-                              : "off",
-                      })
-                    }
-                  >
-                    <Repeat size={17} />
-                  </IconButton>
-                  <IconButton
-                    label="静音"
-                    active={state.muted}
-                    onClick={() =>
-                      usePlayback.setState({ muted: !state.muted })
-                    }
-                  >
-                    {!state.muted ? (
-                      <Volume2 size={17} />
-                    ) : (
-                      <VolumeX size={17} />
-                    )}
-                  </IconButton>
-                  <input
-                    aria-label="音乐音量"
-                    type="range"
-                    min="0"
-                    max="1"
-                    step=".01"
-                    value={state.volume}
-                    onChange={(event) =>
-                      usePlayback.setState({
-                        volume: Number(event.target.value),
-                      })
-                    }
-                  />
-                  <IconButton
-                    label={
-                      state.order === "sequential"
-                        ? "切换随机播放"
-                        : "切换顺序播放"
-                    }
-                    active={state.order === "shuffle"}
-                    onClick={() =>
-                      usePlayback.setState({
-                        order:
-                          state.order === "sequential"
-                            ? "shuffle"
-                            : "sequential",
-                      })
-                    }
-                  >
-                    <AudioLines size={16} />
-                  </IconButton>
-                  <select
-                    aria-label="睡眠定时"
-                    title="睡眠定时"
-                    value={settings.sleepTimerMinutes}
-                    onChange={(event) =>
-                      void act(() =>
-                        useApp.getState().setSettings({
-                          ...settings,
-                          sleepTimerMinutes: Number(event.target.value),
-                        }),
-                      )
-                    }
-                  >
-                    <option value={0}>定时关闭</option>
-                    {[15, 30, 45, 60, 90, 120].map((minutes) => (
-                      <option key={minutes} value={minutes}>
-                        {minutes} 分钟
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    aria-label="音频输出设备"
-                    title="音频输出设备"
-                    value={settings.audioOutputDeviceId}
-                    onChange={(event) =>
-                      void act(() =>
-                        useApp.getState().setSettings({
-                          ...settings,
-                          audioOutputDeviceId: event.target.value,
-                        }),
-                      )
-                    }
-                  >
-                    <option value="">系统默认输出</option>
-                    {outputDevices
-                      .filter((device) => device.deviceId)
-                      .map((device, index) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {device.label || `输出设备 ${index + 1}`}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                <div className="stage-options stage-metadata-options">
-                  <PlatformActions item={track} />
-                  <button
-                    className="text-button"
-                    onClick={() => setQueueVisible(true)}
-                  >
-                    播放队列
-                  </button>
-                  {!isRemote(track) && (
-                    <>
-                      <button
-                        className="text-button"
-                        onClick={() => void openMetadataMatch().catch(report)}
-                      >
-                        <Search size={14} />
-                        在线匹配
-                      </button>
-                      <button
-                        className="text-button"
-                        onClick={() =>
-                          void restoreMusicMetadata().catch(report)
-                        }
-                      >
-                        恢复导入信息
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="lyrics-scroll">
-              {lyrics.length ? (
-                lyrics.map((line, index) => (
-                  <p
-                    ref={index === activeIndex ? currentLine : undefined}
-                    className={index === activeIndex ? "current-line" : ""}
-                    key={`${line.time}-${index}`}
-                    onClick={() => state.seekTo(line.time)}
-                  >
-                    {line.words?.length
-                      ? line.words.map((word, wordIndex) => {
-                          const activeWord = line.words!.findLastIndex(
-                            (entry) => entry.time <= state.position,
-                          );
-                          return (
-                            <span
-                              className={
-                                wordIndex === activeWord ? "current-word" : ""
-                              }
-                              key={`${word.time}:${wordIndex}`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                state.seekTo(word.time);
-                              }}
-                            >
-                              {word.text}
-                            </span>
-                          );
-                        })
-                      : line.text}
-                  </p>
-                ))
-              ) : (
-                <div className="no-lyrics">
-                  <Music2 size={36} />
-                  <p>暂无歌词</p>
-                </div>
-              )}
-            </div>
-          </div>}
         </div>
       )}
       {matchOpen && (

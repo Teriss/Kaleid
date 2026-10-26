@@ -57,10 +57,6 @@
 .window-titlebar button:active {
   background: color-mix(in srgb, var(--window-fg) 22%, var(--window-bg));
 }
-.window-titlebar button:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: -4px;
-}
 .window-titlebar .window-titlebar-close:hover {
   background: #c42b1c;
   color: #fff;
